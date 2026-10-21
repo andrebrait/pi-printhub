@@ -29,8 +29,9 @@
       <form id="options" class="card options">
         <div id="controls" class="options"></div>
         <label>Copies
-          <input id="copies" type="number" inputmode="numeric" min="1" max="99" value="1" required>
+          <input id="copies" type="number" inputmode="numeric" min="1" max="99" step="1" value="1" required aria-describedby="copies-error">
         </label>
+        <small id="copies-error" class="error" hidden></small>
         <label>Pages
           <input id="page-ranges" type="text" placeholder="All, or e.g. 1-3,5" autocomplete="off" aria-describedby="range-error">
         </label>

@@ -22,11 +22,11 @@
 
 <script type="module">
 // SPDX-License-Identifier: AGPL-3.0-only
+import { safeNext } from "/js/api.js";
+
 const params = new URLSearchParams(location.search);
 const share = params.get("share");
-const next = params.get("next");
-// Only same-site paths: "//host" and "/\host" would leave the site.
-const dest = next && /^\/(?![/\\])/.test(next) ? next : "/";
+const dest = safeNext(params.get("next"), location.origin);
 const status = document.getElementById("status");
 const fail = async (res) => {
   status.textContent = (await res.json().catch(() => null))?.error ?? `${res.status} ${res.statusText}`;

@@ -12,6 +12,29 @@ export function mediaSizeMm(name) {
   return { w: round2(m[1] * k), h: round2(m[2] * k) };
 }
 
+const MEDIA_NAMES = {
+  iso_a3: "A3",
+  iso_a4: "A4",
+  iso_a5: "A5",
+  iso_a6: "A6",
+  iso_b5: "B5",
+  na_letter: "Letter",
+  na_legal: "Legal",
+  na_executive: "Executive",
+  "na_number-10": "Envelope #10",
+  iso_dl: "Envelope DL",
+  iso_c5: "Envelope C5",
+};
+
+/** Friendly paper name for common PWG media ("A4 (210 × 297 mm)"); the raw name otherwise. */
+export function mediaLabel(name) {
+  const m = /^(.*)_(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(mm|in)$/.exec(name);
+  if (!m) return name;
+  const size = `${m[2]} × ${m[3]} ${m[4]}`;
+  if (/^na_(index-)?\d+x\d+$/.test(m[1])) return size; // photo paper: the size is the name
+  return MEDIA_NAMES[m[1]] ? `${MEDIA_NAMES[m[1]]} (${size})` : name;
+}
+
 /**
  * Where the page lands on the sheet.
  * marginsHmm is {top, bottom, left, right} in hundredths of a millimetre (as /api/printer reports);

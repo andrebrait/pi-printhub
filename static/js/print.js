@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { apiFetch, errorMessage } from "./api.js";
-import { mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
+import { mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const docId = params.get("doc");
+const docId = encodeURIComponent(params.get("doc") ?? "");
 
 // IPP option -> label, and the form-field name the print endpoint takes.
 // closed: show only the labelled values (IPP enums such as reverse-landscape make no sense here).
 const CONTROLS = [
-  { key: "media", label: "Paper", labels: {} },
+  { key: "media", label: "Paper", labels: {}, format: mediaLabel },
   { key: "print-quality", label: "Quality", closed: true, labels: { 3: "Draft", 4: "Normal", 5: "Best" } },
   { key: "print-color-mode", label: "Color", labels: { color: "Color", monochrome: "Grayscale" } },
   { key: "orientation-requested", label: "Orientation", closed: true, labels: { 3: "Portrait", 4: "Landscape" } },
@@ -90,7 +90,7 @@ function buildControls() {
     }
     const select = document.createElement("select");
     select.id = `opt-${c.key}`;
-    for (const v of values) select.add(new Option(c.labels[v] ?? v, v));
+    for (const v of values) select.add(new Option(c.format?.(v) ?? c.labels[v] ?? v, v));
     const preset = c.key === "print-scaling" && doc.kind === "scan" ? "none" : printer.defaults[c.key];
     select.value = values.includes(preset) ? preset : values.includes(FALLBACK[c.key]) ? FALLBACK[c.key] : values[0];
     select.addEventListener("change", render);
@@ -165,7 +165,9 @@ function render() {
   show($("range-error"), selected ? "" : `Use page numbers like 1-3,5 between 1 and ${pages.length}`);
   $("page-ranges").setAttribute("aria-invalid", String(!selected));
   const copies = $("copies");
-  $("print").disabled = !selected || !copies.checkValidity() || !pages.length;
+  const copiesOk = copies.checkValidity();
+  show($("copies-error"), copiesOk ? "" : "Copies must be a whole number from 1 to 99");
+  $("print").disabled = !selected || !copiesOk || !pages.length;
   if (!selected) return;
 
   const sides = value("sides");
@@ -192,17 +194,20 @@ function render() {
 function jobCard(jobId) {
   const card = document.createElement("div");
   card.className = "card job";
-  card.setAttribute("role", "status");
+  // The live region is in the page while still empty: screen readers announce text added to a region they already know.
+  const live = document.createElement("div");
+  live.setAttribute("role", "status");
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  card.append(live, cancel);
+  $("jobs").prepend(card);
   const title = document.createElement("strong");
   title.textContent = `Job ${jobId}: `;
   const state = document.createElement("span");
   state.className = "state";
   const detail = document.createElement("p");
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.textContent = "Cancel";
-  card.append(title, state, detail, cancel);
-  $("jobs").prepend(card);
+  live.append(title, state, detail);
 
   let timer;
   const stop = () => {
@@ -231,8 +236,12 @@ function jobCard(jobId) {
   }
   cancel.addEventListener("click", async () => {
     cancel.disabled = true;
-    const res = await apiFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
-    if (!res.ok) detail.textContent = await errorMessage(res);
+    try {
+      const res = await apiFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      if (!res.ok) throw new Error(await errorMessage(res));
+    } catch (e) {
+      detail.textContent = `Cancel failed: ${e.message}`;
+    }
     cancel.disabled = false;
   });
   poll();
@@ -272,7 +281,7 @@ function showConversion(message) {
     e.target.disabled = true;
     e.target.textContent = "Converting…";
     const res = await apiFetch(`/api/docs/${docId}/convert`, { method: "POST" });
-    if (res.ok) return void (location.href = `/print.html?doc=${encodeURIComponent(docId)}`);
+    if (res.ok) return void (location.href = `/print.html?doc=${docId}`);
     $("convert-message").textContent = await errorMessage(res);
     e.target.disabled = false;
     e.target.textContent = "Retry";

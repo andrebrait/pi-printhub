@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
+import { mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
 
 const A4 = { w: 210, h: 297 };
 const A4_PT = [595.28, 841.89];
@@ -90,4 +90,16 @@ test("sheetsFor pairs pages when two-sided", () => {
     { front: 1, back: null },
     { front: 2, back: null },
   ]);
+});
+
+test("mediaLabel gives friendly names and falls back to the raw name", () => {
+  assert.equal(mediaLabel("iso_a4_210x297mm"), "A4 (210 × 297 mm)");
+  assert.equal(mediaLabel("na_letter_8.5x11in"), "Letter (8.5 × 11 in)");
+  assert.equal(mediaLabel("na_legal_8.5x14in"), "Legal (8.5 × 14 in)");
+  assert.equal(mediaLabel("na_number-10_4.125x9.5in"), "Envelope #10 (4.125 × 9.5 in)");
+  assert.equal(mediaLabel("iso_dl_110x220mm"), "Envelope DL (110 × 220 mm)");
+  assert.equal(mediaLabel("na_index-4x6_4x6in"), "4 × 6 in");
+  assert.equal(mediaLabel("na_5x7_5x7in"), "5 × 7 in");
+  assert.equal(mediaLabel("custom_foo"), "custom_foo");
+  assert.equal(mediaLabel("oe_weird_1x2in"), "oe_weird_1x2in");
 });

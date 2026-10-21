@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/** A same-site path (with query and hash) from user-supplied `next`; "/" for anything else. */
+export function safeNext(next, origin) {
+  // Browsers strip tab/CR/LF inside URLs, so "/\t/evil.example" would become "//evil.example".
+  if (!next || /[\x00-\x1f\x7f]/.test(next)) return "/";
+  try {
+    const url = new URL(next, origin);
+    return url.origin === origin ? url.pathname + url.search + url.hash : "/";
+  } catch {
+    return "/";
+  }
+}
+
 function toLogin() {
   const here = location.pathname + location.search;
   location.href = `/login.html?next=${encodeURIComponent(here)}`;
