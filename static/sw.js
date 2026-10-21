@@ -14,6 +14,7 @@ const PRECACHE = [
   "/js/crop.js",
   "/js/layout.js",
   "/js/print.js",
+  "/js/printer-banner.js",
   "/js/scan.js",
   "/js/sw-register.js",
   "/vendor/cropper/cropper.min.css",
@@ -59,8 +60,10 @@ async function networkOrCache(request, url) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const cache = await caches.open(CACHE);
-      await cache.put(url.pathname, response.clone());
+      try {
+        const cache = await caches.open(CACHE);
+        await cache.put(url.pathname, response.clone());
+      } catch { /* The network response remains usable when browser storage is full. */ }
     }
     return response;
   } catch {

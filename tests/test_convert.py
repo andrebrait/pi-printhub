@@ -157,3 +157,10 @@ def test_pdf_page_sizes_without_page_lines_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(convert, "_run", lambda cmd: "Creator: nothing useful\n")
     with pytest.raises(ConversionError):
         pdf_page_sizes(tmp_path / "x.pdf")
+
+
+def test_transparent_png_keeps_source_density(tmp_path):
+    src, out = tmp_path / "dense.png", tmp_path / "dense.pdf"
+    Image.new("RGBA", (300, 600), (0, 0, 0, 0)).save(src, dpi=(300, 300))
+    normalize(src, out)
+    assert pdf_page_sizes(out)[0] == pytest.approx((72, 144), abs=0.1)

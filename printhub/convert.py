@@ -134,10 +134,11 @@ def _png_to_pdf(src: Path, out_pdf: Path) -> None:
             _image_to_pdf(src, out_pdf)
             return
         rgba = im.convert("RGBA")
+        density = {"dpi": im.info["dpi"]} if "dpi" in im.info else {}
         flat = Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB")
     with tempfile.TemporaryDirectory(dir=out_pdf.parent) as tmp:
         flat_png = Path(tmp) / "flat.png"
-        flat.save(flat_png)
+        flat.save(flat_png, **density)
         _image_to_pdf(flat_png, out_pdf)
 
 

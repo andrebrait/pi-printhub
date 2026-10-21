@@ -184,7 +184,7 @@ def test_upload_file_over_limit_is_rejected_and_removed(client, store):
 
     r = client.post("/api/uploads", content=body(), headers=MULTIPART)
     assert r.status_code == 413
-    assert list(store.root.iterdir()) == []
+    assert [p for p in store.root.iterdir() if p.name != ".locks"] == []
 
 
 def asgi_post(app, path: str, headers: dict[str, str]) -> tuple[int, int]:
@@ -256,7 +256,7 @@ def test_disk_error_while_writing_is_disk_full(client, store, monkeypatch):
     r = client.post("/api/uploads", files={"file": ("a.jpg", jpeg_bytes(), "image/jpeg")})
     assert r.status_code == 507
     assert r.json() == {"error": "Disk full"}
-    assert list(store.root.iterdir()) == []
+    assert [p for p in store.root.iterdir() if p.name != ".locks"] == []
 
 
 def test_upload_exe_unsupported(client, store):
@@ -264,7 +264,7 @@ def test_upload_exe_unsupported(client, store):
     r = client.post("/api/uploads", files={"file": ("setup.exe", exe, "application/octet-stream")})
     assert r.status_code == 415
     assert r.json()["error"].startswith("Unsupported file type: ")
-    assert list(store.root.iterdir()) == []
+    assert [p for p in store.root.iterdir() if p.name != ".locks"] == []
 
 
 def test_upload_conversion_error_keeps_doc_for_retry(client, store):
@@ -378,7 +378,7 @@ def test_page_image_full_and_thumb(client, store):
     assert (store.path(doc.id) / "thumbs" / "p.jpg").is_file()
     assert client.get(f"/api/docs/{doc.id}/pages/missing").status_code == 404
     page = client.get(f"/api/docs/{doc.id}").json()["pages"][0]
-    assert page["page_info"] == {"width": 1600, "height": 1200, "mcu": [16, 16]}
+    assert page["page_info"] == {"width": 1600, "height": 1200, "mcu": [16, 16], "dpi": [96, 96]}
 
 
 def test_page_image_rotated(client, store, cfg):
@@ -437,7 +437,8 @@ def test_print_scan_doc(client, store, fake_cups):
     job_id = r.json()["job_id"]
     ((queue, path, _, options),) = fake_cups.printed
     assert queue == "OfficeJet"
-    assert path == str(store.path(doc.id) / "print.pdf")
+    assert Path(path).name == "print.pdf"
+    assert not Path(path).exists()  # request-private scan PDF is removed after CUPS reads it
     assert options["sides"] == "two-sided-long-edge"
     assert options["copies"] == "1"
     assert [p.job_id for p in store.get(doc.id).prints] == [job_id]

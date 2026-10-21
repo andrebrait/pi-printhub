@@ -23,13 +23,19 @@ The script installs packages, creates the CUPS queue, builds AirSane, installs T
 
 Before the web app is reachable:
 
-1. **Cloudflare token:** create an API token with scope *Zone → DNS → Edit* on `brait.dev`. Traefik uses it for the Let's Encrypt DNS challenge.
+1. **Cloudflare token:** create one `CF_DNS_API_TOKEN` with both *Zone → Zone → Read* and *Zone → DNS → Edit*, scoped only to `brait.dev`. Traefik/lego uses it to find the zone and complete Let's Encrypt DNS-01. Do not use a global API key.
 2. **LAN DNS override:** point `print.brait.dev` at the Pi's LAN address in your router or local DNS. The installer prints the address at the end.
 3. **DHCP reservation:** reserve that address for the Pi's MAC address (also printed), so the override stays valid.
 
 Update: `git pull && sudo deploy/install.sh`. It skips steps that are already done, restarts `printhub`, `traefik` and `airsaned` and keeps existing configuration. Logs: `journalctl -u printhub -u traefik -u airsaned`.
 
 Before a release, work through [`docs/hardware-checklist.md`](docs/hardware-checklist.md) on the Pi.
+
+## Document safety
+
+Cleanup skips documents used by conversions, scans, exports, downloads, email or print submission. Cross-process locks live under `data_dir/docs/.locks`; do not remove these files while either the app or retention timer is running. Metadata transactions are atomic and serialized. Interrupted scans recover on startup with completed pages intact and a Retry message.
+
+Anonymous shares are admitted before body spooling: one at a time, bounded by the 5-file/200MiB pending quota and a maximum-body free-space reservation. They never trigger cleanup.
 
 ## Tests
 

@@ -45,20 +45,6 @@ import { apiFetch, errorMessage, uploadFile } from "/js/api.js";
 
 const $ = (id) => document.getElementById(id);
 
-async function refreshPrinter() {
-  const banner = $("printer-banner");
-  try {
-    const res = await apiFetch("/api/printer");
-    if (!res.ok) throw new Error(await errorMessage(res));
-    const p = await res.json();
-    const reasons = p.state_reasons.join(", ");
-    banner.hidden = !(p.state === "stopped" || reasons);
-    banner.textContent = `Printer ${p.state}${reasons ? `: ${reasons}` : ""}`;
-  } catch (e) {
-    banner.hidden = false;
-    banner.textContent = `Printer status unavailable: ${e.message}`;
-  }
-}
 
 function fill(list, docs, page) {
   list.replaceChildren();
@@ -141,10 +127,9 @@ $("logout").addEventListener("click", async () => {
   location.href = "/login.html";
 });
 
-refreshPrinter();
 refreshDocs();
-setInterval(refreshPrinter, 10_000);
 </script>
+<script type="module" src="/js/printer-banner.js"></script>
 <script type="module" src="/js/sw-register.js"></script>
 </body>
 </html>

@@ -6,8 +6,9 @@ import shutil
 import tempfile
 import threading
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path, PurePath
 from typing import BinaryIO, Literal
 from urllib.parse import quote
@@ -33,7 +34,7 @@ from printhub.auth import (
     verify_password,
 )
 from printhub.config import Config, load_config
-from printhub.documents import Crop, Doc, DocNotFound, DocStore, MailRecord, Page, PrintRecord
+from printhub.documents import Crop, Doc, DocBusy, DocNotFound, DocStore, MailRecord, Page, PrintRecord
 from printhub.mail import (
     Attachment,
     AttachmentTooLarge,
@@ -42,9 +43,9 @@ from printhub.mail import (
     RecentRecipients,
     send,
 )
-from printhub.middleware import MAX_UPLOAD, Guard
+from printhub.middleware import MAX_BODY, MAX_UPLOAD, Guard
 from printhub.printing import PrintOptions
-from printhub.retention import DiskFull, ensure_free_space
+from printhub.retention import DiskFull, busy_policy, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
 
 THUMB_PX = 400
@@ -111,6 +112,18 @@ def _copy_limited(src: BinaryIO, dest: Path) -> None:
         dest.unlink(missing_ok=True)
         raise ApiError(507, "Disk full") from None
 
+class DocumentResponse(Response):
+    def __init__(self, response, guards):
+        super().__init__(status_code=response.status_code, background=response.background)
+        self.response, self.guards = response, guards
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await self.response(scope, receive, send)
+        finally:
+            self.guards.close()
+
+
 
 def create_app(
     cfg: Config,
@@ -121,6 +134,17 @@ def create_app(
 ) -> FastAPI:
     store = DocStore(cfg.data_dir / "docs")
     store.root.mkdir(parents=True, exist_ok=True)
+    for interrupted in store.list("scan"):
+        if not interrupted.scanning and not (store.path(interrupted.id) / "incoming").exists():
+            continue
+        try:
+            with store.transaction(interrupted.id, exclusive=True) as doc:
+                if doc.scanning:
+                    doc.scanning = False
+                    doc.scan_error = "Scan interrupted; retry to continue."
+                shutil.rmtree(store.path(doc.id) / "incoming", ignore_errors=True)
+        except DocNotFound:
+            pass
     pending_dir, tmp_root = cfg.data_dir / "pending", cfg.data_dir / "tmp"
     # Pending shares live in memory only, so their files are orphans after a restart.
     for d in (pending_dir, tmp_root):
@@ -132,8 +156,38 @@ def create_app(
     limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
     recipients = RecentRecipients(cfg.data_dir / "recipients.json")
 
+    def admit_share():
+        if not share_lock.acquire(blocking=False):
+            return JSONResponse({"error": "Another share is uploading"}, 429)
+        try:
+            pending = shares.paths(time.monotonic())
+            if len(pending) >= PENDING_MAX_COUNT or sum(p.stat().st_size for p in pending if p.exists()) + MAX_UPLOAD > PENDING_MAX_BYTES:
+                denied = JSONResponse({"error": "Too many pending shares"}, 429)
+            elif free_bytes() < min_free + MAX_BODY:
+                denied = JSONResponse({"error": "Disk full"}, 507)
+            else:
+                return None
+        except BaseException:
+            share_lock.release()
+            raise
+        share_lock.release()
+        return denied
+
     app = FastAPI(openapi_url=None)
-    app.add_middleware(Guard, cfg=cfg)
+    app.add_middleware(Guard, cfg=cfg, admit_share=admit_share, release_share=share_lock.release)
+
+    def using_document(fn=None, *, exclusive=False):
+        def decorate(fn):
+            @functools.wraps(fn)
+            def guarded(doc_id, *args, **kwargs):
+                with ExitStack() as guards:
+                    guards.enter_context(store.use(doc_id, exclusive=exclusive))
+                    result = fn(doc_id, *args, **kwargs)
+                    if isinstance(result, FileResponse):
+                        return DocumentResponse(result, guards.pop_all())
+                    return result
+            return guarded
+        return decorate(fn) if fn else decorate
 
     @app.exception_handler(ApiError)
     async def api_error(request, exc: ApiError):
@@ -143,28 +197,20 @@ def create_app(
     async def not_found(request, exc):
         return JSONResponse({"error": "Not found"}, 404)
 
+    @app.exception_handler(DocBusy)
+    async def doc_busy(request, exc):
+        return JSONResponse({"error": "Document is busy"}, 409)
+
     @app.exception_handler(RequestValidationError)
     async def invalid(request, exc: RequestValidationError):
         msg = "; ".join(f"{'.'.join(map(str, e['loc'][1:]))}: {e['msg']}" for e in exc.errors())
         return JSONResponse({"error": msg}, 400)
 
-    def busy() -> set[str]:
-        docs = store.list()
-        ids = {d.id for d in docs if d.scanning}
-        try:
-            active = printing.active_job_ids(cups_conn_factory(), cfg.printer_queue)
-            printing_ids = {d.id for d in docs if any(p.job_id in active for p in d.prints)}
-        except CUPS_ERRORS:
-            # Without CUPS, assume any recent job may still be printing.
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-            printing_ids = {
-                d.id for d in docs if any(datetime.fromisoformat(p.at) > cutoff for p in d.prints)
-            }
-        return ids | printing_ids
+    busy = busy_policy(cfg, cups_conn_factory)
 
     def make_room() -> None:
         try:
-            ensure_free_space(store, min_free, busy(), free_bytes)
+            ensure_free_space(store, min_free, busy, free_bytes)
         except DiskFull:
             raise ApiError(507, "Disk full") from None
 
@@ -175,22 +221,26 @@ def create_app(
             path.unlink()
             raise ApiError(415, f"Unsupported file type: {e}") from None
 
-    def ingest(src: BinaryIO, filename: str) -> str:
-        """Store an upload as a new print doc; returns its id."""
+    @contextmanager
+    def ingest(src: BinaryIO, filename: str):
+        """Pin the new upload through conversion, before exposing it to reclamation."""
         make_room()
         name = PurePath(filename).name or "document"
-        doc = store.create("print", PurePath(name).stem or name)
-        doc.source_name = name
-        store.save(doc)
-        ext = PurePath(name).suffix
-        dest = store.path(doc.id) / f"source{ext if re.fullmatch(r'\.[A-Za-z0-9]{1,10}', ext) else ''}"
-        try:
-            _copy_limited(src, dest)
-            detect(dest)
-        except ApiError:
+        failed = None
+        with store.new("print", PurePath(name).stem or name) as doc:
+            with store.transaction(doc.id) as current:
+                current.source_name = name
+            ext = PurePath(name).suffix
+            dest = store.path(doc.id) / f"source{ext if re.fullmatch(r'\.[A-Za-z0-9]{1,10}', ext) else ''}"
+            try:
+                _copy_limited(src, dest)
+                detect(dest)
+                yield doc.id
+            except ApiError as exc:
+                failed = exc
+        if failed:
             store.delete(doc.id)
-            raise
-        return doc.id
+            raise failed
 
     def conversion_error(doc_id: str) -> str | None:
         d = store.path(doc_id)
@@ -265,23 +315,18 @@ def create_app(
     @app.post("/share")
     def share(request: Request, file: UploadFile):
         if session_valid(cfg, request.cookies.get(COOKIE)):
-            doc_id = ingest(file.file, file.filename or "")
-            conversion_error(doc_id)  # print.html shows the failure and offers Retry
-            return RedirectResponse(f"/print.html?doc={doc_id}", 303)
+            with ingest(file.file, file.filename or "") as doc_id:
+                conversion_error(doc_id)  # print.html shows the failure and offers Retry
+                return RedirectResponse(f"/print.html?doc={doc_id}", 303)
         # Anonymous: never evict documents, and bound what strangers can park on disk.
-        with share_lock:
-            if free_bytes() < min_free:
-                raise ApiError(507, "Disk full")
-            pending = shares.paths(time.monotonic())
-            if len(pending) >= PENDING_MAX_COUNT:
-                raise ApiError(429, "Too many pending shares")
-            path = pending_dir / secrets.token_urlsafe(16)
+        path = pending_dir / secrets.token_urlsafe(16)
+        try:
             _copy_limited(file.file, path)
             detect(path)
-            if sum(p.stat().st_size for p in [*pending, path] if p.exists()) > PENDING_MAX_BYTES:
-                path.unlink()
-                raise ApiError(429, "Too many pending shares")
             token = shares.put(path, file.filename or "", time.monotonic())
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
         return RedirectResponse(f"/login.html?share={token}", 303)
 
     # Session routes
@@ -298,7 +343,8 @@ def create_app(
 
     @api.post("/uploads")
     def upload(file: UploadFile):
-        return converted(ingest(file.file, file.filename or ""))
+        with ingest(file.file, file.filename or "") as doc_id:
+            return converted(doc_id)
 
     @api.post("/share/{token}/claim")
     def claim(token: str):
@@ -311,16 +357,17 @@ def create_app(
         except FileNotFoundError:
             raise ApiError(410, "Share expired") from None
         try:
-            with f:
-                doc_id = ingest(f, filename)
+            with f, ingest(f, filename) as doc_id:
+                result = converted(doc_id)
         except ApiError:
             # e.g. disk full: keep the share so the same link can be retried
             shares.put(path, filename, time.monotonic(), token=token)
             raise
         path.unlink(missing_ok=True)
-        return converted(doc_id)
+        return result
 
     @api.post("/docs/{doc_id}/convert")
+    @using_document(exclusive=True)
     def retry_convert(doc_id: str):
         if store.get(doc_id).kind != "print":
             raise ApiError(400, "Only print documents are converted")
@@ -330,58 +377,62 @@ def create_app(
 
     @api.get("/docs")
     def list_docs(kind: Literal["print", "scan"] | None = None):
-        return [
-            {"id": d.id, "kind": d.kind, "title": d.title, "modified": d.modified, "page_count": page_count(d)}
-            for d in store.list(kind)
-        ]
+        out = []
+        for snapshot in store.list(kind):
+            try:
+                with store.use(snapshot.id) as d:
+                    out.append({"id": d.id, "kind": d.kind, "title": d.title, "modified": d.modified, "page_count": page_count(d)})
+            except DocNotFound:
+                continue
+        return out
 
     @api.get("/docs/{doc_id}")
+    @using_document
     def get_doc(doc_id: str):
         return doc_json(store.get(doc_id))
 
     @api.patch("/docs/{doc_id}")
     def patch_doc(doc_id: str, body: DocPatch):
-        doc = store.get(doc_id)
-        if doc.scanning:
-            raise ApiError(409, "Document is being scanned")
-        if body.title is not None:
-            if not body.title.strip():
-                raise ApiError(400, "Title must not be empty")
-            doc.title = body.title.strip()
         removed: set[str] = set()
-        if body.pages is not None:
-            ids = [p.id for p in body.pages]
-            known = {p.id for p in doc.pages}
-            if len(set(ids)) != len(ids) or not known.issuperset(ids):
-                raise ApiError(400, "Pages must be distinct pages of this document")
-            pages = []
-            for edit in body.pages:
-                page = Page(edit.id, edit.rotation)
-                if edit.crop is not None:
-                    info = edits.page_info(page_path(doc, edit.id), page)
-                    try:
-                        page.crop = edits.snap_crop(edit.crop, (info["width"], info["height"]), tuple(info["mcu"]))
-                    except ValueError as e:
-                        raise ApiError(400, str(e)) from None
-                pages.append(page)
-            removed = known - set(ids)
-            doc.pages = pages
-        store.save(doc)
-        # Files go only after doc.json no longer references them.
-        d = store.path(doc.id)
+        with store.transaction(doc_id, exclusive=body.pages is not None, blocking=False) as doc:
+            if doc.scanning:
+                raise ApiError(409, "Document is being scanned")
+            if body.title is not None:
+                if not body.title.strip():
+                    raise ApiError(400, "Title must not be empty")
+                doc.title = body.title.strip()
+            if body.pages is not None:
+                ids = [p.id for p in body.pages]
+                known = {p.id for p in doc.pages}
+                if len(set(ids)) != len(ids) or not known.issuperset(ids):
+                    raise ApiError(400, "Pages must be distinct pages of this document")
+                pages = []
+                for edit in body.pages:
+                    page = Page(edit.id, edit.rotation)
+                    if edit.crop is not None:
+                        info = edits.page_info(page_path(doc, edit.id), page)
+                        try:
+                            page.crop = edits.snap_crop(edit.crop, (info["width"], info["height"]), tuple(info["mcu"]))
+                        except ValueError as e:
+                            raise ApiError(400, str(e)) from None
+                    pages.append(page)
+                removed = known - set(ids)
+                doc.pages = pages
+            out = doc_json(doc)
+        out["modified"] = doc.modified
+        # The exclusive use guard drained old readers before removing these references.
         for page_id in removed:
-            (d / "pages" / f"{page_id}.jpg").unlink(missing_ok=True)
-            (d / "thumbs" / f"{page_id}.jpg").unlink(missing_ok=True)
-        return doc_json(doc)
+            (store.path(doc_id) / "pages" / f"{page_id}.jpg").unlink(missing_ok=True)
+            (store.path(doc_id) / "thumbs" / f"{page_id}.jpg").unlink(missing_ok=True)
+        return out
 
     @api.delete("/docs/{doc_id}", status_code=204)
     def delete_doc(doc_id: str):
-        store.get(doc_id)
-        if doc_id in busy():
+        if not store.delete(doc_id, lambda doc: not busy(doc)):
             raise ApiError(409, "Document is busy")
-        store.delete(doc_id)
 
     @api.get("/docs/{doc_id}/pages/{page_id}")
+    @using_document
     def page_image(doc_id: str, page_id: str, size: Literal["thumb", "full"] = "full", rotated: bool = False):
         doc = store.get(doc_id)
         src = page_path(doc, page_id)
@@ -411,6 +462,7 @@ def create_app(
         return FileResponse(thumb, media_type="image/jpeg")
 
     @api.get("/docs/{doc_id}/preview/{n}")
+    @using_document
     def preview(doc_id: str, n: int):
         store.get(doc_id)
         pngs = previews(doc_id)
@@ -430,20 +482,29 @@ def create_app(
 
     @api.post("/scans", status_code=202)
     def start_scan(body: ScanRequest):
-        make_room()
         if body.doc_id is None:
-            doc = store.create("scan", f"Scan {datetime.now():%Y-%m-%d %H-%M}")
-        elif (doc := store.get(body.doc_id)).kind != "scan":
-            raise ApiError(400, "Only scan documents take scanned pages")
-        try:
-            scanner.start(store, doc.id, body.settings)
-        except ScannerBusy:
-            if body.doc_id is None:
-                store.delete(doc.id)
-            raise ApiError(409, "Scanner busy") from None
-        return {"doc_id": doc.id}
+            make_room()
+            with store.new("scan", f"Scan {datetime.now():%Y-%m-%d %H-%M}") as doc:
+                try:
+                    scanner.start(store, doc.id, body.settings)
+                except ScannerBusy:
+                    pass
+                else:
+                    return {"doc_id": doc.id}
+            store.delete(doc.id)
+            raise ApiError(409, "Scanner busy")
+        with store.use(body.doc_id) as doc:
+            if doc.kind != "scan":
+                raise ApiError(400, "Only scan documents take scanned pages")
+            make_room()
+            try:
+                scanner.start(store, doc.id, body.settings)
+            except ScannerBusy:
+                raise ApiError(409, "Scanner busy") from None
+            return {"doc_id": doc.id}
 
     @api.get("/docs/{doc_id}/export")
+    @using_document
     def export(doc_id: str, format: Literal["pdf", "jpeg"]):
         doc = store.get(doc_id)
         require_pages(doc)
@@ -463,28 +524,30 @@ def create_app(
         return FileResponse(out, media_type=media, headers=headers, background=cleanup)
 
     @api.post("/docs/{doc_id}/print")
+    @using_document
     def print_doc(doc_id: str, opts: PrintOptions):
         doc = store.get(doc_id)
-        pdf = store.path(doc_id) / "print.pdf"
-        if doc.kind == "scan":
-            require_pages(doc)
-            edits.export_pdf(store, doc, pdf)
-        elif not pdf.exists():
-            raise ApiError(400, "Document has not been converted")
-        conn = cups_conn()
-        info = printer_info(conn)
-        try:
-            printing.validate(opts, info)
-        except ValueError as e:
-            raise ApiError(400, str(e)) from None
-        try:
-            job_id = printing.submit(conn, cfg.printer_queue, pdf, doc.title, opts, info)
-        except CUPS_ERRORS:
-            raise ApiError(503, "CUPS unavailable") from None
-        doc = store.get(doc_id)
+        with tempfile.TemporaryDirectory(dir=tmp_root) as tmp:
+            pdf = store.path(doc_id) / "print.pdf"
+            if doc.kind == "scan":
+                require_pages(doc)
+                pdf = Path(tmp) / "print.pdf"
+                edits.export_pdf(store, doc, pdf)
+            elif not pdf.exists():
+                raise ApiError(400, "Document has not been converted")
+            conn = cups_conn()
+            info = printer_info(conn)
+            try:
+                printing.validate(opts, info)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            try:
+                job_id = printing.submit(conn, cfg.printer_queue, pdf, doc.title, opts, info)
+            except CUPS_ERRORS:
+                raise ApiError(503, "CUPS unavailable") from None
         options = {k: str(v) for k, v in asdict(opts).items() if v is not None}
-        doc.prints.append(PrintRecord(job_id=job_id, at=_now(), options=options))
-        store.save(doc)
+        with store.transaction(doc_id) as current:
+            current.prints.append(PrintRecord(job_id=job_id, at=_now(), options=options))
         return {"job_id": job_id}
 
     @api.get("/jobs/{job_id}")
@@ -505,6 +568,7 @@ def create_app(
             raise ApiError(404, "Unknown job") from None
 
     @api.post("/docs/{doc_id}/email", status_code=204)
+    @using_document
     def email(doc_id: str, body: EmailRequest):
         doc = store.get(doc_id)
         require_pages(doc)
@@ -529,9 +593,8 @@ def create_app(
             raise ApiError(413, "Attachments exceed 25 MB") from None
         except MailError as e:
             raise ApiError(502, str(e)) from None
-        doc = store.get(doc_id)
-        doc.mails.append(MailRecord(at=_now(), to=body.to, subject=body.subject, format=body.format))
-        store.save(doc)
+        with store.transaction(doc_id) as current:
+            current.mails.append(MailRecord(at=_now(), to=body.to, subject=body.subject, format=body.format))
         recipients.add(body.to)
 
     @api.get("/recipients")

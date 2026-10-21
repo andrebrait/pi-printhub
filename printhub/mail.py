@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import smtplib
 import ssl
+import tempfile
 from dataclasses import dataclass
 from email.errors import MessageError
 from email.headerregistry import Address
@@ -111,13 +113,23 @@ class RecentRecipients:
         return json.loads(self.path.read_text())
 
     def add(self, addrs: list[str]) -> None:
-        seen: set[str] = set()
-        merged: list[str] = []
-        for addr in [*addrs, *self.list()]:
-            if addr.lower() not in seen:
-                seen.add(addr.lower())
-                merged.append(addr)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(merged[:RECENT_LIMIT]))
-        os.replace(tmp, self.path)
+        with self.path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            seen: set[str] = set()
+            merged: list[str] = []
+            for addr in [*addrs, *self.list()]:
+                if addr.lower() not in seen:
+                    seen.add(addr.lower())
+                    merged.append(addr)
+            tmp = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, suffix=".tmp", delete=False) as out:
+                    tmp = Path(out.name)
+                    json.dump(merged[:RECENT_LIMIT], out)
+                    out.flush()
+                    os.fsync(out.fileno())
+                os.replace(tmp, self.path)
+            finally:
+                if tmp is not None:
+                    tmp.unlink(missing_ok=True)

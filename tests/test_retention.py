@@ -35,7 +35,7 @@ def test_purge_deletes_only_docs_older_than_retention(store):
     old31 = make_doc(store, 31)
     old40 = make_doc(store, 40)
 
-    deleted = purge_expired(store, 30, NOW, busy=set())
+    deleted = purge_expired(store, 30, NOW, busy=lambda d: False)
 
     assert sorted(deleted) == sorted([old31, old40])
     assert [d.id for d in store.list()] == [young]
@@ -44,14 +44,14 @@ def test_purge_deletes_only_docs_older_than_retention(store):
 def test_purge_spares_busy_docs(store):
     old = make_doc(store, 40)
 
-    assert purge_expired(store, 30, NOW, busy={old}) == []
+    assert purge_expired(store, 30, NOW, busy=lambda d: d.id == old) == []
     assert [d.id for d in store.list()] == [old]
 
 
 def test_ensure_free_space_deletes_oldest_first_and_stops_when_enough(store):
     ages = {age: make_doc(store, age) for age in (5, 10, 20, 40)}
 
-    ensure_free_space(store, 200, busy=set(), free_bytes=fake_disk(store, 4))
+    ensure_free_space(store, 200, busy=lambda d: False, free_bytes=fake_disk(store, 4))
 
     assert {d.id for d in store.list()} == {ages[10], ages[5]}
 
@@ -61,7 +61,7 @@ def test_ensure_free_space_skips_busy_docs(store):
     make_doc(store, 20)
     make_doc(store, 5)
 
-    ensure_free_space(store, 200, busy={oldest}, free_bytes=fake_disk(store, 3))
+    ensure_free_space(store, 200, busy=lambda d: d.id == oldest, free_bytes=fake_disk(store, 3))
 
     assert [d.id for d in store.list()] == [oldest]
 
@@ -72,7 +72,7 @@ def test_ensure_free_space_raises_when_only_busy_docs_remain(store):
     make_doc(store, 5)
 
     with pytest.raises(DiskFull):
-        ensure_free_space(store, 300, busy={oldest, mid}, free_bytes=fake_disk(store, 3))
+        ensure_free_space(store, 300, busy=lambda d: d.id in {oldest, mid}, free_bytes=fake_disk(store, 3))
     assert {d.id for d in store.list()} == {oldest, mid}
 
 

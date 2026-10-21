@@ -85,16 +85,17 @@
   - `class DocStore(root: Path)`, where `root` is `data_dir / "docs"`:
     - `create(kind, title) -> Doc`: makes the directory with a `pages/` subdirectory and writes `doc.json`.
     - `get(id) -> Doc`: raises `DocNotFound`.
-    - `save(doc) -> None`: sets `modified` to now and writes atomically (temp file plus `os.replace`).
+    - `transaction(id, exclusive=False, blocking=True)`: context manager that locks use then metadata, re-reads the document, and commits on success with a unique same-directory temporary file, fsync and `os.replace`. All application metadata mutations use it; `save` is the low-level snapshot writer used by transaction/fixture setup, not a get/modify/save API for concurrent operations.
     - `list(kind=None) -> list[Doc]`, newest `modified` first.
-    - `delete(id) -> None`
+    - `use(id, exclusive=False, blocking=True)`: pin originals across an operation; `new(kind, title)` pins before publishing a new directory. Unix `flock` identities stay at `docs/.locks/<id>.use` and `<id>.metadata`, outside deleted document dirs, and are never unlinked.
+    - `delete(id, eligible) -> bool`: nonblocking exclusive use lock, then metadata lock; re-read and evaluate `eligible` under both before deletion. Raises `DocBusy` when pinned. Page-changing PATCH also requires exclusive use (409 while originals are in use); renames only need a shared use lock plus metadata transaction.
     - `path(id) -> Path`
   - `DocNotFound(KeyError)`
   - `printhub/retention.py`:
-    - `purge_expired(store, retention_days, now: datetime, busy: set[str]) -> list[str]`: deletes documents whose `modified` is older than `retention_days` and returns their IDs.
-    - `ensure_free_space(store, min_free_bytes: int, busy: set[str], free_bytes: Callable[[], int]) -> None`: deletes the oldest non-busy documents until `free_bytes() >= min_free_bytes`, else raises `DiskFull`.
+    - `purge_expired(store, retention_days, now: datetime, busy: Callable[[Doc], bool]) -> list[str]`: rechecks age and busy eligibility under deletion locks and returns deleted IDs.
+    - `ensure_free_space(store, min_free_bytes: int, busy: Callable[[Doc], bool], free_bytes: Callable[[], int]) -> None`: tries oldest-first eligible documents, skipping held use locks, until enough space exists; otherwise raises `DiskFull`.
     - `DiskFull(Exception)`
-    - `main()`: entry point for `python3 -m printhub.retention`, which loads the config and calls `purge_expired` with `busy=set()`.
+    - `main()`: loads config and uses the same `busy_policy` as request cleanup: persisted scanning, real active CUPS IDs, and protection of every history-bearing document when CUPS cannot answer (held jobs have no age bound).
 
 - [ ] **Step 1: Write the failing tests.**
   - `test_documents.py`:
@@ -126,7 +127,7 @@
   - `rotated_size(w: int, h: int, rotation: int, mcu: tuple[int, int]) -> tuple[int, int]`: the image size after `jpegtran -rotate R -trim`. Partial iMCUs on the edges that the transform moves are trimmed.
   - `snap_crop(crop: Crop, size: tuple[int, int], mcu: tuple[int, int]) -> Crop`: clamps the crop to the image, snaps `x` and `y` down to multiples of the iMCU, and grows `w` and `h` so the right and bottom edges stay put, still clamped to the image.
   - `apply_edits(src: Path, page: Page, dst: Path) -> None`: runs one `jpegtran -copy all [-rotate R -trim] [-crop WxH+X+Y]` invocation. It copies the file unchanged when there is no rotation and no crop. `mcu` is swapped for 90° and 270°.
-  - `page_info(src: Path, page: Page) -> dict`: returns `{"width", "height", "mcu": [w, h]}` for the rotated page, which the editor uses to draw the snapped box.
+  - `page_info(src: Path, page: Page) -> dict`: returns rotated `width`, `height`, `mcu: [w, h]`, and original JPEG `dpi: [x, y]` (jpegtran preserves density axes). Both print preview and export use per-page density, never the last document-wide scan resolution.
   - `export_pdf(store, doc, out: Path) -> None`: applies edits to every page into a temp directory, then `img2pdf.convert` writes the PDF.
   - `export_jpeg(store, doc, out_dir: Path) -> Path`: returns `<title>.jpg` for one page, or `<title>.zip` holding `01.jpg`, `02.jpg`, and so on for several.
 
@@ -344,7 +345,8 @@
 - Middleware:
   - The origin check (`origin_ok`; 403 on failure) applies to every route except `POST /share`.
   - Every `/api/*` route except `POST /api/login` uses `require_session`.
-- Busy set for retention: `{doc.id for docs with scanning}` ∪ the doc IDs whose `prints` hold a job ID in `active_job_ids`.
+- Lifecycle: pin append targets before reclamation; hold use locks across conversion/export/mail/print and the entire scan worker lifetime, including metadata history updates. File-response pins last through delivery/error/disconnect. Scan prints use request-private PDFs until CUPS `printFile` returns. Startup clears interrupted scanning flags with a retryable error and removes abandoned incoming files without deleting completed JPEGs; thread-launch failure rolls back flags and releases pins.
+- Anonymous `/share`: before multipart parsing, nonblocking one-in-flight admission reserves the maximum upload against the 5-pending/200MiB quota and checks free bytes for the whole maximum body plus the free-space floor. Every completion/error/disconnect releases admission; never evict anonymously.
 - Routes (JSON unless noted):
 
 | Method and path | Behavior | Errors |
@@ -520,7 +522,7 @@
   3. Build AirSane from a pinned tag in `/usr/local/src/AirSane` (`cmake && make && make install`). Set `LOCAL_SCANNERS_ONLY=false` in `/etc/default/airsane`, because with ipp-usb the scanner reaches SANE through sane-airscan. Enable `airsaned`.
   4. Download a pinned Traefik v3 `linux_arm64` tarball from GitHub releases, verify its SHA-256 against the release checksums file, and install it to `/usr/local/bin/traefik`. Install `deploy/traefik/*` to `/etc/traefik/`.
   5. Create the system user `printhub` (groups `lp`, `lpadmin`, `scanner`) and the directory `/var/lib/printhub` (0750). Copy `printhub/` and `static/` to `/opt/printhub/`.
-  6. If `/etc/printhub/config.toml` is missing, prompt for the web password (stored hashed via `python3 -c 'from printhub.auth import hash_password…'`) and the SMTP settings, generate `session_secret` with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`, and write the file with mode 0600, owned by `printhub`. If `/etc/traefik/traefik.env` is missing, prompt for `CF_DNS_API_TOKEN` and the ACME email, and write it with mode 0600.
+  6. If `/etc/printhub/config.toml` is missing, prompt for the web password (stored hashed via `python3 -c 'from printhub.auth import hash_password…'`) and the SMTP settings, generate `session_secret` with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`, and write the file with mode 0600, owned by `printhub`. If `/etc/traefik/traefik.env` is missing, prompt for one `CF_DNS_API_TOKEN` with BOTH Zone → Zone → Read and Zone → DNS → Edit scoped only to `brait.dev` (never a global API key), and the ACME email, and write it with mode 0600.
   7. Install the systemd units, `daemon-reload`, then `enable --now printhub traefik airsaned printhub-retention.timer`.
   8. Print the LAN DNS override and DHCP reservation the user must add, with the Pi's current address.
 - `printhub.service`:

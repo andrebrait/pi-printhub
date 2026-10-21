@@ -72,10 +72,13 @@ Every print upload and every scan is a document stored in `/var/lib/printhub/doc
 - `source.<ext>` and `print.pdf`: for print documents, the uploaded file and its normalized PDF.
 - `thumbs/`: derived thumbnails, regenerated as needed.
 
+Document lifetimes use Unix `flock`: stable `docs/.locks/<id>.use` and `<id>.metadata` files are outside document directories and never unlinked. Operations pin originals with shared use locks; deletion takes exclusive use nonblocking and rechecks current metadata and eligibility. All mutations serialize the entire re-read/check/modify/save transaction under an exclusive metadata lock, acquired after use; writes use unique same-directory temporary files, fsync and atomic replacement. Page-changing PATCH takes exclusive use (409 while in use), so it cannot unlink a reader's originals. Renames remain shared-use transactions.
+
 ### Retention and disk space
 
-- An hourly systemd timer deletes documents whose last-modified time is older than `retention_days` (default 30).
-- Before writing an upload or a scan, `printhub` ensures that at least `min_free_gb` (default 2) is free on the data filesystem. While free space is below that value, it deletes the oldest document by last-modified time, skipping documents with a print job that has not completed or a scan in progress. If no deletable document remains and space is still short, the request fails with an explicit "Disk full" error.
+- An hourly systemd timer deletes documents whose last-modified time is older than `retention_days` (default 30), rechecking expiry and the shared busy policy under deletion locks.
+- Before writing an upload or a scan, `printhub` ensures that at least `min_free_gb` (default 2) is free. Cleanup visits oldest-first eligible documents, skipping active CUPS jobs, scans and operation pins (conversion/export/mail/print/file delivery). Append targets are pinned before reclamation. When CUPS cannot answer, protect all print history because held jobs have no age bound. If none can be reclaimed, return "Disk full".
+- Anonymous shares never evict. Before the first body read, a nonblocking single-in-flight reservation checks the 5-pending/200MiB quota against the maximum upload and free space against the maximum multipart body plus the configured floor. Admission is released on success, refusal, malformed input and disconnect.
 
 ### Configuration
 
@@ -86,7 +89,7 @@ Every print upload and every scan is a document stored in `/var/lib/printhub/doc
 - `retention_days`, `min_free_gb`
 - `printer_queue` (default `OfficeJet`)
 
-The SMTP password is stored in plain text in this file; unattended sending requires it. The Cloudflare API token, scoped to Zone → DNS → Edit on `brait.dev`, lives in Traefik's environment file with mode `0600`.
+The SMTP password is stored in plain text in this file; unattended sending requires it. One `CF_DNS_API_TOKEN`, with both Zone → Zone → Read and Zone → DNS → Edit scoped only to `brait.dev`, lives in Traefik's environment file with mode `0600`. Zone Read lets lego resolve the zone ID; DNS Edit permits the DNS-01 TXT records. Never use a global API key.
 
 ## 5. Printing from the web application
 
@@ -141,6 +144,7 @@ Print documents follow the retention rules in section 4. A "Recent prints" list 
 - `scanimage` writes lossless PNG; `printhub` encodes it once as JPEG at quality 90 and discards the PNG. That is the only encode a page ever undergoes.
 - Pages appear in the editor as each one completes.
 - Any existing scan document can receive more pages.
+- A scan worker holds its document pin until its final metadata transaction. Restart recovery clears interrupted busy flags with a retryable error, removes abandoned incoming PNGs and keeps completed JPEGs; a failed thread launch also rolls back busy state.
 
 ### Editor
 
@@ -157,7 +161,7 @@ At export, `jpegtran` applies each page's rotation and then its crop to the orig
 
 The document title defaults to `Scan YYYY-MM-DD HH-MM` and can be renamed.
 
-- PDF: `img2pdf` over the edited JPEGs. Each page keeps its physical size, derived from pixel dimensions and scan resolution.
+- PDF: `img2pdf` over the edited JPEGs. Each page keeps its physical size from its own original JPEG density; `page_info.dpi` supplies the same per-page preview size even after appending at a different resolution. Transparent PNG normalization preserves source DPI. Scan printing uses a private PDF until CUPS has read it.
 - JPEG: a single page downloads as `.jpg`; several pages download as a `.zip` with `01.jpg`, `02.jpg`, and so on.
 - Email: one or more typed recipients, with recently used addresses suggested; subject defaults to the title; attachments as PDF or as individual JPEGs. Sending is refused when attachments exceed 25 MB. SMTP errors are shown verbatim. Each send is recorded in `doc.json`.
 - Print: opens the print page of section 5 with the exported PDF and scaling preset to actual size.
@@ -180,8 +184,8 @@ The document title defaults to `Scan YYYY-MM-DD HH-MM` and can be renamed.
 
 | Condition | Behavior |
 |---|---|
-| Printer offline or unplugged | Banner on every page from CUPS printer state. Jobs stay queued in CUPS and print when the printer returns. |
-| Scanner busy or missing | "Scanner busy" or "Scanner unavailable" with Retry. |
+| Printer offline or unplugged | One shared banner updater on home/print/scan, querying authenticated CUPS printer state; login reveals no printer status. Jobs stay queued and print when the printer returns. |
+| Scanner busy or missing | "Scanner busy" or "Scanner unavailable" with Retry; initial discovery Retry reloads capabilities, while scan-operation Retry restarts the requested source. |
 | Conversion failure or timeout | Error shown; the uploaded file is kept; Retry available. |
 | Disk full after cleanup | "Disk full" error; nothing is written. |
 | SMTP failure | Server response shown verbatim; the document is unchanged. |

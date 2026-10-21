@@ -251,7 +251,7 @@ print("smtp_port =", int(os.environ["SMTP_PORT"]))')
 write_traefik_env() {
     local env=/etc/traefik/traefik.env email_file=/etc/traefik/acme-email token email content
     if [[ ! -e $env ]]; then
-        ask_secret token "Cloudflare API token (Zone > DNS > Edit on brait.dev)"
+        ask_secret token "Cloudflare API token (Zone > Zone > Read AND Zone > DNS > Edit, scoped to brait.dev)"
         printf 'CF_DNS_API_TOKEN=%s\n' "$token" | write_secret "$env" root:root
     else
         # Drop the obsolete TRAEFIK_* setting: static file options must live in traefik.yml.

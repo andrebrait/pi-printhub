@@ -21,9 +21,10 @@ class Guard:
     checks cannot live in dependencies.
     """
 
-    def __init__(self, app, cfg: Config):
+    def __init__(self, app, cfg: Config, admit_share=None, release_share=None):
         self.app = app
         self.cfg = cfg
+        self.admit_share, self.release_share = admit_share, release_share
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -32,6 +33,10 @@ class Guard:
         method, path = scope["method"], scope["path"]
         if denied := self._deny(request, method, path):
             return await denied(scope, receive, send)
+        reserved = method == "POST" and path == "/share" and not session_valid(self.cfg, request.cookies.get(COOKIE))
+        if reserved and self.admit_share:
+            if denied := self.admit_share():
+                return await denied(scope, receive, send)
 
         received = 0
         too_large = False
@@ -52,12 +57,16 @@ class Guard:
                 await send(message)
 
         try:
-            await self.app(scope, limited_receive, guarded_send)
-        except Exception:
-            if not too_large:
-                raise
-        if too_large:
-            await _error(413, "File exceeds 100 MB")(scope, receive, send)
+            try:
+                await self.app(scope, limited_receive, guarded_send)
+            except Exception:
+                if not too_large:
+                    raise
+            if too_large:
+                await _error(413, "File exceeds 100 MB")(scope, receive, send)
+        finally:
+            if reserved and self.release_share:
+                self.release_share()
 
     def _deny(self, request: Request, method: str, path: str) -> JSONResponse | None:
         if not (method == "POST" and path == "/share") and not origin_ok(

@@ -21,21 +21,32 @@ function show(el, text) {
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function fillSelect(select, values, label, preferred) {
+  select.replaceChildren();
   for (const v of values) select.add(new Option(label(v), v));
   if (values.includes(preferred)) select.value = preferred;
 }
 
 async function loadScanner() {
-  const res = await apiFetch("/api/scanner");
-  if (!res.ok) return show($("scanner-status"), await errorMessage(res));
-  const caps = await res.json();
-  fillSelect($("resolution"), caps.resolutions, (r) => `${r} dpi`, 300);
-  fillSelect($("mode"), caps.modes, (m) => MODES[m] ?? m, "color");
-  $("scan-flatbed").hidden = !caps.sources.includes("flatbed");
-  $("scan-adf").hidden = !caps.sources.includes("adf");
-  $("settings").hidden = false;
-  show($("scanner-status"), caps.sources.length ? "" : "The scanner offers no flatbed or feeder.");
-  lastSource ??= caps.sources[0];
+  const retry = $("scanner-retry");
+  retry.disabled = true;
+  try {
+    const res = await apiFetch("/api/scanner");
+    if (!res.ok) throw new Error(await errorMessage(res));
+    const caps = await res.json();
+    fillSelect($("resolution"), caps.resolutions, (r) => `${r} dpi`, 300);
+    fillSelect($("mode"), caps.modes, (m) => MODES[m] ?? m, "color");
+    $("scan-flatbed").hidden = !caps.sources.includes("flatbed");
+    $("scan-adf").hidden = !caps.sources.includes("adf");
+    $("settings").hidden = false;
+    show($("scanner-status"), caps.sources.length ? "" : "The scanner offers no flatbed or feeder.");
+    retry.hidden = true;
+    lastSource ??= caps.sources[0];
+  } catch (e) {
+    show($("scanner-status"), e.message);
+    retry.hidden = false;
+  } finally {
+    retry.disabled = false;
+  }
 }
 
 async function loadRecipients() {
@@ -284,6 +295,7 @@ $("aspect").addEventListener("change", () => cropper?.setAspectRatio(cropAspect(
 $("scan-flatbed").addEventListener("click", () => scan("flatbed"));
 $("scan-adf").addEventListener("click", () => scan("adf"));
 $("retry").addEventListener("click", () => scan(lastSource));
+$("scanner-retry").addEventListener("click", loadScanner);
 
 $("title").addEventListener("blur", (e) => {
   const title = e.target.value;

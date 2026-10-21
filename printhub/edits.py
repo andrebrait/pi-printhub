@@ -64,7 +64,9 @@ def _geometry(src: Path, rotation: int) -> tuple[tuple[int, int], tuple[int, int
 
 def page_info(src: Path, page: Page) -> dict:
     (width, height), mcu = _geometry(src, page.rotation)
-    return {"width": width, "height": height, "mcu": list(mcu)}
+    with Image.open(src) as im:
+        dpi = im.info.get("dpi", (96, 96))
+    return {"width": width, "height": height, "mcu": list(mcu), "dpi": list(dpi)}
 
 
 def apply_edits(src: Path, page: Page, dst: Path) -> None:

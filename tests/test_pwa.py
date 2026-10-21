@@ -39,7 +39,10 @@ globalThis.caches = {
       addAll: async (requests) => {
         for (const r of requests) entries.set(new URL(r.url).pathname, `precached:${r.cache}`);
       },
-      put: async (key, response) => { entries.set(new URL(key, origin).pathname, await response.text()); },
+      put: async (key, response) => {
+        if (config.failPut) throw new Error("quota exceeded");
+        entries.set(new URL(key, origin).pathname, await response.text());
+      },
     };
   },
   keys: async () => [...store.keys()],
@@ -172,3 +175,12 @@ def test_fetch_handler_answers_shell_gets_and_passes_api_and_share_through():
     out = run_sw(FETCH, requests=requests, caches={}, network="fresh")
 
     assert [r["answered"] for r in out["results"]] == [True, False, False, False, False]
+
+
+def test_cache_write_failure_does_not_discard_successful_network_response():
+    for cached in ({"/print.html": "stale"}, {}):
+        out = run_sw(
+            FETCH, requests=[["GET", f"{ORIGIN}/print.html"]],
+            caches={CACHE: cached}, network="fresh", failPut=True,
+        )
+        assert out["results"][0]["body"] == "fresh"

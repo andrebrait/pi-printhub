@@ -64,13 +64,12 @@ function buildPages() {
       pt: doc.pdf_pages[i],
     }));
   }
-  const k = 72 / (doc.scan_resolution || 300); // px to points
   return doc.pages.map((p) => {
-    const { width, height } = p.page_info; // after rotation, before crop
+    const { width, height, dpi } = p.page_info; // after rotation, before crop
     const c = p.crop;
     return {
       url: `/api/docs/${doc.id}/pages/${p.id}?size=thumb`,
-      pt: c ? [c.w * k, c.h * k] : [width * k, height * k],
+      pt: [(c?.w ?? width) * 72 / dpi[0], (c?.h ?? height) * 72 / dpi[1]],
       rotation: p.rotation,
       full: [width, height],
       crop: c,

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -134,16 +135,24 @@ class Scanner:
     def start(self, store: DocStore, doc_id: str, settings: ScanSettings) -> None:
         if not self._lock.acquire(blocking=False):
             raise ScannerBusy()
+        guards = ExitStack()
         try:
-            doc = store.get(doc_id)
-            doc.scanning, doc.scan_error, doc.scan_resolution = True, None, settings.resolution
-            store.save(doc)
-            threading.Thread(target=self._run, args=(store, doc_id, settings), daemon=True).start()
+            guards.enter_context(store.use(doc_id))
+            with store.transaction(doc_id) as doc:
+                doc.scanning, doc.scan_error, doc.scan_resolution = True, None, settings.resolution
+            try:
+                threading.Thread(target=self._run, args=(store, doc_id, settings, guards), daemon=True).start()
+            except BaseException:
+                with store.transaction(doc_id) as doc:
+                    doc.scanning = False
+                    doc.scan_error = "Scan could not start; retry to continue."
+                raise
         except BaseException:
+            guards.close()
             self._lock.release()
             raise
 
-    def _run(self, store: DocStore, doc_id: str, s: ScanSettings) -> None:
+    def _run(self, store: DocStore, doc_id: str, s: ScanSettings, guards: ExitStack) -> None:
         incoming = store.path(doc_id) / "incoming"
         error = None
         try:
@@ -155,10 +164,10 @@ class Scanner:
                 error = f"Scanner error: {e}"
             finally:
                 shutil.rmtree(incoming, ignore_errors=True)
-                doc = store.get(doc_id)
-                doc.scanning, doc.scan_error = False, error
-                store.save(doc)
+                with store.transaction(doc_id) as doc:
+                    doc.scanning, doc.scan_error = False, error
         finally:
+            guards.close()
             self._lock.release()
 
     def _scan(self, store: DocStore, doc_id: str, s: ScanSettings, incoming: Path) -> str | None:
@@ -186,9 +195,8 @@ class Scanner:
             nonlocal added
             page_id = secrets.token_urlsafe(8)
             ingest(png, store.path(doc_id) / "pages" / f"{page_id}.jpg", s.resolution)
-            doc = store.get(doc_id)
-            doc.pages.append(Page(page_id))
-            store.save(doc)
+            with store.transaction(doc_id) as doc:
+                doc.pages.append(Page(page_id))
             added += 1
 
         with tempfile.TemporaryFile("w+", dir=incoming) as err:

@@ -209,3 +209,49 @@ def test_original_untouched(store, tmp_path):
     export_jpeg(store, doc, tmp_path)
 
     assert src.read_bytes() == before
+
+
+@pytest.fixture
+def marked_jpeg(tmp_path):
+    # Asymmetric four marked quadrants, with MCU-aligned edges.
+    from PIL import ImageDraw
+    im = Image.new("RGB", (128, 96))
+    draw = ImageDraw.Draw(im)
+    for box, color, label in [
+        ((0, 0, 63, 47), (230, 20, 20), "TL"),
+        ((64, 0, 127, 47), (20, 210, 20), "TR"),
+        ((0, 48, 63, 95), (20, 20, 230), "BL"),
+        ((64, 48, 127, 95), (230, 210, 20), "BR"),
+    ]:
+        draw.rectangle(box, fill=color)
+        draw.text((box[0] + 20, box[1] + 20), label, fill="white")
+    src = tmp_path / "marked.jpg"
+    im.save(src, quality=95, subsampling=0, dpi=(300, 300))
+    return src
+
+
+@pytest.mark.parametrize("rotation,order", [
+    (0, [0, 1, 2, 3]), (90, [2, 0, 3, 1]),
+    (180, [3, 2, 1, 0]), (270, [1, 3, 0, 2]),
+])
+def test_marked_orientation_and_crop_content(marked_jpeg, tmp_path, rotation, order):
+    colors = [(230, 20, 20), (20, 210, 20), (20, 20, 230), (230, 210, 20)]
+    out = tmp_path / "turned.jpg"
+    apply_edits(marked_jpeg, Page("p", rotation), out)
+    with Image.open(out) as im:
+        w, h = im.size
+        actual = [im.getpixel(p) for p in [(8, 8), (w - 9, 8), (8, h - 9), (w - 9, h - 9)]]
+    assert actual == [pytest.approx(colors[i], abs=8) for i in order]
+    apply_edits(marked_jpeg, Page("p", rotation, Crop(0, 0, 32, 32)), out)
+    with Image.open(out) as im:
+        assert im.size == (32, 32)
+        assert im.getpixel((8, 8)) == pytest.approx(colors[order[0]], abs=8)
+
+
+def test_page_info_density_matches_rotated_export(marked_jpeg, tmp_path):
+    with Image.open(marked_jpeg) as im:
+        im.save(tmp_path / "density.jpg", dpi=(150, 300))
+    page = Page("p", rotation=90)
+    apply_edits(tmp_path / "density.jpg", page, tmp_path / "turned.jpg")
+    with Image.open(tmp_path / "turned.jpg") as exported:
+        assert page_info(tmp_path / "density.jpg", page)["dpi"] == list(exported.info["dpi"])
