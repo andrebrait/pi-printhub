@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import os
+
 import pytest
 
 from printhub.config import Config
@@ -20,3 +22,12 @@ def cfg(tmp_path) -> Config:
         mail_from="printhub@example.com",
         data_dir=tmp_path / "data",
     )
+
+
+def pytest_collection_modifyitems(items):
+    if os.environ.get("PRINTHUB_TEST_QUEUE"):
+        return
+    skip = pytest.mark.skip(reason="PRINTHUB_TEST_QUEUE not set; no virtual printer")
+    for item in items:
+        if "cups" in item.keywords:
+            item.add_marker(skip)

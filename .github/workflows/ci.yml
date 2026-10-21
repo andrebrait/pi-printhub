@@ -23,17 +23,13 @@ jobs:
             python3-itsdangerous python3-img2pdf python3-pil python3-magic python3-cups \
             python3-pikepdf cups cups-ipp-utils sane-utils libjpeg-turbo-progs \
             poppler-utils libheif-examples libreoffice-writer-nogui nodejs shellcheck \
-            procps openssl systemd git
+            procps openssl systemd git avahi-daemon dbus
 
       - name: Enable SANE test backend
         run: echo test >> /etc/sane.d/dll.conf
 
       - name: Start CUPS and virtual printer
-        run: |
-          if [ -x tests/ci/start-virtual-printer.sh ]; then
-            cupsd
-            tests/ci/start-virtual-printer.sh
-          fi
+        run: tests/ci/start-virtual-printer.sh
 
       - name: Python tests
         run: python3 -m pytest -v
