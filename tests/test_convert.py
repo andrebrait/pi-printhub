@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import io
 import random
 import shutil
 import subprocess
@@ -40,6 +41,7 @@ def test_jpeg_exif_rotation(tmp_path):
     with pikepdf.open(out) as pdf:
         assert len(pdf.pages) == 1
         assert int(pdf.pages[0].obj.get("/Rotate", 0)) == 90
+        assert pdf_page_sizes(out) == [(300.0, 400.0)]
 
 
 def test_png_alpha_flattened(tmp_path):
@@ -65,6 +67,7 @@ def test_png_alpha_flattened(tmp_path):
         assert len(previews) == 1
         with Image.open(previews[0]) as page:
             assert page.convert("RGB").getpixel((5, 5)) == (255, 255, 255)
+            assert page.convert("RGB").getpixel((580, 5)) == (255, 0, 0)
 
 
 @pytest.mark.skipif(shutil.which("heif-dec") is None, reason="heif-dec not installed")
@@ -110,3 +113,32 @@ def test_pdf_page_sizes(tmp_path):
     width, height = sizes[0]
     assert abs(width - 595.28) <= 0.5
     assert abs(height - 841.89) <= 0.5
+
+
+@pytest.mark.parametrize("fmt, ext", [("JPEG", "jpg"), ("PNG", "png")])
+def test_truncated_image_raises_conversion_error(tmp_path, fmt, ext):
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 300), (200, 30, 30)).save(buf, fmt)
+    src = tmp_path / f"truncated.{ext}"
+    src.write_bytes(buf.getvalue()[: len(buf.getvalue()) // 2])
+    with pytest.raises(ConversionError):
+        normalize(src, tmp_path / "out.pdf")
+
+
+def test_missing_soffice_raises_conversion_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(convert, "SOFFICE", str(tmp_path / "no-such-soffice"))
+    with pytest.raises(ConversionError):
+        normalize(FIXTURES / "sample.docx", tmp_path / "doc.pdf")
+
+
+@pytest.mark.skipif(shutil.which("heif-dec") is None, reason="heif-dec not installed")
+def test_heic_multi_image_uses_first(tmp_path):
+    out = tmp_path / "multi.pdf"
+    normalize(FIXTURES / "sample_multi.heic", out)
+    assert len(pdf_page_sizes(out)) == 1
+    previews_dir = tmp_path / "previews"
+    previews_dir.mkdir()
+    (preview,) = render_preview(out, previews_dir, width=64)
+    with Image.open(preview) as page:
+        r, g, _ = page.convert("RGB").getpixel((32, 24))
+    assert r > 150 and g < 100  # first image is red, second is green

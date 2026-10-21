@@ -46,6 +46,19 @@ class ConversionError(Exception):
     pass
 
 
+# img2pdf raises its own classes for bad input; Pillow and missing binaries raise OSError
+_CONVERSION_ERRORS = (
+    OSError,
+    ValueError,
+    img2pdf.ImageOpenError,
+    img2pdf.JpegColorspaceError,
+    img2pdf.UnsupportedColorspaceError,
+    img2pdf.ExifOrientationError,
+    img2pdf.NegativeDimensionError,
+    img2pdf.PdfTooLargeError,
+)
+
+
 def detect(path: Path) -> str:
     mime = magic.from_file(path, mime=True)
     if mime not in ACCEPTED:
@@ -56,26 +69,33 @@ def detect(path: Path) -> str:
 def normalize(src: Path, out_pdf: Path) -> None:
     mime = detect(src)
     handler = ACCEPTED[mime]
-    if handler == "pdf":
-        shutil.copyfile(src, out_pdf)
-    elif handler == "image":
-        if mime == "image/png":
-            _png_to_pdf(src, out_pdf)
+    try:
+        if handler == "pdf":
+            shutil.copyfile(src, out_pdf)
+        elif handler == "image":
+            if mime == "image/png":
+                _png_to_pdf(src, out_pdf)
+            else:
+                _image_to_pdf(src, out_pdf)
+        elif handler == "heic":
+            _heic_to_pdf(src, out_pdf)
         else:
-            _image_to_pdf(src, out_pdf)
-    elif handler == "heic":
-        _heic_to_pdf(src, out_pdf)
-    else:
-        _office_to_pdf(src, out_pdf)
+            _office_to_pdf(src, out_pdf)
+    except _CONVERSION_ERRORS as e:
+        raise ConversionError(f"{mime} conversion failed: {e}") from e
 
 
 def pdf_page_sizes(pdf: Path) -> list[tuple[float, float]]:
     pages = int(re.search(r"^Pages:\s+(\d+)", _run(["pdfinfo", str(pdf)]), re.M).group(1))
     info = _run(["pdfinfo", "-f", "1", "-l", str(pages), str(pdf)])
-    return [
-        (float(w), float(h))
-        for w, h in re.findall(r"^Page\s+\d+ size:\s+([\d.]+) x ([\d.]+) pts", info, re.M)
-    ]
+    rotations = dict(re.findall(r"^Page\s+(\d+) rot:\s+(\d+)", info, re.M))
+    sizes = []
+    for num, w, h in re.findall(r"^Page\s+(\d+) size:\s+([\d.]+) x ([\d.]+) pts", info, re.M):
+        # pdfinfo reports the unrotated media box; /Rotate 90 or 270 swaps the displayed axes
+        if rotations.get(num) in ("90", "270"):
+            w, h = h, w
+        sizes.append((float(w), float(h)))
+    return sizes
 
 
 def render_preview(pdf: Path, out_dir: Path, width: int = 600) -> list[Path]:
@@ -92,6 +112,9 @@ def _run(cmd: list[str]) -> str:
 
 
 def _image_to_pdf(image: Path, out_pdf: Path) -> None:
+    # img2pdf embeds a truncated JPEG without complaint; decoding first makes Pillow reject it
+    with Image.open(image) as im:
+        im.load()
     # rotation=ifvalid turns EXIF orientation into /Rotate instead of rejecting the file
     out_pdf.write_bytes(img2pdf.convert(str(image), rotation=img2pdf.Rotation.ifvalid))
 
@@ -113,9 +136,12 @@ def _png_to_pdf(src: Path, out_pdf: Path) -> None:
 
 def _heic_to_pdf(src: Path, out_pdf: Path) -> None:
     with tempfile.TemporaryDirectory(dir=out_pdf.parent) as tmp:
-        jpg = Path(tmp) / "page.jpg"
-        _run(["heif-dec", "-q", "92", str(src), str(jpg)])
-        _image_to_pdf(jpg, out_pdf)
+        # multi-image files come out as page-1.jpg, page-2.jpg, ...; the first one is used
+        _run(["heif-dec", "-q", "92", str(src), str(Path(tmp) / "page.jpg")])
+        outputs = sorted(Path(tmp).glob("page*.jpg"))
+        if not outputs:
+            raise ConversionError("heif-dec wrote no image")
+        _image_to_pdf(outputs[0], out_pdf)
 
 
 def _office_to_pdf(src: Path, out_pdf: Path) -> None:
