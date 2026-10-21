@@ -18,4 +18,5 @@ testpaths = ["tests"]
 markers = [
     "cups: needs cupsd and the virtual printer",
     "sane: needs the SANE test backend",
+    "slow: runs a LibreOffice conversion; several seconds each",
 ]
