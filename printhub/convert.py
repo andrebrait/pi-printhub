@@ -46,10 +46,12 @@ class ConversionError(Exception):
     pass
 
 
-# img2pdf raises its own classes for bad input; Pillow and missing binaries raise OSError
+# img2pdf raises its own classes for bad input; Pillow raises OSError or, past
+# MAX_IMAGE_PIXELS, DecompressionBombError (a bare Exception); missing binaries raise OSError
 _CONVERSION_ERRORS = (
     OSError,
     ValueError,
+    Image.DecompressionBombError,
     img2pdf.ImageOpenError,
     img2pdf.JpegColorspaceError,
     img2pdf.UnsupportedColorspaceError,
@@ -86,7 +88,10 @@ def normalize(src: Path, out_pdf: Path) -> None:
 
 
 def pdf_page_sizes(pdf: Path) -> list[tuple[float, float]]:
-    pages = int(re.search(r"^Pages:\s+(\d+)", _run(["pdfinfo", str(pdf)]), re.M).group(1))
+    count = re.search(r"^Pages:\s+(\d+)", _run(["pdfinfo", str(pdf)]), re.M)
+    if count is None:
+        raise ConversionError("pdfinfo reported no page count")
+    pages = int(count.group(1))
     info = _run(["pdfinfo", "-f", "1", "-l", str(pages), str(pdf)])
     rotations = dict(re.findall(r"^Page\s+(\d+) rot:\s+(\d+)", info, re.M))
     sizes = []
@@ -95,6 +100,8 @@ def pdf_page_sizes(pdf: Path) -> list[tuple[float, float]]:
         if rotations.get(num) in ("90", "270"):
             w, h = h, w
         sizes.append((float(w), float(h)))
+    if len(sizes) != pages:
+        raise ConversionError(f"pdfinfo reported {len(sizes)} page sizes for {pages} pages")
     return sizes
 
 

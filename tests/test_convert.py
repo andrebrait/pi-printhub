@@ -142,3 +142,18 @@ def test_heic_multi_image_uses_first(tmp_path):
     with Image.open(preview) as page:
         r, g, _ = page.convert("RGB").getpixel((32, 24))
     assert r > 150 and g < 100  # first image is red, second is green
+
+
+@pytest.mark.parametrize("fmt, ext", [("JPEG", "jpg"), ("PNG", "png")])
+def test_decompression_bomb_raises_conversion_error(tmp_path, monkeypatch, fmt, ext):
+    src = tmp_path / f"bomb.{ext}"
+    Image.new("RGB", (400, 300), (200, 30, 30)).save(src, fmt)
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # 400x300 is far above twice the limit
+    with pytest.raises(ConversionError):
+        normalize(src, tmp_path / "out.pdf")
+
+
+def test_pdf_page_sizes_without_page_lines_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(convert, "_run", lambda cmd: "Creator: nothing useful\n")
+    with pytest.raises(ConversionError):
+        pdf_page_sizes(tmp_path / "x.pdf")
