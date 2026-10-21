@@ -163,7 +163,7 @@ The document title defaults to `Scan YYYY-MM-DD HH-MM` and can be renamed.
 
 - PDF: `img2pdf` over the edited JPEGs. Each page keeps its physical size from its own original JPEG density; `page_info.dpi` supplies the same per-page preview size even after appending at a different resolution. Transparent PNG normalization preserves source DPI. Scan printing uses a private PDF until CUPS has read it.
 - JPEG: a single page downloads as `.jpg`; several pages download as a `.zip` with `01.jpg`, `02.jpg`, and so on.
-- Email: one or more typed recipients, with recently used addresses suggested; subject defaults to the title; attachments as PDF or as individual JPEGs. Sending is refused when attachments exceed 25 MB. SMTP errors are shown verbatim. Each send is recorded in `doc.json`.
+- Email: one or more typed recipients, with recently used addresses suggested; subject defaults to the title; attachments as PDF or as individual JPEGs. Sending is refused when attachments exceed 25 MiB; the cumulative exported file size is checked on disk before any attachment bytes are loaded into memory. SMTP errors are shown verbatim. Each send is recorded in `doc.json`.
 - Print: opens the print page of section 5 with the exported PDF and scaling preset to actual size.
 
 ## 7. Authentication and request security

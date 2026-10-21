@@ -36,6 +36,7 @@ from printhub.auth import (
 from printhub.config import Config, load_config
 from printhub.documents import Crop, Doc, DocBusy, DocNotFound, DocStore, MailRecord, Page, PrintRecord
 from printhub.mail import (
+    MAX_ATTACHMENT_BYTES,
     Attachment,
     AttachmentTooLarge,
     InvalidRecipient,
@@ -577,14 +578,19 @@ def create_app(
             if body.format == "pdf":
                 out = Path(tmp) / "export.pdf"
                 edits.export_pdf(store, doc, out)
-                attachments = [Attachment(f"{name}.pdf", out.read_bytes(), "application/pdf")]
+                exports = [(f"{name}.pdf", out, "application/pdf")]
             else:
-                attachments = []
+                exports = []
                 for i, page in enumerate(doc.pages, 1):
                     out = Path(tmp) / f"{i}.jpg"
                     edits.apply_edits(page_path(doc, page.id), page, out)
                     filename = f"{name}.jpg" if len(doc.pages) == 1 else f"{name}-{i:02d}.jpg"
-                    attachments.append(Attachment(filename, out.read_bytes(), "image/jpeg"))
+                    exports.append((filename, out, "image/jpeg"))
+            if sum(path.stat().st_size for _, path, _ in exports) > MAX_ATTACHMENT_BYTES:
+                raise ApiError(413, "Attachments exceed 25 MB")
+            attachments = [
+                Attachment(filename, path.read_bytes(), mime) for filename, path, mime in exports
+            ]
         try:
             send(cfg, body.to, body.subject, attachments)
         except InvalidRecipient as e:

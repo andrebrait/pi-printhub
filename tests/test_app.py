@@ -541,6 +541,40 @@ def test_email_then_recipients(make_client, cfg, store, smtp_server, server_tls,
     assert r.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("format", "sizes"),
+    [
+        ("pdf", [25 * 1024 * 1024 + 1]),
+        ("jpeg", [25 * 1024 * 1024 + 1]),
+        ("jpeg", [14 * 1024 * 1024, 14 * 1024 * 1024]),
+    ],
+)
+def test_email_rejects_oversized_exports_before_reading(
+    client, store, cfg, monkeypatch, format, sizes
+):
+    doc = scan_doc(store, n=len(sizes))
+    remaining = iter(sizes)
+
+    def exported_file(*args):
+        with args[-1].open("wb") as out:
+            out.truncate(next(remaining))
+
+    monkeypatch.setattr("printhub.app.edits.export_pdf", exported_file)
+    monkeypatch.setattr("printhub.app.edits.apply_edits", exported_file)
+
+    def reject_read(path):
+        raise AssertionError(f"Oversized attachments must not be read: {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read)
+    response = client.post(
+        f"/api/docs/{doc.id}/email",
+        json={"to": ["a@example.com"], "subject": "Too large", "format": format},
+    )
+    assert response.status_code == 413
+    assert store.get(doc.id).mails == []
+    assert list((cfg.data_dir / "tmp").iterdir()) == []
+
+
 # Share
 
 

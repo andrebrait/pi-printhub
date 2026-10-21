@@ -2,7 +2,7 @@
   "0": "scan.js",
   "1": "Sortable.min.js",
   "2": "test_app.py",
-  "3": "DocStore",
+  "3": "documents.py",
   "4": "test_mail.py",
   "5": "create_app",
   "6": "test_printing.py",
@@ -16,7 +16,7 @@
   "14": "Config",
   "15": "pathlib",
   "16": "test_auth.py",
-  "17": "test_pwa.py",
+  "17": "test_lifecycle.py",
   "18": "PendingShares",
   "19": "auth.py",
   "20": "LoginLimiter",
@@ -27,5 +27,8 @@
   "25": "record-job.sh",
   "26": "start-virtual-printer.sh",
   "27": "printhub",
-  "28": "sw-register.js"
+  "28": "sw-register.js",
+  "29": "retention.py",
+  "30": "DocStore",
+  "31": "run"
 }

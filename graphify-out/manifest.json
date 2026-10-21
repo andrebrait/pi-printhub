@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "printhub/app.py": {
-    "mtime": 1792622773.7635646,
-    "seen": 1792623311.5595474,
-    "ast_hash": "65ec24a542bd178a06a05193a5af2911",
+    "mtime": 1792624218.107657,
+    "seen": 1792624283.2770772,
+    "ast_hash": "d09dc6cf3903fa08379ab0b9ce96235d",
     "semantic_hash": ""
   },
   "printhub/auth.py": {
@@ -192,9 +192,9 @@
     "semantic_hash": ""
   },
   "tests/test_app.py": {
-    "mtime": 1792622705.7942343,
-    "seen": 1792623311.5595841,
-    "ast_hash": "e9ac0b03c6214f72aed3bafdd697f824",
+    "mtime": 1792624201.0353303,
+    "seen": 1792624283.2771325,
+    "ast_hash": "e55053510a34d4fd5537202880d88c77",
     "semantic_hash": ""
   },
   "tests/test_auth.py": {
@@ -306,9 +306,9 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-21-pi-printhub-design.md": {
-    "mtime": 1792622986.1957242,
-    "seen": 1792623311.559607,
-    "ast_hash": "a9d04a4a612733b5af19a2c4c2fea73f",
+    "mtime": 1792624271.156673,
+    "seen": 1792624283.2771652,
+    "ast_hash": "f204babf3610f4c9757fbf7d09023287",
     "semantic_hash": ""
   },
   "static/index.html": {
