@@ -227,3 +227,24 @@ def test_area_is_clamped_to_bed(store, tmp_path, monkeypatch, area, expected):
     args = log.read_text()
     assert expected in args
     assert "--source Automatic Document Feeder" in args and "--mode Color" in args
+
+
+@pytest.mark.parametrize("rc", [0, 7])
+def test_adf_empty_feeder_is_an_error(store, tmp_path, monkeypatch, rc):
+    body = f'echo "scanimage: sane_start: Document feeder out of documents" >&2\nexit {rc}'
+    fake_scanimage(tmp_path, monkeypatch, body)
+    doc = new_scan_doc(store)
+    scanning.Scanner().start(store, doc.id, ScanSettings(source="adf"))
+    doc = wait_done(store, doc.id)
+    assert doc.pages == []
+    assert doc.scan_error == "Document feeder is empty"
+
+
+def test_blank_batch_print_lines_are_skipped(store, tmp_path, monkeypatch):
+    png = make_png(tmp_path / "src.png", (9, 9, 9))
+    fake_scanimage(tmp_path, monkeypatch, f'echo\ncp {png} "$out/p0001.png"; echo "$out/p0001.png"\necho "  "')
+    doc = new_scan_doc(store)
+    scanning.Scanner().start(store, doc.id, ScanSettings(source="adf"))
+    doc = wait_done(store, doc.id)
+    assert doc.scan_error is None
+    assert len(doc.pages) == 1

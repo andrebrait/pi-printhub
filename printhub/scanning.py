@@ -180,30 +180,34 @@ class Scanner:
         incoming.mkdir(exist_ok=True)
         cmd += [f"--batch={incoming}/p%04d.png", "--batch-print"] if adf else ["-o", str(incoming / "page.png")]
 
+        added = 0
+
         def add(png: Path) -> None:
+            nonlocal added
             page_id = secrets.token_urlsafe(8)
             ingest(png, store.path(doc_id) / "pages" / f"{page_id}.jpg", s.resolution)
             doc = store.get(doc_id)
             doc.pages.append(Page(page_id))
             store.save(doc)
+            added += 1
 
         with tempfile.TemporaryFile("w+", dir=incoming) as err:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True)
-            try:
-                for line in proc.stdout:
-                    add(Path(line.strip()))
-                rc = proc.wait()
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
+            with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True) as proc:
+                try:
+                    for line in proc.stdout:
+                        if line.strip():
+                            add(Path(line.strip()))
+                    rc = proc.wait()
+                except BaseException:
+                    proc.kill()  # Popen.__exit__ then closes the pipe and reaps it
+                    raise
             err.seek(0)
             stderr = err.read()
-        if rc != 0:
-            low = stderr.lower()
-            if adf and "out of documents" in low:
-                return None
+        low = stderr.lower()
+        if rc != 0 and not (adf and "out of documents" in low):
             return "Scanner busy" if "busy" in low else f"Scanner error: {_last_error(stderr)}"
         if not adf:
             add(incoming / "page.png")
+        elif added == 0:
+            return "Document feeder is empty"
         return None
