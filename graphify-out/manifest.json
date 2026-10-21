@@ -1,0 +1,368 @@
+{
+  "deploy/install.sh": {
+    "mtime": 1792622642.8930035,
+    "seen": 1792623311.5595374,
+    "ast_hash": "1497879e94ed2ee212afd1a30322140f",
+    "semantic_hash": ""
+  },
+  "printhub/__init__.py": {
+    "mtime": 1792611690.038902,
+    "seen": 1792623311.5595446,
+    "ast_hash": "36185197fb536101b21cc2f09be8e0cf",
+    "semantic_hash": ""
+  },
+  "printhub/app.py": {
+    "mtime": 1792622773.7635646,
+    "seen": 1792623311.5595474,
+    "ast_hash": "65ec24a542bd178a06a05193a5af2911",
+    "semantic_hash": ""
+  },
+  "printhub/auth.py": {
+    "mtime": 1792617041.088007,
+    "seen": 1792623311.5595489,
+    "ast_hash": "ad21ab14e0f955d69553ee82ae5e7692",
+    "semantic_hash": ""
+  },
+  "printhub/config.py": {
+    "mtime": 1792611689.9309006,
+    "seen": 1792623311.5595505,
+    "ast_hash": "e9935dbf9f96934e1db5e57d7eead0b0",
+    "semantic_hash": ""
+  },
+  "printhub/convert.py": {
+    "mtime": 1792622459.929425,
+    "seen": 1792623311.5595517,
+    "ast_hash": "36f0eb2c63f171553f00de095af0451e",
+    "semantic_hash": ""
+  },
+  "printhub/documents.py": {
+    "mtime": 1792622694.1980073,
+    "seen": 1792623311.559553,
+    "ast_hash": "3dbd3f398f78e448a87b1dab6c0629e9",
+    "semantic_hash": ""
+  },
+  "printhub/edits.py": {
+    "mtime": 1792623013.1842527,
+    "seen": 1792623311.5595543,
+    "ast_hash": "041ef167f3a50131babac8e22c63c434",
+    "semantic_hash": ""
+  },
+  "printhub/mail.py": {
+    "mtime": 1792622484.5459063,
+    "seen": 1792623311.5595553,
+    "ast_hash": "260f72589c750beb1ecdaf365e04b639",
+    "semantic_hash": ""
+  },
+  "printhub/middleware.py": {
+    "mtime": 1792622459.929425,
+    "seen": 1792623311.5595562,
+    "ast_hash": "3b03328131c48d7a50bb4935ce8e169b",
+    "semantic_hash": ""
+  },
+  "printhub/printing.py": {
+    "mtime": 1792614041.5939794,
+    "seen": 1792623311.5595577,
+    "ast_hash": "37b0326b4fdcb5d3cb8e96ea9d5f8bf8",
+    "semantic_hash": ""
+  },
+  "printhub/retention.py": {
+    "mtime": 1792622978.995583,
+    "seen": 1792623311.5595589,
+    "ast_hash": "2cf61c11fd687bb74ff090f70f924f8a",
+    "semantic_hash": ""
+  },
+  "printhub/scanning.py": {
+    "mtime": 1792622459.9214249,
+    "seen": 1792623311.5595603,
+    "ast_hash": "cb4d1482da8d76bb72101b585c9bde3b",
+    "semantic_hash": ""
+  },
+  "pyproject.toml": {
+    "mtime": 1792612805.518824,
+    "seen": 1792623311.5595615,
+    "ast_hash": "90f62b0bf9c2f6e856318e9558e2320e",
+    "semantic_hash": ""
+  },
+  "static/js/api.js": {
+    "mtime": 1792618626.7818375,
+    "seen": 1792623311.5595627,
+    "ast_hash": "8ea32aa163f21b3a01ae8e584a3f14bf",
+    "semantic_hash": ""
+  },
+  "static/js/api.test.js": {
+    "mtime": 1792618618.0656538,
+    "seen": 1792623311.559564,
+    "ast_hash": "9344c9833fefab3fbf0192a83f801128",
+    "semantic_hash": ""
+  },
+  "static/js/crop.js": {
+    "mtime": 1792618936.6602554,
+    "seen": 1792623311.5595653,
+    "ast_hash": "6a2974c195c3a28a989dce5aaf14be49",
+    "semantic_hash": ""
+  },
+  "static/js/crop.test.js": {
+    "mtime": 1792618873.2909575,
+    "seen": 1792623311.5595663,
+    "ast_hash": "e52f628d22879349ecead85aa450d3a0",
+    "semantic_hash": ""
+  },
+  "static/js/layout.js": {
+    "mtime": 1792618458.5262537,
+    "seen": 1792623311.5595677,
+    "ast_hash": "8a46e0e6389b369e67ed254fd7e2df1e",
+    "semantic_hash": ""
+  },
+  "static/js/layout.test.js": {
+    "mtime": 1792618458.1462455,
+    "seen": 1792623311.5595686,
+    "ast_hash": "afc96b1d6301b8ec122264cdf1950b82",
+    "semantic_hash": ""
+  },
+  "static/js/package.json": {
+    "mtime": 1792617393.2066848,
+    "seen": 1792623311.5595696,
+    "ast_hash": "96ac218c7d3ae46194bf9bcdcbfe7ae6",
+    "semantic_hash": ""
+  },
+  "static/js/print.js": {
+    "mtime": 1792622484.5539064,
+    "seen": 1792623311.559571,
+    "ast_hash": "800b504778b36c64a7b124955ed0ea22",
+    "semantic_hash": ""
+  },
+  "static/js/printer-banner.js": {
+    "mtime": 1792622544.2510738,
+    "seen": 1792623311.5595725,
+    "ast_hash": "f2766f87b5578c7994ac157b433d2c4d",
+    "semantic_hash": ""
+  },
+  "static/js/scan.js": {
+    "mtime": 1792622539.5709822,
+    "seen": 1792623311.5595734,
+    "ast_hash": "60a22166f7ff9cbc627f43b6d1ae36b1",
+    "semantic_hash": ""
+  },
+  "static/js/sw-register.js": {
+    "mtime": 1792619917.2798054,
+    "seen": 1792623311.5595748,
+    "ast_hash": "0656ce3c18fadd11d464d6402b2f28d4",
+    "semantic_hash": ""
+  },
+  "static/js/ui.test.js": {
+    "mtime": 1792622539.5669823,
+    "seen": 1792623311.559576,
+    "ast_hash": "9a4012589dfb3090be33acab7386db3d",
+    "semantic_hash": ""
+  },
+  "static/sw.js": {
+    "mtime": 1792622539.5829825,
+    "seen": 1792623311.559577,
+    "ast_hash": "67dadcdc9e3571da25afa9e7fc4d9cfa",
+    "semantic_hash": ""
+  },
+  "static/vendor/cropper/cropper.min.js": {
+    "mtime": 1792618952.7245834,
+    "seen": 1792623311.5595784,
+    "ast_hash": "989a3c0e414f4049627bc6f04a99a38f",
+    "semantic_hash": ""
+  },
+  "static/vendor/sortable/Sortable.min.js": {
+    "mtime": 1792618952.7245834,
+    "seen": 1792623311.5595794,
+    "ast_hash": "65f3976a877f92ef165e730cde9d3682",
+    "semantic_hash": ""
+  },
+  "tests/ci/record-job.sh": {
+    "mtime": 1792613642.0069733,
+    "seen": 1792623311.5595806,
+    "ast_hash": "09c96cc8b7145e29dbeda585cb8db919",
+    "semantic_hash": ""
+  },
+  "tests/ci/start-virtual-printer.sh": {
+    "mtime": 1792613641.9989731,
+    "seen": 1792623311.559582,
+    "ast_hash": "46db9a3d14671be5a521991aff402356",
+    "semantic_hash": ""
+  },
+  "tests/conftest.py": {
+    "mtime": 1792613642.1029747,
+    "seen": 1792623311.5595832,
+    "ast_hash": "d4784774a36a19c5d5250a06478bf5b1",
+    "semantic_hash": ""
+  },
+  "tests/test_app.py": {
+    "mtime": 1792622705.7942343,
+    "seen": 1792623311.5595841,
+    "ast_hash": "e9ac0b03c6214f72aed3bafdd697f824",
+    "semantic_hash": ""
+  },
+  "tests/test_auth.py": {
+    "mtime": 1792615344.3789697,
+    "seen": 1792623311.5595856,
+    "ast_hash": "afb81d001ce3a389ed6e440bd2eb2d90",
+    "semantic_hash": ""
+  },
+  "tests/test_config.py": {
+    "mtime": 1792611668.442603,
+    "seen": 1792623311.5595865,
+    "ast_hash": "ab002c8c1b9e7b3069d86c7de4e04508",
+    "semantic_hash": ""
+  },
+  "tests/test_convert.py": {
+    "mtime": 1792622320.2626958,
+    "seen": 1792623311.559588,
+    "ast_hash": "2cf2f5c2d636aad85a4183e46114640a",
+    "semantic_hash": ""
+  },
+  "tests/test_documents.py": {
+    "mtime": 1792615716.6616604,
+    "seen": 1792623311.559589,
+    "ast_hash": "eb6a445d541870bfa61cd0eefc66c0b9",
+    "semantic_hash": ""
+  },
+  "tests/test_edits.py": {
+    "mtime": 1792623002.464043,
+    "seen": 1792623311.55959,
+    "ast_hash": "b3d12d93449354bdf4f2adb5489f2169",
+    "semantic_hash": ""
+  },
+  "tests/test_install.py": {
+    "mtime": 1792620844.4458275,
+    "seen": 1792623311.559591,
+    "ast_hash": "f5f08397b981b649253aaa40de9e2857",
+    "semantic_hash": ""
+  },
+  "tests/test_lifecycle.py": {
+    "mtime": 1792622960.7952268,
+    "seen": 1792623311.5595925,
+    "ast_hash": "4085f5a3fc3b61828558a020cc922818",
+    "semantic_hash": ""
+  },
+  "tests/test_mail.py": {
+    "mtime": 1792615019.2333305,
+    "seen": 1792623311.5595934,
+    "ast_hash": "99d29bb2a410bf6f25132e62b4b61e65",
+    "semantic_hash": ""
+  },
+  "tests/test_printing.py": {
+    "mtime": 1792614050.5581925,
+    "seen": 1792623311.5595949,
+    "ast_hash": "81b295f9a339e75d685ce789e9a4fe39",
+    "semantic_hash": ""
+  },
+  "tests/test_pwa.py": {
+    "mtime": 1792622320.2626958,
+    "seen": 1792623311.5595958,
+    "ast_hash": "a52852219ce737d1b1f6875a7940f0b5",
+    "semantic_hash": ""
+  },
+  "tests/test_retention.py": {
+    "mtime": 1792622642.8810031,
+    "seen": 1792623311.5595975,
+    "ast_hash": "ab6fbe644d3de477a6e1ec2ff7549335",
+    "semantic_hash": ""
+  },
+  "tests/test_scanning.py": {
+    "mtime": 1792614417.2461333,
+    "seen": 1792623311.559599,
+    "ast_hash": "5c132b23ad00f8ff90dc3356e3f51055",
+    "semantic_hash": ""
+  },
+  ".github/workflows/ci.yml": {
+    "mtime": 1792620411.6093774,
+    "seen": 1792623311.5595999,
+    "ast_hash": "2d71a1bac29ca74096598b15723e4bb0",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1792622827.620619,
+    "seen": 1792623311.559601,
+    "ast_hash": "885f5abe98479c1edcd9862e1a1a703a",
+    "semantic_hash": ""
+  },
+  "deploy/traefik/dynamic.yml": {
+    "mtime": 1792620379.5567536,
+    "seen": 1792623311.5596025,
+    "ast_hash": "6a8528b970f162b39e7ed5d63b12da32",
+    "semantic_hash": ""
+  },
+  "deploy/traefik/traefik.yml": {
+    "mtime": 1792620771.5764024,
+    "seen": 1792623311.5596035,
+    "ast_hash": "bc6145e75882a5e7c531b2f121bdb632",
+    "semantic_hash": ""
+  },
+  "docs/hardware-checklist.md": {
+    "mtime": 1792620771.5764024,
+    "seen": 1792623311.5596046,
+    "ast_hash": "39b68c2ff8a0865854b0fc07fcb3ea3c",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-10-21-pi-printhub.md": {
+    "mtime": 1792623013.188253,
+    "seen": 1792623311.5596058,
+    "ast_hash": "21a67d55a2a8cd58f835a5a0b06fb9a0",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-10-21-pi-printhub-design.md": {
+    "mtime": 1792622986.1957242,
+    "seen": 1792623311.559607,
+    "ast_hash": "a9d04a4a612733b5af19a2c4c2fea73f",
+    "semantic_hash": ""
+  },
+  "static/index.html": {
+    "mtime": 1792622539.5789824,
+    "seen": 1792623311.559608,
+    "ast_hash": "bb38cc899653ef025cc34e0ae03694f6",
+    "semantic_hash": ""
+  },
+  "static/login.html": {
+    "mtime": 1792619934.9681454,
+    "seen": 1792623311.5596094,
+    "ast_hash": "45f37546f96846c12ebe01a0ffc95e60",
+    "semantic_hash": ""
+  },
+  "static/print.html": {
+    "mtime": 1792622539.5789824,
+    "seen": 1792623311.5596104,
+    "ast_hash": "d018f0b37433e5b6153954284a98f2d4",
+    "semantic_hash": ""
+  },
+  "static/scan.html": {
+    "mtime": 1792622539.5749824,
+    "seen": 1792623311.5596113,
+    "ast_hash": "4b7267713757e29af140bd03cf880254",
+    "semantic_hash": ""
+  },
+  "static/vendor/LICENSES.md": {
+    "mtime": 1792622642.8890033,
+    "seen": 1792623311.5596128,
+    "ast_hash": "65e046bc499ef8bae4c43fbe0ddceb8d",
+    "semantic_hash": ""
+  },
+  "tests/fixtures/scanimage-A.txt": {
+    "mtime": 1792614224.914135,
+    "seen": 1792623311.5596137,
+    "ast_hash": "e2c1c89fdd965b6be3ffedbaac02b1a6",
+    "semantic_hash": ""
+  },
+  "static/icons/icon-192.png": {
+    "mtime": 1792619898.7874503,
+    "seen": 1792623311.559615,
+    "ast_hash": "2c4a7ab31a9e6ac42debeae16d1b9b6f",
+    "semantic_hash": ""
+  },
+  "static/icons/icon-512.png": {
+    "mtime": 1792619898.8634517,
+    "seen": 1792623311.559616,
+    "ast_hash": "186a7ec3ee1faf21a3fa9369e799523f",
+    "semantic_hash": ""
+  },
+  "static/icons/maskable-512.png": {
+    "mtime": 1792619898.931453,
+    "seen": 1792623311.559617,
+    "ast_hash": "fcb6f51a169444cdfbcf4f30e10790b3",
+    "semantic_hash": ""
+  }
+}
