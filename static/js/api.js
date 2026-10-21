@@ -6,7 +6,9 @@ export function safeNext(next, origin) {
   if (!next || /[\x00-\x1f\x7f]/.test(next)) return "/";
   try {
     const url = new URL(next, origin);
-    return url.origin === origin ? url.pathname + url.search + url.hash : "/";
+    // Dot segments collapse after the origin check ("/.//evil.example" -> "//evil.example"), so test the result.
+    if (url.origin !== origin || /^[/\\]{2}/.test(url.pathname)) return "/";
+    return url.pathname + url.search + url.hash;
   } catch {
     return "/";
   }

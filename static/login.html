@@ -44,7 +44,7 @@ document.getElementById("form").addEventListener("submit", async (e) => {
   try {
     const login = await post("/api/login", { password: document.getElementById("password").value });
     if (!login.ok) return await fail(login);
-    if (!share) return void (location.href = dest);
+    if (!share) return void (location.href = location.origin + dest);
     const claim = await post(`/api/share/${encodeURIComponent(share)}/claim`);
     const body = await claim.json().catch(() => null);
     if (claim.ok) return void (location.href = `/print.html?doc=${encodeURIComponent(body.doc_id)}`);
@@ -53,7 +53,7 @@ document.getElementById("form").addEventListener("submit", async (e) => {
     }
     status.textContent = body?.error ?? `${claim.status} ${claim.statusText}`;
     const cont = document.getElementById("continue");
-    cont.href = dest;
+    cont.href = location.origin + dest;
     cont.hidden = false;
   } catch (err) {
     status.textContent = err.message;
