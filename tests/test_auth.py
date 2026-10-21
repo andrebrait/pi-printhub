@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+from dataclasses import replace
+import secrets
 import time
 
 import pytest
@@ -44,9 +46,21 @@ def test_session_issued_31_days_ago_is_invalid(cfg, monkeypatch):
 
 def test_session_with_tampered_signature_is_invalid(cfg):
     value = issue_session(cfg)
-    tampered = value[:-1] + ("A" if value[-1] != "A" else "B")
+    payload, _, sig = value.rpartition(".")
+    tampered_sig = ("A" if sig[0] != "A" else "B") + sig[1:]
 
-    assert not session_valid(cfg, tampered)
+    assert not session_valid(cfg, f"{payload}.{tampered_sig}")
+
+
+def test_session_tamper_is_rejected_for_200_random_secrets(cfg):
+    for _ in range(200):
+        keyed = replace(cfg, session_secret=secrets.token_hex(16))
+        value = issue_session(keyed)
+        payload, _, sig = value.rpartition(".")
+        tampered_sig = ("A" if sig[0] != "A" else "B") + sig[1:]
+
+        assert session_valid(keyed, value)
+        assert not session_valid(keyed, f"{payload}.{tampered_sig}")
 
 
 def test_missing_session_cookie_is_invalid(cfg):
@@ -130,6 +144,20 @@ def test_pending_share_put_deletes_files_of_expired_entries(tmp_path):
 
     assert not old.exists()
     assert new.exists()
+
+
+def test_pending_share_expiry_survives_unlink_failure(tmp_path):
+    stuck = tmp_path / "stuck"
+    stuck.mkdir()
+    shares = PendingShares(ttl=600.0)
+    stuck_token = shares.put(stuck, "stuck.pdf", now=1000.0)
+
+    live = tmp_path / "live.bin"
+    live.write_bytes(b"x")
+    live_token = shares.put(live, "live.pdf", now=1601.0)
+
+    assert shares.take(stuck_token, now=1602.0) is None
+    assert shares.take(live_token, now=1602.0) == (live, "live.pdf")
 
 
 @pytest.mark.parametrize(
