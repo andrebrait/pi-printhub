@@ -2,6 +2,7 @@
 import os
 import subprocess
 import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -60,6 +61,29 @@ def test_validate_accepts_page_ranges():
 def test_validate_rejects_copies_out_of_range(copies):
     with pytest.raises(ValueError, match="copies"):
         printing.validate(replace(OPTS, copies=copies), INFO)
+
+
+def test_validate_checks_print_scaling_against_ipp_keywords_when_printer_omits_it():
+    info = replace(INFO, supported={**INFO.supported, "print-scaling": []})
+    printing.validate(replace(OPTS, print_scaling="fit"), info)
+    with pytest.raises(ValueError, match="print_scaling"):
+        printing.validate(replace(OPTS, print_scaling="bogus"), info)
+
+
+def test_unoffered_option_is_not_validated_or_submitted(tmp_path):
+    class FakeConn:
+        def printFile(self, queue, path, title, options):
+            self.options = options
+            return 1
+
+    info = replace(INFO, supported={**INFO.supported, "sides": []})
+    opts = replace(OPTS, sides="two-sided-long-edge")
+    printing.validate(opts, info)
+    conn = FakeConn()
+    printing.submit(conn, "q", tmp_path / "x.pdf", "t", opts, info)
+    assert "sides" not in conn.options
+    assert conn.options["media"] == "iso_a4_210x297mm"
+    assert conn.options["print-scaling"] == "fit"
 
 
 # --- virtual printer (tests/ci/start-virtual-printer.sh) ---
@@ -126,11 +150,13 @@ def test_submitted_options_reach_the_printer(conn, queue, pdf):
         sides="two-sided-short-edge",
         copies=2,
     )
-    printing.validate(opts, printing.printer_info(conn, queue))
-    job_id = printing.submit(conn, queue, pdf, "options-job", opts)
+    info = printing.printer_info(conn, queue)
+    printing.validate(opts, info)
+    title = uuid.uuid4().hex
+    job_id = printing.submit(conn, queue, pdf, title, opts, info)
 
     assert wait_for(conn, job_id, "completed").state == "completed"
-    env = logged_job("options-job")
+    env = logged_job(title)
     assert env["IPP_SIDES"] == "two-sided-short-edge"
     assert env["IPP_PRINT_COLOR_MODE"] == "monochrome"
     assert env["IPP_PRINT_QUALITY"] == "high"  # ippeveprinter exports enum 5 as its keyword
@@ -147,14 +173,15 @@ def test_submitted_options_reach_the_printer(conn, queue, pdf):
 
 @pytest.mark.cups
 def test_job_completes(conn, queue, pdf):
-    job_id = printing.submit(conn, queue, pdf, "completes-job", OPTS)
+    info = printing.printer_info(conn, queue)
+    job_id = printing.submit(conn, queue, pdf, uuid.uuid4().hex, OPTS, info)
     assert wait_for(conn, job_id, "completed").state == "completed"
     assert job_id not in printing.active_job_ids(conn, queue)
 
 
 @pytest.mark.cups
 def test_cancel_held_job(conn, queue, pdf):
-    job_id = conn.printFile(queue, str(pdf), "held-job", {"job-hold-until": "indefinite"})
+    job_id = conn.printFile(queue, str(pdf), uuid.uuid4().hex, {"job-hold-until": "indefinite"})
     assert printing.job_status(conn, job_id).state == "held"
     assert job_id in printing.active_job_ids(conn, queue)
 

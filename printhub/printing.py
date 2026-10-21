@@ -24,6 +24,8 @@ OPTION_KEYS = (
     "sides",
     "print-scaling",
 )
+# CUPS filters implement scaling whatever the printer advertises
+PRINT_SCALING = ["auto", "auto-fit", "fill", "fit", "none"]
 MARGIN_SIDES = ("top", "bottom", "left", "right")
 PAGE_RANGES = re.compile(r"\d+(-\d+)?(,\d+(-\d+)?)*")
 
@@ -59,6 +61,11 @@ class JobStatus:
     reasons: list[str] = field(default_factory=list)
 
 
+def _allowed(key: str, info: PrinterInfo) -> list[str]:
+    """Values accepted for an option; empty means the printer does not offer it."""
+    return PRINT_SCALING if key == "print-scaling" else info.supported[key]
+
+
 def connect() -> cups.Connection:
     return cups.Connection()
 
@@ -86,7 +93,7 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
     }
     return PrinterInfo(
         state=PRINTER_STATES[attrs["printer-state"]],
-        state_reasons=[r for r in _list(attrs["printer-state-reasons"]) if r != "none"],
+        state_reasons=[r for r in _list(attrs.get("printer-state-reasons", [])) if r != "none"],
         accepting=attrs["printer-is-accepting-jobs"],
         supported={
             k: [str(v) for v in _list(attrs.get(f"{k}-supported", []))] for k in OPTION_KEYS
@@ -104,7 +111,8 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
 def validate(opts: PrintOptions, info: PrinterInfo) -> None:
     for key in OPTION_KEYS:
         value = getattr(opts, key.replace("-", "_"))
-        if value not in info.supported[key]:
+        allowed = _allowed(key, info)
+        if allowed and value not in allowed:
             raise ValueError(f"{key.replace('-', '_')} {value!r} is not supported by the printer")
     if not 1 <= opts.copies <= 99:
         raise ValueError(f"copies must be 1 to 99, got {opts.copies}")
@@ -112,8 +120,18 @@ def validate(opts: PrintOptions, info: PrinterInfo) -> None:
         raise ValueError(f"page_ranges {opts.page_ranges!r} is not a valid range list")
 
 
-def submit(conn: cups.Connection, queue: str, pdf: Path, title: str, opts: PrintOptions) -> int:
-    options = {key: getattr(opts, key.replace("-", "_")) for key in OPTION_KEYS}
+def submit(
+    conn: cups.Connection,
+    queue: str,
+    pdf: Path,
+    title: str,
+    opts: PrintOptions,
+    info: PrinterInfo,
+) -> int:
+    # options the printer does not offer are left out rather than sent blind
+    options = {
+        key: getattr(opts, key.replace("-", "_")) for key in OPTION_KEYS if _allowed(key, info)
+    }
     options["copies"] = str(opts.copies)
     if opts.page_ranges is not None:
         options["page-ranges"] = opts.page_ranges
