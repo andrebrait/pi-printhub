@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  le:
+    acme:
+      # The account email comes from TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL in traefik.env.
+      storage: /var/lib/traefik/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        # Public resolvers: the LAN DNS override for print.brait.dev would break propagation checks.
+        resolvers:
+          - 1.1.1.1:53
+          - 1.0.0.1:53
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml

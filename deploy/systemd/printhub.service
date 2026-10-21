@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[Unit]
+Description=pi-printhub web app
+After=network.target cups.service
+Wants=cups.service
+
+[Service]
+User=printhub
+WorkingDirectory=/opt/printhub
+Environment=PRINTHUB_CONFIG=/etc/printhub/config.toml
+# Multipart uploads spool here, not to the RAM-backed /tmp.
+Environment=TMPDIR=/var/lib/printhub/tmp
+ExecStart=/usr/bin/python3 -m uvicorn printhub.app:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+ProtectSystem=strict
+ReadWritePaths=/var/lib/printhub
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
