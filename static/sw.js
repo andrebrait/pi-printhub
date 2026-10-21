@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// shortcut: CACHE is bumped by hand when a precached file changes, upgrade: derive it from a build hash.
+// shortcut: vendor and icon files stay cache-first until CACHE is bumped by hand, upgrade: version their URLs.
 const CACHE = "printhub-v1";
 
 const PRECACHE = [
@@ -24,8 +24,13 @@ const PRECACHE = [
   "/icons/maskable-512.png",
 ];
 
+// Vendor and icon files keep their names and rarely change, so they are served from cache first.
+const CACHE_FIRST = ["/vendor/", "/icons/"];
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)));
+  // "reload" skips the HTTP cache so the precache holds what the server serves now.
+  const requests = PRECACHE.map((path) => new Request(path, { cache: "reload" }));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(requests)));
 });
 
 self.addEventListener("activate", (event) => {
@@ -39,9 +44,26 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
-  // Only precached shell files are answered from cache; everything else goes to the network uncached.
+  // API and share requests are never answered from cache.
   if (url.pathname.startsWith("/api/") || url.pathname === "/share") return;
-  event.respondWith(
-    caches.match(event.request, { ignoreSearch: true }).then((hit) => hit ?? fetch(event.request)),
-  );
+  const cacheFirst = CACHE_FIRST.some((prefix) => url.pathname.startsWith(prefix));
+  event.respondWith(cacheFirst ? cacheOrNetwork(event.request) : networkOrCache(event.request, url));
 });
+
+async function cacheOrNetwork(request) {
+  return (await caches.match(request, { ignoreSearch: true })) ?? fetch(request);
+}
+
+// A fresh response wins and refreshes the cache; the cached copy answers only when the network fails.
+async function networkOrCache(request, url) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE);
+      await cache.put(url.pathname, response.clone());
+    }
+    return response;
+  } catch {
+    return (await caches.match(request, { ignoreSearch: true })) ?? Response.error();
+  }
+}
