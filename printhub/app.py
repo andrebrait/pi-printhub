@@ -203,6 +203,8 @@ def create_app(
             convert.normalize(source, d / "print.pdf")
             convert.render_preview(d / "print.pdf", d / "thumbs")
         except convert.ConversionError as e:
+            # normalize may have copied the source to print.pdf; a broken one must not look converted
+            (d / "print.pdf").unlink(missing_ok=True)
             return str(e)
         return None
 

@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
+
+const A4 = { w: 210, h: 297 };
+const A4_PT = [595.28, 841.89];
+const LETTER_PT = [612, 792];
+const margins3mm = { top: 300, bottom: 300, left: 300, right: 300 };
+const near = (actual, expected, tol = 0.1) =>
+  assert.ok(Math.abs(actual - expected) <= tol, `${actual} is not within ${tol} of ${expected}`);
+
+test("mediaSizeMm parses PWG self-describing names", () => {
+  assert.deepEqual(mediaSizeMm("iso_a4_210x297mm"), A4);
+  assert.deepEqual(mediaSizeMm("na_letter_8.5x11in"), { w: 215.9, h: 279.4 });
+  assert.equal(mediaSizeMm("custom_foo"), null);
+});
+
+test("fit contains the page in the printable area, centered", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: A4_PT, scaling: "fit" });
+  assert.deepEqual(l.sheet, A4);
+  assert.deepEqual(l.printable, { x: 3, y: 3, w: 204, h: 291 });
+  near(l.page.w, 204);
+  near(l.page.x + l.page.w / 2, 105);
+  near(l.page.y + l.page.h / 2, 148.5);
+});
+
+test("fit scales a small page up", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [100, 100], scaling: "fit" });
+  near(l.page.w, 204);
+  near(l.page.h, 204);
+});
+
+test("none keeps the actual size and may exceed the printable area", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: LETTER_PT, scaling: "none" });
+  near(l.page.w, 215.9);
+  assert.ok(l.page.w > l.printable.w);
+  near(l.page.x + l.page.w / 2, 105);
+});
+
+test("fill covers the printable area on both axes", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [200, 100], scaling: "fill" });
+  const { printable: p, page } = l;
+  assert.ok(page.x <= p.x + 1e-9 && page.y <= p.y + 1e-9);
+  assert.ok(page.x + page.w >= p.x + p.w - 1e-9 && page.y + page.h >= p.y + p.h - 1e-9);
+  near(page.h, p.h);
+});
+
+test("auto-fit only shrinks", () => {
+  const big = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [1000, 1000], scaling: "auto-fit" });
+  near(big.page.w, 204);
+  const small = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [100, 100], scaling: "auto-fit" });
+  near(small.page.w, 100 * 25.4 / 72);
+});
+
+test("landscape swaps the sheet dimensions", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: true, marginsHmm: margins3mm, pagePt: A4_PT, scaling: "fit" });
+  assert.deepEqual(l.sheet, { w: 297, h: 210 });
+  assert.deepEqual(l.printable, { x: 3, y: 3, w: 291, h: 204 });
+});
+
+test("missing margins count as zero", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: {}, pagePt: A4_PT, scaling: "fit" });
+  assert.deepEqual(l.printable, { x: 0, y: 0, w: 210, h: 297 });
+});
+
+test("parsePageRanges expands 1-based ranges", () => {
+  assert.deepEqual(parsePageRanges("1-3,5", 6), [1, 2, 3, 5]);
+  assert.deepEqual(parsePageRanges("5,1-2", 6), [1, 2, 5]);
+  assert.deepEqual(parsePageRanges("2,2", 6), [2]);
+});
+
+test("parsePageRanges rejects invalid input", () => {
+  assert.equal(parsePageRanges("7", 6), null);
+  assert.equal(parsePageRanges("3-1", 6), null);
+  assert.equal(parsePageRanges("0", 6), null);
+  assert.equal(parsePageRanges("1-7", 6), null);
+  assert.equal(parsePageRanges("", 6), null);
+  assert.equal(parsePageRanges("1,", 6), null);
+  assert.equal(parsePageRanges("a", 6), null);
+});
+
+test("sheetsFor pairs pages when two-sided", () => {
+  assert.deepEqual(sheetsFor([1, 2, 3], "two-sided-long-edge"), [
+    { front: 1, back: 2 },
+    { front: 3, back: null },
+  ]);
+  assert.deepEqual(sheetsFor([4, 5], "two-sided-short-edge"), [{ front: 4, back: 5 }]);
+  assert.deepEqual(sheetsFor([1, 2], "one-sided"), [
+    { front: 1, back: null },
+    { front: 2, back: null },
+  ]);
+});

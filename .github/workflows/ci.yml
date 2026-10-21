@@ -35,10 +35,7 @@ jobs:
         run: python3 -m pytest -v
 
       - name: JavaScript tests
-        run: |
-          if [ -d static/js ]; then
-            node --test static/js/
-          fi
+        run: node --test static/js/
 
       - name: Shell lint
         run: |

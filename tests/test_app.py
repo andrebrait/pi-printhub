@@ -276,6 +276,16 @@ def test_upload_conversion_error_keeps_doc_for_retry(client, store):
     assert client.post(f"/api/docs/{doc_id}/convert").status_code == 422
 
 
+def test_unconverted_doc_stays_readable_and_unprintable(client):
+    r = client.post("/api/uploads", files={"file": ("broken.pdf", b"%PDF-1.4\nnot really", "application/pdf")})
+    doc_id = r.json()["doc_id"]
+    doc = client.get(f"/api/docs/{doc_id}")
+    assert doc.status_code == 200
+    assert doc.json()["preview_count"] == 0
+    assert doc.json()["pdf_pages"] == []
+    assert client.post(f"/api/docs/{doc_id}/print", json={}).status_code in (400, 422)
+
+
 def test_low_space_deletes_old_doc_then_uploads(client, store, space):
     old = store.create("print", "old")
     old_dir = store.path(old.id)

@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Print – Print Hub</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main>
+  <header class="bar">
+    <h1 id="title">Print</h1>
+    <a href="/">Home</a>
+  </header>
+
+  <p id="load-error" class="error" role="alert" hidden></p>
+
+  <section id="convert" class="card" hidden>
+    <p id="convert-message" class="error" role="alert"></p>
+    <button id="retry" type="button">Retry</button>
+  </section>
+
+  <div id="layout" class="print-layout" hidden>
+    <section aria-label="Preview">
+      <div id="preview" class="preview"></div>
+    </section>
+    <div>
+      <form id="options" class="card options">
+        <div id="controls" class="options"></div>
+        <label>Copies
+          <input id="copies" type="number" inputmode="numeric" min="1" max="99" value="1" required>
+        </label>
+        <label>Pages
+          <input id="page-ranges" type="text" placeholder="All, or e.g. 1-3,5" autocomplete="off" aria-describedby="range-error">
+        </label>
+        <small id="range-error" class="error" hidden></small>
+        <button id="print" class="primary" type="submit">Print</button>
+        <p id="print-error" class="error" role="alert" hidden></p>
+      </form>
+      <div id="jobs"></div>
+    </div>
+  </div>
+</main>
+<script type="module" src="/js/print.js"></script>
+</body>
+</html>
