@@ -48,6 +48,8 @@ def send(
 ) -> None:
     if sum(len(a.data) for a in attachments) > MAX_ATTACHMENT_BYTES:
         raise AttachmentTooLarge(f"attachments exceed {MAX_ATTACHMENT_BYTES} bytes")
+    if not to:
+        raise InvalidRecipient("")
     for addr in to:
         try:
             Address(addr_spec=addr)
@@ -57,13 +59,15 @@ def send(
     msg = EmailMessage()
     msg["From"] = cfg.mail_from
     msg["To"] = ", ".join(to)
-    msg["Subject"] = subject
+    # EmailMessage rejects CR/LF in headers; a newline here would also inject headers.
+    msg["Subject"] = subject.replace("\r", " ").replace("\n", " ")
     msg.set_content("Attached.")
     for a in attachments:
         maintype, _, subtype = a.mime.partition("/")
         msg.add_attachment(a.data, maintype=maintype, subtype=subtype, filename=a.filename)
 
     ctx = ssl_context or ssl.create_default_context()
+    refused: dict[str, tuple[int, bytes]] = {}
     try:
         if cfg.smtp_security == "tls":
             smtp = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=SMTP_TIMEOUT, context=ctx)
@@ -75,14 +79,19 @@ def send(
                 smtp.starttls(context=ctx)
             if cfg.smtp_user:
                 smtp.login(cfg.smtp_user, cfg.smtp_password)
-            smtp.send_message(msg, to_addrs=to)
+            refused = smtp.send_message(msg, to_addrs=to)
+    except smtplib.SMTPRecipientsRefused as e:
+        refused = e.recipients
     except (OSError, smtplib.SMTPException) as e:
         raise MailError(_server_text(e)) from e
+    # Partial refusal: send_message() returns the refused addresses instead of raising.
+    if refused:
+        raise MailError(
+            "; ".join(f"{addr}: {_reply(code, reply)}" for addr, (code, reply) in refused.items())
+        )
 
 
 def _server_text(e: Exception) -> str:
-    if isinstance(e, smtplib.SMTPRecipientsRefused):
-        return "; ".join(_reply(code, reply) for code, reply in e.recipients.values())
     if isinstance(e, smtplib.SMTPResponseException):
         return _reply(e.smtp_code, e.smtp_error)
     return str(e)

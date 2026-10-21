@@ -21,13 +21,14 @@ from printhub.mail import (
 
 
 class Recorder:
-    def __init__(self, reject=None):
-        self.reject = reject
+    # rejects maps a recipient address to the reply the server gives for it.
+    def __init__(self, rejects=None):
+        self.rejects = rejects or {}
         self.envelopes = []
 
     async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
-        if self.reject:
-            return self.reject
+        if address in self.rejects:
+            return self.rejects[address]
         envelope.rcpt_tos.append(address)
         return "250 OK"
 
@@ -133,6 +134,24 @@ def test_unicode_filename(cfg, smtp_server, server_tls, client_tls):
     assert part.get_filename() == "Relatório nº 3.pdf"
 
 
+def test_subject_newlines_cannot_inject_headers(cfg, smtp_server, server_tls, client_tls):
+    rec = Recorder()
+    port = smtp_server(rec, tls_context=server_tls)
+    cfg = replace(cfg, smtp_port=port, smtp_user="")
+
+    send(
+        cfg,
+        ["a@example.com"],
+        "Scan\r\nBcc: evil@example.com",
+        [pdf()],
+        ssl_context=client_tls,
+    )
+
+    msg = message_from_bytes(rec.envelopes[0].content, policy=policy.default)
+    assert msg["Bcc"] is None
+    assert str(msg["Subject"]) == "Scan  Bcc: evil@example.com"
+
+
 def test_too_large_fails_before_connecting(cfg):
     # Nothing listens on this port: a connection attempt would raise MailError instead.
     cfg = replace(cfg, smtp_port=free_port())
@@ -143,11 +162,32 @@ def test_too_large_fails_before_connecting(cfg):
 
 
 def test_server_error_verbatim(cfg, smtp_server, server_tls, client_tls):
-    port = smtp_server(Recorder(reject="550 5.1.1 mailbox unavailable"), tls_context=server_tls)
+    rejects = {"a@example.com": "550 5.1.1 mailbox unavailable"}
+    port = smtp_server(Recorder(rejects=rejects), tls_context=server_tls)
     cfg = replace(cfg, smtp_port=port, smtp_user="")
 
     with pytest.raises(MailError, match=re.escape("550 5.1.1 mailbox unavailable")):
         send(cfg, ["a@example.com"], "s", [pdf()], ssl_context=client_tls)
+
+
+def test_partial_refusal_raises_naming_refused_address(cfg, smtp_server, server_tls, client_tls):
+    rec = Recorder(rejects={"bad@example.com": "550 5.1.1 mailbox unavailable"})
+    port = smtp_server(rec, tls_context=server_tls)
+    cfg = replace(cfg, smtp_port=port, smtp_user="")
+
+    with pytest.raises(MailError) as exc:
+        send(cfg, ["ok@example.com", "bad@example.com"], "s", [pdf()], ssl_context=client_tls)
+
+    assert str(exc.value) == "bad@example.com: 550 5.1.1 mailbox unavailable"
+    # The accepted recipient still got the message: the error reports a partial send.
+    assert rec.envelopes[0].rcpt_tos == ["ok@example.com"]
+
+
+def test_empty_recipients_invalid_without_connecting(cfg):
+    cfg = replace(cfg, smtp_port=free_port())
+
+    with pytest.raises(InvalidRecipient):
+        send(cfg, [], "s", [pdf()])
 
 
 def test_starttls_not_offered_raises_instead_of_sending_in_clear(cfg, smtp_server, client_tls):
