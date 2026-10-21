@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    env:
+      PRINTHUB_TEST_QUEUE: TestPrinter
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            ca-certificates python3 python3-pytest python3-httpx python3-aiosmtpd \
+            python3-fastapi python3-uvicorn python3-multipart python3-argon2 \
+            python3-itsdangerous python3-img2pdf python3-pil python3-magic python3-cups \
+            python3-pikepdf cups cups-ipp-utils sane-utils libjpeg-turbo-progs \
+            poppler-utils libheif-examples libreoffice-writer-nogui nodejs shellcheck \
+            procps openssl systemd git
+
+      - name: Enable SANE test backend
+        run: echo test >> /etc/sane.d/dll.conf
+
+      - name: Start CUPS and virtual printer
+        run: |
+          if [ -x tests/ci/start-virtual-printer.sh ]; then
+            cupsd
+            tests/ci/start-virtual-printer.sh
+          fi
+
+      - name: Python tests
+        run: python3 -m pytest -v
+
+      - name: JavaScript tests
+        run: |
+          if [ -d static/js ]; then
+            node --test static/js/
+          fi
+
+      - name: Shell lint
+        run: |
+          if compgen -G "deploy/*.sh" > /dev/null; then
+            shellcheck deploy/*.sh
+          fi

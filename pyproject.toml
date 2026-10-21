@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "printhub"
+version = "0.1.0"
+description = "Print and scan server for a USB printer on a Raspberry Pi"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["printhub"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "cups: needs cupsd and the virtual printer",
+    "sane: needs the SANE test backend",
+]
