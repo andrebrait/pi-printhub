@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scan – Print Hub</title>
+  <link rel="stylesheet" href="/vendor/cropper/cropper.min.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main>
+  <header class="bar">
+    <h1 id="heading">New scan</h1>
+    <a href="/">Home</a>
+  </header>
+
+  <p id="load-error" class="error" role="alert" hidden></p>
+
+  <div class="scan-layout">
+    <div>
+      <form id="scan-form" class="card options">
+        <p id="scanner-status" role="status">Looking for the scanner…</p>
+        <div id="settings" class="settings" hidden>
+          <label>Resolution <select id="resolution"></select></label>
+          <label>Color <select id="mode"></select></label>
+          <label>Area
+            <select id="area">
+              <option value="a4">A4</option>
+              <option value="letter">Letter</option>
+              <option value="full">Whole glass</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <button id="scan-flatbed" class="primary" type="button" hidden>Scan page</button>
+          <button id="scan-adf" class="primary" type="button" hidden>Scan feeder</button>
+        </div>
+        <p id="scan-status" role="status"></p>
+        <div id="scan-failed" class="row" hidden>
+          <p id="scan-error" class="error" role="alert"></p>
+          <button id="retry" type="button">Retry</button>
+        </div>
+      </form>
+      <p id="edit-error" class="error" role="alert" hidden></p>
+      <ul id="pages" class="pages" aria-label="Pages"></ul>
+    </div>
+
+    <section id="export" class="card options" aria-labelledby="export-heading" hidden>
+      <h2 id="export-heading">Save and send</h2>
+      <label>Title <input id="title" type="text" required autocomplete="off"></label>
+      <div id="outputs" class="options">
+        <div class="row">
+          <a id="download-pdf" class="button">Download PDF</a>
+          <a id="download-jpeg" class="button">Download JPEG</a>
+          <a id="print" class="button">Print</a>
+        </div>
+        <form id="email" class="options">
+          <label>Email to
+            <input id="to" type="email" multiple list="recipients" autocomplete="email" placeholder="name@example.com">
+          </label>
+          <datalist id="recipients"></datalist>
+          <label>Subject <input id="subject" type="text"></label>
+          <fieldset class="row">
+            <legend>Attach as</legend>
+            <label class="choice"><input type="radio" name="format" value="pdf" checked> PDF</label>
+            <label class="choice"><input type="radio" name="format" value="jpeg"> JPEG</label>
+          </fieldset>
+          <button id="send" class="primary" type="submit">Send email</button>
+          <p id="email-status" role="status"></p>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="crop-dialog" class="crop-dialog" aria-labelledby="crop-heading">
+    <h2 id="crop-heading">Crop page</h2>
+    <label>Shape
+      <select id="aspect">
+        <option value="">Free</option>
+        <option value="a4">A4</option>
+        <option value="letter">Letter</option>
+      </select>
+    </label>
+    <div class="crop-stage"><img id="crop-image" alt="Page to crop"></div>
+    <div class="row">
+      <button id="crop-apply" class="primary" type="button">Apply</button>
+      <button id="crop-cancel" type="button">Cancel</button>
+    </div>
+  </dialog>
+</main>
+<script src="/vendor/sortable/Sortable.min.js"></script>
+<script src="/vendor/cropper/cropper.min.js"></script>
+<script type="module" src="/js/scan.js"></script>
+</body>
+</html>

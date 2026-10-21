@@ -382,9 +382,20 @@ def create_app(
         store.delete(doc_id)
 
     @api.get("/docs/{doc_id}/pages/{page_id}")
-    def page_image(doc_id: str, page_id: str, size: Literal["thumb", "full"] = "full"):
+    def page_image(doc_id: str, page_id: str, size: Literal["thumb", "full"] = "full", rotated: bool = False):
         doc = store.get(doc_id)
         src = page_path(doc, page_id)
+        rotation = next(p.rotation for p in doc.pages if p.id == page_id)
+        if size == "full" and rotated and rotation:
+            # The crop editor works in the rotated frame, so it gets the page turned exactly as the export turns it.
+            tmp = Path(tempfile.mkdtemp(dir=tmp_root))
+            try:
+                edits.apply_edits(src, Page(page_id, rotation), tmp / "page.jpg")
+            except BaseException:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise
+            cleanup = BackgroundTask(shutil.rmtree, tmp, ignore_errors=True)
+            return FileResponse(tmp / "page.jpg", media_type="image/jpeg", background=cleanup)
         if size == "full":
             return FileResponse(src, media_type="image/jpeg")
         thumb = store.path(doc_id) / "thumbs" / f"{page_id}.jpg"

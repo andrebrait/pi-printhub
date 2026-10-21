@@ -17,7 +17,7 @@ from test_scanning import fake_scanimage, make_png
 
 from printhub.app import MAX_UPLOAD, create_app
 from printhub.auth import COOKIE, issue_session
-from printhub.documents import DocStore, Page, PrintRecord
+from printhub.documents import Crop, DocStore, Page, PrintRecord
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
 
@@ -379,6 +379,18 @@ def test_page_image_full_and_thumb(client, store):
     assert client.get(f"/api/docs/{doc.id}/pages/missing").status_code == 404
     page = client.get(f"/api/docs/{doc.id}").json()["pages"][0]
     assert page["page_info"] == {"width": 1600, "height": 1200, "mcu": [16, 16]}
+
+
+def test_page_image_rotated(client, store, cfg):
+    doc = store.create("scan", "turned")
+    (store.path(doc.id) / "pages" / "p.jpg").write_bytes(jpeg_bytes(size=(1600, 1200)))
+    doc.pages.append(Page(id="p", rotation=90, crop=Crop(0, 0, 100, 100)))
+    store.save(doc)
+    r = client.get(f"/api/docs/{doc.id}/pages/p", params={"size": "full", "rotated": "1"})
+    assert r.headers["content-type"] == "image/jpeg"
+    # rotated only: the crop is what the editor changes, so it is not applied
+    assert Image.open(io.BytesIO(r.content)).size == (1200, 1600)
+    assert not any((cfg.data_dir / "tmp").iterdir())
 
 
 # Export
