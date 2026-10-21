@@ -48,6 +48,15 @@ def test_list_filters_by_kind(store):
     assert [d.id for d in store.list(kind="scan")] == [scan.id]
 
 
+def test_list_skips_unreadable_and_foreign_entries(store):
+    good = store.create("scan", "good")
+    broken = store.create("scan", "broken")
+    (store.path(broken.id) / "doc.json").write_text("{not json")
+    (store.root / "lost+found").mkdir()
+    (store.root / "lost+found" / "doc.json").write_text("{}")
+    assert [d.id for d in store.list()] == [good.id]
+
+
 def test_get_missing_raises(store):
     with pytest.raises(DocNotFound):
         store.get("A" * 22)

@@ -127,7 +127,13 @@ class DocStore:
 
     # Defined last: the name shadows the builtin `list` for the class body.
     def list(self, kind: Literal["print", "scan"] | None = None) -> list[Doc]:
-        docs = [self.get(p.parent.name) for p in self.root.glob("*/doc.json")]
+        docs = []
+        for p in self.root.glob("*/doc.json"):
+            # A doc deleted mid-listing or a corrupt/foreign entry must not break every listing.
+            try:
+                docs.append(self.get(p.parent.name))
+            except (DocNotFound, OSError, ValueError, TypeError, KeyError):
+                continue
         if kind is not None:
             docs = [d for d in docs if d.kind == kind]
         return sorted(docs, key=lambda d: d.modified, reverse=True)
