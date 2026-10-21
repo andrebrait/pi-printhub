@@ -4,6 +4,7 @@ import re
 import secrets
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -26,7 +27,6 @@ from printhub.auth import (
     LoginLimiter,
     PendingShares,
     issue_session,
-    origin_ok,
     require_session,
     session_valid,
     set_session_cookie,
@@ -42,12 +42,14 @@ from printhub.mail import (
     RecentRecipients,
     send,
 )
+from printhub.middleware import MAX_UPLOAD, Guard
 from printhub.printing import PrintOptions
 from printhub.retention import DiskFull, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
 
-MAX_UPLOAD = 100 * 1024 * 1024
 THUMB_PX = 400
+PENDING_MAX_COUNT = 5
+PENDING_MAX_BYTES = 200 * 1024 * 1024
 # cups.Connection() raises RuntimeError when cupsd is unreachable
 CUPS_ERRORS = (cups.IPPError, RuntimeError)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -95,14 +97,19 @@ def _disposition(name: str) -> str:
 
 def _copy_limited(src: BinaryIO, dest: Path) -> None:
     size = 0
-    with dest.open("wb") as out:
-        while chunk := src.read(1024 * 1024):
-            size += len(chunk)
-            if size > MAX_UPLOAD:
-                out.close()
-                dest.unlink()
-                raise ApiError(413, "File exceeds 100 MB")
-            out.write(chunk)
+    try:
+        with dest.open("wb") as out:
+            while chunk := src.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD:
+                    raise ApiError(413, "File exceeds 100 MB")
+                out.write(chunk)
+    except ApiError:
+        dest.unlink(missing_ok=True)
+        raise
+    except OSError:
+        dest.unlink(missing_ok=True)
+        raise ApiError(507, "Disk full") from None
 
 
 def create_app(
@@ -121,19 +128,12 @@ def create_app(
         d.mkdir(parents=True)
     scanner = scanner or Scanner()
     free_bytes = free_bytes or (lambda: shutil.disk_usage(cfg.data_dir).free)
-    limiter, shares = LoginLimiter(), PendingShares()
+    min_free = int(cfg.min_free_gb * 1024**3)
+    limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
     recipients = RecentRecipients(cfg.data_dir / "recipients.json")
 
     app = FastAPI(openapi_url=None)
-
-    @app.middleware("http")
-    async def guard(request: Request, call_next):
-        is_share = request.method == "POST" and request.url.path == "/share"
-        if not is_share and not origin_ok(request.method, request.headers.get("origin"), cfg):
-            return JSONResponse({"error": "Forbidden origin"}, 403)
-        if int(request.headers.get("content-length") or 0) > MAX_UPLOAD:
-            return JSONResponse({"error": "File exceeds 100 MB"}, 413)
-        return await call_next(request)
+    app.add_middleware(Guard, cfg=cfg)
 
     @app.exception_handler(ApiError)
     async def api_error(request, exc: ApiError):
@@ -164,7 +164,7 @@ def create_app(
 
     def make_room() -> None:
         try:
-            ensure_free_space(store, int(cfg.min_free_gb * 1024**3), busy(), free_bytes)
+            ensure_free_space(store, min_free, busy(), free_bytes)
         except DiskFull:
             raise ApiError(507, "Disk full") from None
 
@@ -266,11 +266,20 @@ def create_app(
             doc_id = ingest(file.file, file.filename or "")
             conversion_error(doc_id)  # print.html shows the failure and offers Retry
             return RedirectResponse(f"/print.html?doc={doc_id}", 303)
-        make_room()
-        path = pending_dir / secrets.token_urlsafe(16)
-        _copy_limited(file.file, path)
-        detect(path)
-        token = shares.put(path, file.filename or "", time.monotonic())
+        # Anonymous: never evict documents, and bound what strangers can park on disk.
+        with share_lock:
+            if free_bytes() < min_free:
+                raise ApiError(507, "Disk full")
+            pending = shares.paths(time.monotonic())
+            if len(pending) >= PENDING_MAX_COUNT:
+                raise ApiError(429, "Too many pending shares")
+            path = pending_dir / secrets.token_urlsafe(16)
+            _copy_limited(file.file, path)
+            detect(path)
+            if sum(p.stat().st_size for p in [*pending, path] if p.exists()) > PENDING_MAX_BYTES:
+                path.unlink()
+                raise ApiError(429, "Too many pending shares")
+            token = shares.put(path, file.filename or "", time.monotonic())
         return RedirectResponse(f"/login.html?share={token}", 303)
 
     # Session routes
@@ -296,10 +305,17 @@ def create_app(
             raise ApiError(410, "Share expired")
         path, filename = entry
         try:
-            with path.open("rb") as f:
+            f = path.open("rb")
+        except FileNotFoundError:
+            raise ApiError(410, "Share expired") from None
+        try:
+            with f:
                 doc_id = ingest(f, filename)
-        finally:
-            path.unlink(missing_ok=True)
+        except ApiError:
+            # e.g. disk full: keep the share so the same link can be retried
+            shares.put(path, filename, time.monotonic(), token=token)
+            raise
+        path.unlink(missing_ok=True)
         return converted(doc_id)
 
     @api.post("/docs/{doc_id}/convert")

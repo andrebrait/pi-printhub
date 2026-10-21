@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import asyncio
 import io
+import tempfile
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import cups
 import pytest
@@ -13,7 +16,9 @@ from test_mail import Recorder, server_tls, smtp_server, tls_files  # noqa: F401
 from test_scanning import fake_scanimage, make_png
 
 from printhub.app import MAX_UPLOAD, create_app
+from printhub.auth import COOKIE, issue_session
 from printhub.documents import DocStore, Page, PrintRecord
+from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
 
 ORIGIN = "https://print.brait.dev"
@@ -156,35 +161,101 @@ def test_upload_jpeg_unicode_name(client, store):
     ]
 
 
-def test_upload_over_limit_streamed_is_rejected_and_removed(client, store):
-    boundary = "printhubboundary"
+BOUNDARY = "printhubboundary"
+MULTIPART = {"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"}
+MIB = b"\0" * (1024 * 1024)
 
+
+def multipart_head(filename="big.pdf") -> bytes:
+    return (
+        f"--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode()
+
+
+def test_upload_file_over_limit_is_rejected_and_removed(client, store):
+    # Under the whole-body cap (multipart allowance), so the per-file copy limit trips.
     def body():
-        yield (
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.pdf\"\r\n"
-            "Content-Type: application/pdf\r\n\r\n"
-        ).encode()
-        chunk = b"\0" * (1024 * 1024)
-        for _ in range(MAX_UPLOAD // len(chunk) + 1):
-            yield chunk
-        yield f"\r\n--{boundary}--\r\n".encode()
+        yield multipart_head()
+        for _ in range(MAX_UPLOAD // len(MIB)):
+            yield MIB
+        yield b"\0"
+        yield f"\r\n--{BOUNDARY}--\r\n".encode()
 
-    r = client.post(
-        "/api/uploads",
-        content=body(),
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-    )
+    r = client.post("/api/uploads", content=body(), headers=MULTIPART)
     assert r.status_code == 413
     assert list(store.root.iterdir()) == []
 
 
-def test_upload_content_length_over_limit_rejected_before_reading(client, store):
-    r = client.post(
-        "/api/uploads",
-        content=b"x",
-        headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": str(MAX_UPLOAD + 1)},
-    )
-    assert r.status_code == 413
+def asgi_post(app, path: str, headers: dict[str, str]) -> tuple[int, int]:
+    """POST an endless chunked body straight through ASGI; returns (status, chunks the app read)."""
+    read = 0
+    statuses = []
+
+    async def receive():
+        nonlocal read
+        read += 1
+        return {"type": "http.request", "body": multipart_head() if read == 1 else MIB, "more_body": True}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            statuses.append(message["status"])
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in {"Origin": ORIGIN, **MULTIPART, **headers}.items()],
+        "client": ("127.0.0.1", 50000),
+        "server": ("print.brait.dev", 443),
+    }
+    asyncio.run(app(scope, receive, send))
+    (status,) = statuses
+    return status, read
+
+
+def test_chunked_body_without_session_is_refused_unread(client, store, monkeypatch, tmp_path):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "spool"))
+    (tmp_path / "spool").mkdir()
+    assert asgi_post(client.app, "/api/uploads", {}) == (401, 0)
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_chunked_body_over_cap_aborts_reading(client, cfg, store, monkeypatch, tmp_path):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "spool"))
+    (tmp_path / "spool").mkdir()
+    status, read = asgi_post(client.app, "/api/uploads", {"Cookie": f"{COOKIE}={issue_session(cfg)}"})
+    assert status == 413
+    assert read <= MAX_BODY // len(MIB) + 2
+    assert list((tmp_path / "spool").iterdir()) == []
+    assert list(store.root.iterdir()) == []
+
+
+def test_content_length_checked_before_reading(client, cfg, store):
+    cookie = {"Cookie": f"{COOKIE}={issue_session(cfg)}"}
+    assert asgi_post(client.app, "/api/uploads", {**cookie, "Content-Length": str(MAX_BODY + 1)}) == (413, 0)
+    assert asgi_post(client.app, "/api/uploads", {**cookie, "Content-Length": "12abc"}) == (400, 0)
+    assert list(store.root.iterdir()) == []
+
+
+def test_disk_error_while_writing_is_disk_full(client, store, monkeypatch):
+    real_open = Path.open
+
+    def full_disk(self, mode="r", *args, **kwargs):
+        if self.name.startswith("source") and "w" in mode:
+            return real_open(Path("/dev/full"), mode, *args, **kwargs)
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", full_disk)
+    r = client.post("/api/uploads", files={"file": ("a.jpg", jpeg_bytes(), "image/jpeg")})
+    assert r.status_code == 507
+    assert r.json() == {"error": "Disk full"}
     assert list(store.root.iterdir()) == []
 
 
@@ -473,6 +544,45 @@ def test_share_with_session_redirects_to_print(client, store):
     assert r.status_code == 303
     (doc,) = store.list()
     assert r.headers["location"] == f"/print.html?doc={doc.id}"
+
+
+def share_anon(client):
+    return client.post("/share", files={"file": ("photo.jpg", jpeg_bytes(), "image/jpeg")})
+
+
+def test_anonymous_share_never_evicts(make_client, store, space):
+    old = store.create("print", "old")
+    space["free"] = lambda: 0
+    r = share_anon(make_client(login=False))
+    assert r.status_code == 507
+    assert [d.id for d in store.list()] == [old.id]
+
+
+def test_anonymous_shares_are_capped(make_client, cfg):
+    anon = make_client(login=False)
+    for _ in range(5):
+        assert share_anon(anon).status_code == 303
+    assert share_anon(anon).status_code == 429
+    assert len(list((cfg.data_dir / "pending").iterdir())) == 5
+
+
+def test_failed_claim_keeps_share_for_retry(make_client, cfg, space):
+    anon = make_client(login=False)
+    token = share_anon(anon).headers["location"].split("share=", 1)[1]
+    assert anon.post("/api/login", json={"password": "secret"}).status_code == 204
+    space["free"] = lambda: 0
+    assert anon.post(f"/api/share/{token}/claim").status_code == 507
+    space["free"] = lambda: PLENTY
+    assert anon.post(f"/api/share/{token}/claim").status_code == 200
+
+
+def test_claim_with_missing_file_is_gone(make_client, cfg):
+    anon = make_client(login=False)
+    token = share_anon(anon).headers["location"].split("share=", 1)[1]
+    for f in (cfg.data_dir / "pending").iterdir():
+        f.unlink()
+    assert anon.post("/api/login", json={"password": "secret"}).status_code == 204
+    assert anon.post(f"/api/share/{token}/claim").status_code == 410
 
 
 def test_startup_clears_pending(cfg, make_client):

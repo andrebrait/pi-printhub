@@ -95,10 +95,11 @@ class PendingShares:
         self._entries: dict[str, tuple[Path, str, float]] = {}
         self._lock = threading.Lock()
 
-    def put(self, path: Path, filename: str, now: float) -> str:
+    def put(self, path: Path, filename: str, now: float, token: str | None = None) -> str:
+        """Store a share; pass `token` to put back an entry whose claim failed."""
         with self._lock:
             self._sweep(now)
-            token = secrets.token_urlsafe(32)
+            token = token or secrets.token_urlsafe(32)
             self._entries[token] = (path, filename, now)
             return token
 
@@ -110,6 +111,11 @@ class PendingShares:
                 return None
             path, filename, _ = entry
             return path, filename
+
+    def paths(self, now: float) -> list[Path]:
+        with self._lock:
+            self._sweep(now)
+            return [path for path, _, _ in self._entries.values()]
 
     def _sweep(self, now: float) -> None:
         for token, (path, _, created) in list(self._entries.items()):
