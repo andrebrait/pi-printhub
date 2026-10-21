@@ -17,7 +17,8 @@ entryPoints:
 certificatesResolvers:
   le:
     acme:
-      # The account email comes from TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL in traefik.env.
+      # install.sh substitutes the placeholder from /etc/traefik/acme-email.
+      email: "@ACME_EMAIL@"
       storage: /var/lib/traefik/acme.json
       dnsChallenge:
         provider: cloudflare

@@ -19,7 +19,7 @@ git clone <this repo> && cd pi-printhub
 sudo deploy/install.sh
 ```
 
-The script installs packages, creates the CUPS queue, builds AirSane, installs Traefik, copies the app to `/opt/printhub`, writes `/etc/printhub/config.toml` and `/etc/traefik/traefik.env` (prompting for the web password, SMTP settings, Cloudflare token and ACME email on first run) and starts the services. It aborts with "Printer not connected" if the OfficeJet Pro 6970 is not on USB.
+The script installs packages, creates the CUPS queue, builds AirSane, installs Traefik, copies the app to `/opt/printhub`, writes `/etc/printhub/config.toml` and `/etc/traefik/traefik.env` (prompting for the web password, SMTP settings and Cloudflare token on first run) and starts the services. The ACME email is stored in `/etc/traefik/acme-email` (root-only, 0600) and substituted into Traefik's static configuration on every run. An initial install aborts with "Printer not connected" if the OfficeJet Pro 6970 is not on USB; updates reuse the existing queue without requiring the printer to be on.
 
 Before the web app is reachable:
 
@@ -27,7 +27,7 @@ Before the web app is reachable:
 2. **LAN DNS override:** point `print.brait.dev` at the Pi's LAN address in your router or local DNS. The installer prints the address at the end.
 3. **DHCP reservation:** reserve that address for the Pi's MAC address (also printed), so the override stays valid.
 
-Update: `git pull && sudo deploy/install.sh`. It skips steps that are already done, restarts `printhub` and `traefik` and keeps existing configuration. Logs: `journalctl -u printhub -u traefik -u airsaned`.
+Update: `git pull && sudo deploy/install.sh`. It skips steps that are already done, restarts `printhub`, `traefik` and `airsaned` and keeps existing configuration. Logs: `journalctl -u printhub -u traefik -u airsaned`.
 
 Before a release, work through [`docs/hardware-checklist.md`](docs/hardware-checklist.md) on the Pi.
 
