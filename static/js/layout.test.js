@@ -39,7 +39,8 @@ test("none keeps the actual size and may exceed the printable area", () => {
 });
 
 test("fill covers the printable area on both axes", () => {
-  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [200, 100], scaling: "fill" });
+  // Portrait but squatter than the printable area, so it is not turned and height is the binding axis.
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [200, 250], scaling: "fill" });
   const { printable: p, page } = l;
   assert.ok(page.x <= p.x + 1e-9 && page.y <= p.y + 1e-9);
   assert.ok(page.x + page.w >= p.x + p.w - 1e-9 && page.y + page.h >= p.y + p.h - 1e-9);
@@ -57,6 +58,26 @@ test("landscape swaps the sheet dimensions", () => {
   const l = sheetLayout({ sheetMm: A4, landscape: true, marginsHmm: margins3mm, pagePt: A4_PT, scaling: "fit" });
   assert.deepEqual(l.sheet, { w: 297, h: 210 });
   assert.deepEqual(l.printable, { x: 3, y: 3, w: 291, h: 204 });
+});
+
+// CUPS turns a page whose shape does not match the sheet by 90 degrees clockwise, in every
+// scaling mode (checked against cups-filters through ippeveprinter), so it fills the sheet.
+test("a portrait page on a landscape sheet is turned and fills it", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: true, marginsHmm: margins3mm, pagePt: A4_PT, scaling: "fit" });
+  assert.equal(l.turned, true);
+  near(l.page.h, 204);
+  near(l.page.w, 297 * 204 / 210, 0.2);
+});
+
+test("a landscape page on a portrait sheet is turned", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: margins3mm, pagePt: [842, 595], scaling: "none" });
+  assert.equal(l.turned, true);
+  near(l.page.w, 595 * 25.4 / 72);
+});
+
+test("a page that already matches the sheet is not turned", () => {
+  assert.equal(sheetLayout({ sheetMm: A4, landscape: true, marginsHmm: {}, pagePt: [842, 595], scaling: "fit" }).turned, false);
+  assert.equal(sheetLayout({ sheetMm: A4, landscape: false, marginsHmm: {}, pagePt: [100, 100], scaling: "fit" }).turned, false);
 });
 
 test("missing margins count as zero", () => {

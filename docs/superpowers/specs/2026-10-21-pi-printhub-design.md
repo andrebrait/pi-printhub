@@ -124,7 +124,7 @@ Option values come from the CUPS queue's printer attributes, read through `pytho
 
 ### Preview
 
-The server renders thumbnails of the normalized PDF with `pdftoppm`. The browser composes them onto a sheet of the selected size and orientation, applying the scaling mode and the printer's reported margins (`media-*-margin`). Grayscale uses a CSS filter. Two-sided output is shown as front and back pairs with an indication of the flip edge. The preview is accurate for layout but not for color.
+The server renders thumbnails of the normalized PDF with `pdftoppm`. The browser composes them onto a sheet of the selected size and orientation, applying the scaling mode and the printer's reported margins (`media-*-margin`). A page whose shape does not match the sheet (a portrait page on a landscape sheet, or the reverse) is shown turned 90° clockwise, as CUPS prints it. Grayscale uses a CSS filter. Two-sided output is shown as front and back pairs with an indication of the flip edge. The preview is accurate for layout but not for color.
 
 ### Job submission and status
 

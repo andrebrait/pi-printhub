@@ -41,7 +41,7 @@ Anonymous shares are admitted before body spooling: one at a time, bounded by th
 
 ```
 python3 -m pytest -v
-node --test static/js/
+node --test static/js/*.test.js
 ```
 
 ## License

@@ -50,7 +50,10 @@ export function sheetLayout({ sheetMm, landscape, marginsHmm, pagePt, scaling })
     w: sheet.w - m("left") - m("right"),
     h: sheet.h - m("top") - m("bottom"),
   };
-  const nat = { w: pagePt[0] * PT_MM, h: pagePt[1] * PT_MM };
+  // CUPS turns a page whose shape does not match the sheet 90 degrees clockwise to fill it.
+  const turned = pagePt[0] !== pagePt[1] && pagePt[0] > pagePt[1] !== sheet.w > sheet.h;
+  const [pw, ph] = turned ? [pagePt[1], pagePt[0]] : pagePt;
+  const nat = { w: pw * PT_MM, h: ph * PT_MM };
   const contain = Math.min(printable.w / nat.w, printable.h / nat.h);
   const scale = {
     fit: contain,
@@ -64,6 +67,7 @@ export function sheetLayout({ sheetMm, landscape, marginsHmm, pagePt, scaling })
   const h = nat.h * scale;
   return {
     sheet,
+    turned,
     printable,
     page: { x: printable.x + (printable.w - w) / 2, y: printable.y + (printable.h - h) / 2, w, h },
   };

@@ -35,7 +35,7 @@ jobs:
         run: python3 -m pytest -v
 
       - name: JavaScript tests
-        run: node --test static/js/
+        run: node --test static/js/*.test.js
 
       - name: Shell lint
         run: shellcheck deploy/*.sh

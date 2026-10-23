@@ -152,7 +152,11 @@ function sheetEl(pageNo, gray) {
   img.loading = "lazy";
   rot.append(img);
   crop.append(rot);
-  box.append(crop);
+  // A turned page keeps its upright content in an inner frame rotated 90 degrees clockwise.
+  const frame = document.createElement("div");
+  frame.className = L.turned ? "turn" : "upright";
+  frame.append(crop);
+  box.append(frame);
   area.append(box);
   el.append(area);
   return el;

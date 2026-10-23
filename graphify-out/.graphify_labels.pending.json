@@ -18,10 +18,10 @@
   "16": "test_auth.py",
   "17": "test_lifecycle.py",
   "18": "PendingShares",
-  "19": "auth.py",
+  "19": "test_pwa.py",
   "20": "LoginLimiter",
   "21": "sw.js",
-  "22": "run",
+  "22": "FakeCups",
   "23": "package.json",
   "24": "LICENSES.md",
   "25": "record-job.sh",
@@ -29,6 +29,6 @@
   "27": "printhub",
   "28": "sw-register.js",
   "29": "retention.py",
-  "30": "DocStore",
+  "30": "test_email_rejects_oversized_exports_before_reading",
   "31": "run"
 }
