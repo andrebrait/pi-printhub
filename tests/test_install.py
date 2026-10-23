@@ -146,3 +146,13 @@ def test_write_secret_failure_preserves_existing_file(tmp_path):
     assert r.returncode != 0
     assert f.read_text() == "old"
     assert [p.name for p in tmp_path.iterdir()] == ["secret"]
+
+
+def test_setup_printer_defers_when_printer_absent(tmp_path):
+    # No queue yet and no USB printer: the rest of the install must go on, touching neither CUPS nor SANE.
+    stubs = 'lpstat() { return 1; }; lpadmin() { echo LPADMIN; }; cupsctl() { echo CUPSCTL; }; install() { echo INSTALL; }'
+    r = sh(f"{stubs}; setup_printer; echo rc=$?; echo pending=$PRINTER_PENDING", USB_SYSFS=str(tmp_path))
+    assert "rc=0" in r.stdout
+    assert "pending=1" in r.stdout
+    assert "LPADMIN" not in r.stdout and "CUPSCTL" not in r.stdout and "INSTALL" not in r.stdout
+    assert "Re-run" in r.stdout

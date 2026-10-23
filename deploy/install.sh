@@ -138,7 +138,11 @@ setup_printer() {
         # Re-run: the queue exists, so the printer need not be on.
         [[ $uri == *localhost:60000* ]] && ippusb=1 || ippusb=0
     else
-        dev=$(printer_dev) || die "Printer not connected (no USB device 03f0:0c54)"
+        if ! dev=$(printer_dev); then
+            PRINTER_PENDING=1
+            log "Printer not connected (no USB device 03f0:0c54); skipping the print queue and scanner setup. Re-run this script after plugging it in."
+            return 0
+        fi
         if has_ipp_usb; then
             log "Printer speaks IPP-over-USB"
             create_ipp_usb_queue
@@ -299,6 +303,7 @@ main() {
     write_traefik_env
     install_traefik_config
     start_services
+    ((${PRINTER_PENDING:-0})) && echo "Printer not set up yet: plug it in, then re-run: sudo $REPO/deploy/install.sh"
     print_network_todo
 }
 
