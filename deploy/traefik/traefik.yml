@@ -26,6 +26,11 @@ certificatesResolvers:
         resolvers:
           - 1.1.1.1:53
           - 1.0.0.1:53
+        # The LAN redirects IPv6 DNS to the firewall resolver, which refuses direct authoritative queries,
+        # so wait for the TXT record on the public resolvers above instead.
+        propagation:
+          disableANSChecks: true
+          requireAllRNS: true
 
 providers:
   file:
