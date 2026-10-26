@@ -94,12 +94,13 @@ ul.docs .meta { color: var(--muted); font-size: 0.9rem; white-space: nowrap; }
 
 /* Login */
 form.stack { display: grid; gap: 0.75rem; max-width: 24rem; }
-form.stack label { display: grid; gap: 0.25rem; font-weight: 600; }
+form.stack label { display: grid; gap: 0.25rem; font-weight: 600; grid-template-columns: minmax(0, 1fr); }
 
 /* Print page */
 .print-layout, .scan-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
-.options { display: grid; gap: 0.75rem; }
-.options label { display: grid; gap: 0.25rem; font-weight: 600; }
+/* minmax(0, 1fr): a select is as wide as its longest option, which must not widen the column past the card. */
+.options { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr); }
+.options label { display: grid; gap: 0.25rem; font-weight: 600; grid-template-columns: minmax(0, 1fr); }
 .options input:invalid { border-color: var(--danger); }
 /* Phones: one swipeable row keeps the options and Print button near the top. Auto margins centre a short row
    and let a long one scroll from its first sheet. */
@@ -141,7 +142,7 @@ figure.sheet-group figcaption { color: var(--muted); font-size: 0.9rem; }
 /* Scan page */
 .scan-layout h2 { margin-top: 0; }
 .settings { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }
-.settings label { display: grid; gap: 0.25rem; font-weight: 600; }
+.settings label { display: grid; gap: 0.25rem; font-weight: 600; grid-template-columns: minmax(0, 1fr); }
 fieldset { border: 0; margin: 0; padding: 0; }
 legend { font-weight: 600; padding: 0; margin-bottom: 0.25rem; }
 .options label.choice { display: flex; align-items: center; gap: 0.4rem; font-weight: normal; min-height: 2.75rem; }

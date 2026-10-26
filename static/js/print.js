@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { apiFetch, errorMessage, reasonLabels } from "./api.js";
-import { mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
+import { isLoadableMedia, mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -9,7 +9,7 @@ const docId = encodeURIComponent(params.get("doc") ?? "");
 // IPP option -> label, and the form-field name the print endpoint takes.
 // closed: show only the labelled values (IPP enums such as reverse-landscape make no sense here).
 const CONTROLS = [
-  { key: "media", label: "Paper", labels: {}, format: mediaLabel },
+  { key: "media", label: "Paper", labels: {}, format: mediaLabel, keep: isLoadableMedia },
   { key: "print-quality", label: "Quality", closed: true, labels: { 3: "Draft", 4: "Normal", 5: "Best" } },
   { key: "print-color-mode", label: "Color", labels: { color: "Color", monochrome: "Grayscale" } },
   { key: "orientation-requested", label: "Orientation", closed: true, labels: { 3: "Portrait", 4: "Landscape" } },
@@ -83,6 +83,7 @@ function buildControls() {
     let values = printer.supported[c.key] ?? [];
     if (c.key === "print-scaling" && !values.length) values = SCALING_ALL;
     if (c.closed) values = values.filter((v) => v in c.labels);
+    if (c.keep) values = values.filter(c.keep);
     if (!values.length) {
       controls[c.key] = null;
       continue;

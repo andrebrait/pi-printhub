@@ -12,28 +12,42 @@ export function mediaSizeMm(name) {
   return { w: round2(m[1] * k), h: round2(m[2] * k) };
 }
 
+// Keyed by size, so vendor aliases such as "om_a-4-borderless_210x297mm" get the same name as "iso_a4_210x297mm".
 const MEDIA_NAMES = {
-  iso_a3: "A3",
-  iso_a4: "A4",
-  iso_a5: "A5",
-  iso_a6: "A6",
-  iso_b5: "B5",
-  na_letter: "Letter",
-  na_legal: "Legal",
-  na_executive: "Executive",
-  "na_number-10": "Envelope #10",
-  iso_dl: "Envelope DL",
-  iso_c5: "Envelope C5",
+  "297x420mm": "A3",
+  "210x297mm": "A4",
+  "148x210mm": "A5",
+  "105x148mm": "A6",
+  "176x250mm": "B5",
+  "182x257mm": "JIS B5",
+  "8.5x11in": "Letter",
+  "8.5x14in": "Legal",
+  "8.5x13in": "Foolscap",
+  "7.25x10.5in": "Executive",
+  "5.5x8.5in": "Statement",
+  "100x148mm": "Postcard",
+  "4.125x9.5in": "Envelope #10",
+  "3.875x7.5in": "Envelope Monarch",
+  "3.625x6.5in": "Envelope Personal",
+  "4.375x5.75in": "Envelope A2",
+  "110x220mm": "Envelope DL",
+  "162x229mm": "Envelope C5",
+  "114x162mm": "Envelope C6",
+  "120x235mm": "Envelope Chou 3",
+  "90x205mm": "Envelope Chou 4",
 };
 
-/** Friendly paper name for common PWG media ("A4 (210 × 297 mm)"); the raw name otherwise. */
+/** Friendly paper name for PWG media ("A4 (210 × 297 mm)", "4 × 6 in, borderless"); the raw name if it has no size. */
 export function mediaLabel(name) {
-  const m = /^(.*)_(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(mm|in)$/.exec(name);
+  const m = /^(.*)_((\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(mm|in))$/.exec(name);
   if (!m) return name;
-  const size = `${m[2]} × ${m[3]} ${m[4]}`;
-  if (/^na_(index-)?\d+x\d+$/.test(m[1])) return size; // photo paper: the size is the name
-  return MEDIA_NAMES[m[1]] ? `${MEDIA_NAMES[m[1]]} (${size})` : name;
+  const size = `${m[3]} × ${m[4]} ${m[5]}`;
+  const named = Object.hasOwn(MEDIA_NAMES, m[2]) ? `${MEDIA_NAMES[m[2]]} (${size})` : size; // photo sizes: the size is the name
+  return /borderless/.test(m[1]) ? `${named}, borderless` : named;
 }
+
+/** custom_min_/custom_max_ entries bound custom sizes; they are not paper anyone loads. */
+export const isLoadableMedia = (name) => !/^custom_(min|max)_/.test(name);
 
 /**
  * Where the page lands on the sheet.

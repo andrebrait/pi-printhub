@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
+import { isLoadableMedia, mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
 
 const A4 = { w: 210, h: 297 };
 const A4_PT = [595.28, 841.89];
@@ -113,7 +113,7 @@ test("sheetsFor pairs pages when two-sided", () => {
   ]);
 });
 
-test("mediaLabel gives friendly names and falls back to the raw name", () => {
+test("mediaLabel names paper by size, marks borderless, and keeps sizeless names", () => {
   assert.equal(mediaLabel("iso_a4_210x297mm"), "A4 (210 × 297 mm)");
   assert.equal(mediaLabel("na_letter_8.5x11in"), "Letter (8.5 × 11 in)");
   assert.equal(mediaLabel("na_legal_8.5x14in"), "Legal (8.5 × 14 in)");
@@ -121,6 +121,17 @@ test("mediaLabel gives friendly names and falls back to the raw name", () => {
   assert.equal(mediaLabel("iso_dl_110x220mm"), "Envelope DL (110 × 220 mm)");
   assert.equal(mediaLabel("na_index-4x6_4x6in"), "4 × 6 in");
   assert.equal(mediaLabel("na_5x7_5x7in"), "5 × 7 in");
+  // HP OfficeJet Pro 6970 vendor names
+  assert.equal(mediaLabel("om_a-4-borderless_210x297mm"), "A4 (210 × 297 mm), borderless");
+  assert.equal(mediaLabel("om_100x-150mm-borderless_100x150mm"), "100 × 150 mm, borderless");
+  assert.equal(mediaLabel("om_small-photo_100x150mm"), "100 × 150 mm");
+  assert.equal(mediaLabel("jpn_hagaki_100x148mm"), "Postcard (100 × 148 mm)");
   assert.equal(mediaLabel("custom_foo"), "custom_foo");
-  assert.equal(mediaLabel("oe_weird_1x2in"), "oe_weird_1x2in");
+  assert.equal(mediaLabel("constructor_1x2in"), "1 × 2 in");
+});
+
+test("custom size bounds are not offered as paper", () => {
+  assert.equal(isLoadableMedia("custom_min_3.5x5in"), false);
+  assert.equal(isLoadableMedia("custom_max_8.5x14in"), false);
+  assert.equal(isLoadableMedia("iso_a4_210x297mm"), true);
 });

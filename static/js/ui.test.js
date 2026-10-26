@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mediaLabel } from "./layout.js";
+import { isLoadableMedia, mediaLabel } from "./layout.js";
 import { reasonLabels } from "./api.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
@@ -16,8 +16,8 @@ const dom = () => {
 };
 
 test("scan preview uses each page density, including rotated axes and crop", () => {
-  const build = new Function("document", "location", "mediaLabel", `${source("print.js").replace(/main\(\);\s*$/, "")}
-    return (value) => { doc = value; return buildPages(); };`)(dom(), { search: "" }, mediaLabel);
+  const build = new Function("document", "location", "mediaLabel", "isLoadableMedia", `${source("print.js").replace(/main\(\);\s*$/, "")}
+    return (value) => { doc = value; return buildPages(); };`)(dom(), { search: "" }, mediaLabel, isLoadableMedia);
   const pages = build({ kind: "scan", id: "x", scan_resolution: 150, pages: [
     { id: "a", rotation: 0, page_info: { width: 600, height: 300, dpi: [300, 300] } },
     { id: "b", rotation: 90, page_info: { width: 300, height: 600, dpi: [150, 300] }, crop: { w: 150, h: 300 } },
