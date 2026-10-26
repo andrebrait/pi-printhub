@@ -98,13 +98,15 @@ form.stack label { display: grid; gap: 0.25rem; font-weight: 600; }
 
 /* Print page */
 .print-layout, .scan-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 52rem) {
-  .print-layout, .scan-layout { grid-template-columns: minmax(0, 1fr) 22rem; align-items: start; }
-}
 .options { display: grid; gap: 0.75rem; }
 .options label { display: grid; gap: 0.25rem; font-weight: 600; }
 .options input:invalid { border-color: var(--danger); }
-.preview { display: flex; flex-wrap: wrap; gap: 1.25rem; justify-content: center; }
+/* Phones: one swipeable row keeps the options and Print button near the top. Auto margins centre a short row
+   and let a long one scroll from its first sheet. */
+.preview { display: flex; flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x mandatory; gap: 1.25rem; padding: 0.25rem 0.25rem 0.75rem; }
+.preview > :first-child { margin-left: auto; }
+.preview > :last-child { margin-right: auto; }
+figure.sheet-group { flex: none; scroll-snap-align: center; }
 figure.sheet-group { margin: 0; display: grid; gap: 0.4rem; justify-items: center; }
 figure.sheet-group figcaption { color: var(--muted); font-size: 0.9rem; }
 .sides { display: flex; gap: 0.75rem; align-items: flex-start; }
@@ -112,13 +114,15 @@ figure.sheet-group figcaption { color: var(--muted); font-size: 0.9rem; }
   position: relative; background: var(--sheet); width: min(42vw, 11rem);
   box-shadow: 0 1px 6px var(--sheet-shadow);
 }
-@media (width < 52rem) {
-  /* One swipeable row keeps the options and Print button near the top on phones. */
-  .preview { flex-wrap: nowrap; overflow-x: auto; justify-content: safe center; scroll-snap-type: x mandatory; padding: 0.25rem 0.25rem 0.75rem; }
-  figure.sheet-group { flex: none; scroll-snap-align: center; }
-}
-@media (width >= 52rem) {
-  .print-layout .side { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+@media (min-width: 52rem) {
+  .print-layout, .scan-layout { grid-template-columns: minmax(0, 1fr) 22rem; align-items: start; }
+  .preview { flex-wrap: wrap; justify-content: center; overflow-x: visible; scroll-snap-type: none; }
+  .preview > :first-child, .preview > :last-child { margin-inline: 0; }
+  /* The options stay in view; padding keeps focus rings and card shadows clear of the scroll clip. */
+  .print-layout .side {
+    position: sticky; top: 0.6rem; padding: 0.4rem; margin: -0.4rem;
+    max-height: calc(100vh - 1.2rem); max-height: calc(100dvh - 1.2rem); overflow-y: auto;
+  }
 }
 .sheet .printable, .sheet .page { position: absolute; overflow: hidden; }
 .sheet .page { container-type: size; }

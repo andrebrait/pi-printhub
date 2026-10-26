@@ -77,14 +77,24 @@ const REASONS = {
   paused: "Paused",
   "printer-stopped": "Printer stopped",
 };
+// Bookkeeping that only repeats the job or printer state.
+const ROUTINE = new Set([
+  "none",
+  "job-incoming",
+  "job-queued",
+  "job-printing",
+  "job-completed-successfully",
+  "processing-to-stop-point",
+  "cups-waiting-for-job-completed",
+]);
 
-/** Readable text for IPP printer/job state reasons; job- and cups- bookkeeping reasons repeat the state, so they go. */
+/** Readable text for IPP printer/job state reasons, without routine bookkeeping. */
 export function reasonLabels(reasons) {
   const labels = reasons
-    .filter((r) => r !== "none" && !/^(job|cups)-/.test(r))
+    .filter((r) => !ROUTINE.has(r))
     .map((r) => {
       const key = r.replace(/-(report|warning|error)$/, "");
-      return REASONS[key] ?? key.charAt(0).toUpperCase() + key.slice(1).replaceAll("-", " ");
+      return Object.hasOwn(REASONS, key) ? REASONS[key] : key.charAt(0).toUpperCase() + key.slice(1).replaceAll("-", " ");
     });
   return [...new Set(labels)];
 }

@@ -124,6 +124,7 @@ class DocumentResponse(Response):
         finally:
             self.guards.close()
 
+
 class RevalidatedStaticFiles(StaticFiles):
     """Browsers revalidate (cheap 304) on every load, so a deploy never mixes new pages with stale scripts."""
 
@@ -265,7 +266,7 @@ def create_app(
             # a broken conversion must not look converted.
             (d / "print.pdf").unlink(missing_ok=True)
             for png in (d / "thumbs").glob("page-*.png"):
-                png.unlink()
+                png.unlink(missing_ok=True)  # a concurrent retry or delete may clear thumbs first
             return str(e)
         return None
 

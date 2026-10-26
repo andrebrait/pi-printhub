@@ -101,21 +101,25 @@ let saving = Promise.resolve();
 /**
  * Queue an edit. `build` gets the document as the previous edit left it (so quick clicks add up) and returns the
  * PATCH body, or null for nothing to do; the page then shows what the server stored (it snaps crops).
+ * Resolves false when the edit failed.
  */
 function patch(build) {
   saving = saving
     .then(async () => {
       const body = build(doc);
-      if (!body) return;
+      if (!body) return true;
       show($("edit-error"), "");
       const res = await apiFetch(docUrl(), { method: "PATCH", body });
       if (!res.ok) throw new Error(await errorMessage(res));
       render(await res.json());
+      return true;
     })
     .catch((e) => {
       show($("edit-error"), e.message);
       render(doc); // undo what the page shows, e.g. a rejected drag
+      return false;
     });
+  return saving;
 }
 
 const editPage = (id, change) => patch((d) => ({ pages: d.pages.map((p) => (p.id === id ? { ...p, ...change(p) } : p)) }));
@@ -303,7 +307,7 @@ $("scanner-retry").addEventListener("click", loadScanner);
 
 function saveTitle() {
   const title = $("title").value;
-  patch((d) => (d && title.trim() !== d.title ? { title } : null));
+  return patch((d) => (d && title.trim() !== d.title ? { title } : null));
 }
 $("title").addEventListener("blur", saveTitle);
 
@@ -313,9 +317,8 @@ for (const id of ["download-pdf", "download-jpeg", "print"]) {
     if (e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; // new tab or window: browser default
     e.preventDefault();
     const href = e.currentTarget.href;
-    saveTitle();
-    await saving;
-    location.assign(href);
+    // A failed rename keeps the page, so its error stays visible.
+    if (await saveTitle()) location.assign(href);
   });
 }
 

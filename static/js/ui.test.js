@@ -79,6 +79,25 @@ test("an edited title is saved before an output link navigates", async () => {
   assert.deepEqual(order, ["patch New name", "go /api/docs/x/export?format=pdf"]);
 });
 
+test("a failed rename keeps the page and shows the error instead of following the link", async () => {
+  const document = dom();
+  const went = [];
+  const fetch = async () => ({ ok: false });
+  const location = { search: "?doc=x", href: "", assign(url) { went.push(url); } };
+  const env = new Function("document", "location", "apiFetch", "errorMessage", "Sortable", "Option",
+    `${source("scan.js").replace(/main\(\);\s*$/, "")} return { setDoc: (d) => { doc = d; } };`)(
+      document, location, fetch, async () => "Title too long", { create: () => ({ option() {} }) }, class {},
+    );
+  env.setDoc({ id: "x", title: "Old", pages: [], scanning: false });
+  document.getElementById("title").value = "New name";
+  const link = document.getElementById("print");
+  link.href = "/print.html?doc=x";
+  await link.listeners.click({ preventDefault() {}, currentTarget: link });
+  assert.deepEqual(went, []);
+  assert.equal(document.getElementById("edit-error").textContent, "Title too long");
+  assert.equal(document.getElementById("edit-error").hidden, false);
+});
+
 test("one printer banner updater serves all authenticated screens", async () => {
   for (const page of ["index", "print", "scan"]) {
     const html = readFileSync(new URL(`../${page}.html`, import.meta.url), "utf8");
