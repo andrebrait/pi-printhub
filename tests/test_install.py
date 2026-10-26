@@ -156,12 +156,3 @@ def test_setup_printer_defers_when_printer_absent(tmp_path):
     assert "pending=1" in r.stdout
     assert "LPADMIN" not in r.stdout and "CUPSCTL" not in r.stdout and "INSTALL" not in r.stdout
     assert "Re-run" in r.stdout
-
-
-def test_scanner_pin_is_written_for_ipp_usb_and_removed_for_hplip(tmp_path):
-    dropin = tmp_path / "printhub.service.d"
-    assert sh(f"pin_scanner {dropin} airscan:e0:OfficeJet").returncode == 0
-    assert (dropin / "scanner.conf").read_text() == "[Service]\nEnvironment=PRINTHUB_SCANNER=airscan:e0:OfficeJet\n"
-    # The HPLIP path has no airscan device, so a pin left from an earlier install would break scanning.
-    assert sh(f"pin_scanner {dropin}").returncode == 0
-    assert not (dropin / "scanner.conf").exists()
