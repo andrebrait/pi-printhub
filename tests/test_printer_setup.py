@@ -131,3 +131,42 @@ def test_waits_for_ipp_usb_then_gives_up(tmp_path):
     assert log.count("sleep 1") == 30
     assert "lpadmin" not in log
     assert not (tmp_path / "sane" / "airscan.conf").exists()
+
+
+def test_waits_until_the_printer_answers_ipp(tmp_path):
+    # ipp-usb writes the state file before it serves IPP; a device seen before keeps its old file.
+    tries = tmp_path / "tries"
+    flaky = f'ipptool() {{ echo x >>{tries}; [[ $(wc -l <{tries}) -ge 3 ]] && {IPPTOOL_OK.split("{ ", 1)[1].rsplit("; }", 1)[0]}; }}'
+    r, log = apply(tmp_path, flaky)
+    assert r.returncode == 0, r.stderr
+    assert log.count("sleep 1") == 2
+    assert "lpadmin -p OfficeJet" in log
+
+
+def test_first_install_without_printhub_units_succeeds(tmp_path):
+    # On a first install printhub.service and airsaned do not exist yet; try-restart then fails.
+    r, log = apply(tmp_path, IPPTOOL_OK + '; systemctl() { log "systemctl $*"; [[ $1 != try-restart ]]; }')
+    assert r.returncode == 0, r.stderr
+    assert "systemctl try-restart printhub airsaned" in log
+
+
+def test_serial_is_sanitized_like_ipp_usb_does(tmp_path):
+    state, sysfs = tmp_path / "state", tmp_path / "sysfs"
+    state_file(state, "04b8-1234-AB-12-3-EPSON-XP.state", 60002)
+    usb_device(sysfs, "1-1", "04b8", "1234", "AB 12.3")
+    assert sh('ipp_usb_port "$1" "$2"', str(state), str(sysfs)).stdout.strip() == "60002"
+
+
+def test_device_without_serial_is_found(tmp_path):
+    state, sysfs = tmp_path / "state", tmp_path / "sysfs"
+    state_file(state, "04b8-1234-EPSON-XP-2100.state", 60003)
+    usb_device(sysfs, "1-1", "04b8", "1234", "")
+    (sysfs / "1-1" / "serial").unlink()
+    assert sh('ipp_usb_port "$1" "$2"', str(state), str(sysfs)).stdout.strip() == "60003"
+
+
+def test_airscan_conf_is_world_readable_under_a_strict_umask(tmp_path):
+    # saned and printhub read it; root's umask may be 077.
+    r, _ = apply(tmp_path, "umask 077; " + IPPTOOL_OK)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "sane" / "airscan.conf").stat().st_mode & 0o777 == 0o644

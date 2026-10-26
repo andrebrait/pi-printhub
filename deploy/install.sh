@@ -113,21 +113,26 @@ install_packages() {
         libjpeg-turbo-progs poppler-utils libheif-examples libreoffice-nogui
 }
 
-# The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printer-setup.sh runs now
-# and, through the udev rule and printhub-printer.service, on every plug. ipp-usb also publishes the device natively.
+# The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printhub-printer.service
+# runs printer-setup.sh now and, through the udev rule, on every plug. ipp-usb also publishes the device natively.
+# setup_ipp_usb QUEUE_URI: the existing queue's device line, empty without a queue.
 setup_ipp_usb() {
     apt-get install -y ipp-usb
     ipp_usb_listen_all /etc/ipp-usb/ipp-usb.conf
     install -D -m 0755 "$REPO/deploy/printer-setup.sh" /usr/local/lib/printhub/printer-setup.sh
+    install -m 0644 "$REPO/deploy/systemd/printhub-printer.service" /etc/systemd/system/printhub-printer.service
     install -D -m 0644 "$REPO/deploy/udev/70-printhub-printer.rules" /etc/udev/rules.d/70-printhub-printer.rules
+    systemctl daemon-reload
     udevadm control --reload
     systemctl try-restart ipp-usb
     # ipp-usb is started by udev on plug; the printer may have been plugged in before ipp-usb was installed.
     udevadm trigger --action=add --subsystem-match=usb
     if ! ipp_usb_dev >/dev/null; then
         log "Printer unplugged; keeping the existing queue. It is set up again when plugged in."
-    elif ! apply_printer; then
-        log "warning: the printer did not answer over IPP-over-USB (is IPP enabled in its settings?); queue unchanged. Re-run this script after fixing it."
+    # The unit, not a direct call: it serializes with the run udev just triggered and keeps set -e intact.
+    elif ! systemctl start printhub-printer.service; then
+        [[ -n $1 ]] || PRINTER_PENDING=1
+        log "warning: the printer did not answer over IPP-over-USB (is IPP enabled in its settings?); queue unchanged. Details: journalctl -u printhub-printer. Re-run this script after fixing it."
     fi
 }
 
@@ -147,9 +152,9 @@ setup_printer() {
     if lpstat -p "$PRINTER_QUEUE" &>/dev/null; then
         uri=$(lpstat -v "$PRINTER_QUEUE")
     fi
-    if ipp_usb_dev >/dev/null || [[ $uri == *//localhost:6* ]]; then
+    if ipp_usb_dev >/dev/null || [[ $uri == *//localhost:6????/* ]]; then
         log "Printer speaks IPP-over-USB"
-        setup_ipp_usb
+        setup_ipp_usb "$uri"
     elif [[ -n $uri ]] || dev=$(printer_dev); then
         if [[ -z $uri ]]; then
             log "Printer has no IPP-over-USB interface; using HPLIP"

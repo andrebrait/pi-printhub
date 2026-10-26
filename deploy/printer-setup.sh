@@ -5,20 +5,21 @@
 set -euo pipefail
 
 # ipp_usb_port STATE_DIR USB_SYSFS: the local port ipp-usb serves the attached device on.
-# ipp-usb keeps one <vid>-<pid>-<serial>-<model>.state file per device it has seen, attached or not.
+# ipp-usb keeps one <vid>-<pid>[-<serial>]-<model>.state file per device it has seen, attached or not; it maps
+# serial characters outside [0-9A-Za-z_-] to "-". One printer at a time: the first attached match wins.
 ipp_usb_port() {
-    local state=$1 sysfs=$2 d file newest="" port
+    local state=$1 sysfs=$2 d serial file port
     for d in "$sysfs"/*; do
         [[ -r $d/idVendor && -r $d/idProduct ]] || continue
-        for file in "$state/$(<"$d/idVendor")-$(<"$d/idProduct")-$(cat "$d/serial" 2>/dev/null)-"*.state; do
+        serial=$(cat "$d/serial" 2>/dev/null) || serial=""
+        serial=${serial//[^0-9A-Za-z_-]/-}
+        for file in "$state/$(<"$d/idVendor")-$(<"$d/idProduct")-${serial:+$serial-}"*.state; do
             [[ -e $file ]] || continue
-            [[ -z $newest || $file -nt $newest ]] && newest=$file
+            port=$(sed -n 's/^http-port[[:space:]]*=[[:space:]]*\([0-9]\+\).*/\1/p' "$file")
+            [[ -n $port ]] && { echo "$port"; return 0; }
         done
     done
-    [[ -n $newest ]] || return 1
-    port=$(sed -n 's/^http-port[[:space:]]*=[[:space:]]*\([0-9]\+\).*/\1/p' "$newest")
-    [[ -n $port ]] || return 1
-    echo "$port"
+    return 1
 }
 
 # airscan_conf PORT MODEL: a sane-airscan configuration with the device as its only, first (e0) entry.
@@ -51,26 +52,31 @@ pin_scanner() {
 apply_printer() {
     local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
-    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri model i
-    # ipp-usb writes the device's state file once it has claimed it, shortly after udev reports the device.
+    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp
+    # ipp-usb writes the state file before it serves the device (and keeps it from earlier plugs), so wait until
+    # the printer itself answers.
     for ((i = 0; i < 30; i++)); do
-        port=$(ipp_usb_port "$state" "$sysfs") && break
+        if port=$(ipp_usb_port "$state" "$sysfs"); then
+            uri=ipp://localhost:$port/ipp/print
+            model=$(ipptool -tv "$uri" get-printer-attributes.test |
+                sed -n 's/^[[:space:]]*printer-make-and-model ([^)]*) = //p' | head -n1) || true
+            [[ -n $model ]] && break
+        fi
         sleep 1
     done
-    [[ -n $port ]] || { echo "no IPP-over-USB printer served by ipp-usb" >&2; return 1; }
-    uri=ipp://localhost:$port/ipp/print
-    model=$(ipptool -tv "$uri" get-printer-attributes.test |
-        sed -n 's/^[[:space:]]*printer-make-and-model ([^)]*) = //p' | head -n1) || true
-    [[ -n $model ]] || { echo "the printer at $uri does not answer IPP" >&2; return 1; }
+    [[ -n $model ]] || { echo "no IPP-over-USB printer answered IPP${uri:+ at $uri}" >&2; return 1; }
 
     lpadmin -p "$queue" -E -v "$uri" -m "driverless:$uri" -D "$model" \
         -o printer-is-shared=true -o printer-error-policy=retry-job
     cupsctl --share-printers
-    airscan_conf "$port" "$model" >"$sane/airscan.conf.new"
-    mv "$sane/airscan.conf.new" "$sane/airscan.conf"
+    tmp=$(mktemp "$sane/airscan.conf.XXXXXX")
+    airscan_conf "$port" "$model" >"$tmp"
+    chmod 0644 "$tmp" # saned and printhub read it
+    mv "$tmp" "$sane/airscan.conf"
     pin_scanner "$dropin" "$(scanner_device "$model")"
     systemctl daemon-reload
-    systemctl try-restart printhub airsaned
+    # Missing on a first install, before install.sh installs them; it starts them itself.
+    systemctl try-restart printhub airsaned || true
 }
 
 # Sourcing the file (for install.sh and tests) must not change anything.

@@ -179,3 +179,65 @@ def test_setup_printer_defers_when_printer_absent(tmp_path):
     assert "pending=1" in r.stdout
     assert "LPADMIN" not in r.stdout and "CUPSCTL" not in r.stdout and "INSTALL" not in r.stdout
     assert "Re-run" in r.stdout
+
+
+IPP_USB_STUBS = (
+    'apt-get() { echo "APT $*"; }; ipp_usb_listen_all() { echo "LISTEN $*"; }; install() { echo "INSTALL $*"; }; '
+    'udevadm() { echo "UDEVADM $*"; }; configure_dll_conf() { :; }; lpadmin() { echo "LPADMIN $*"; }; '
+)
+
+
+def test_attached_ipp_usb_printer_is_set_up_through_the_hotplug_service(tmp_path):
+    make_device(tmp_path, "1-1", "03f0", "0c54", [("07", "01", "04")])
+    stubs = IPP_USB_STUBS + 'lpstat() { return 1; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    r = sh(f"{stubs}; setup_printer; echo pending=${{PRINTER_PENDING:-0}}", USB_SYSFS=str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert "LISTEN /etc/ipp-usb/ipp-usb.conf" in r.stdout
+    assert "/usr/local/lib/printhub/printer-setup.sh" in r.stdout
+    assert "/etc/udev/rules.d/70-printhub-printer.rules" in r.stdout
+    assert "/etc/systemd/system/printhub-printer.service" in r.stdout
+    assert "SYSTEMCTL start printhub-printer.service" in r.stdout
+    assert "pending=0" in r.stdout
+
+
+def test_printer_that_does_not_answer_ipp_is_reported_and_left_pending(tmp_path):
+    make_device(tmp_path, "1-1", "03f0", "0c54", [("07", "01", "04")])
+    stubs = IPP_USB_STUBS + 'lpstat() { return 1; }; systemctl() { [[ $1 != start ]]; }'
+    r = sh(f"{stubs}; setup_printer; echo rc=$?; echo pending=${{PRINTER_PENDING:-0}}", USB_SYSFS=str(tmp_path))
+    assert "rc=0" in r.stdout
+    assert "is IPP enabled" in r.stdout
+    assert "pending=1" in r.stdout
+
+
+def test_ipp_usb_rerun_with_printer_unplugged_keeps_the_queue(tmp_path):
+    stubs = IPP_USB_STUBS + (
+        'lpstat() { [[ $1 == -v ]] && echo "device for OfficeJet: ipp://localhost:60000/ipp/print"; return 0; }; '
+        'systemctl() { echo "SYSTEMCTL $*"; }'
+    )
+    r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert "LISTEN" in r.stdout  # still the ipp-usb install
+    assert "start printhub-printer.service" not in r.stdout and "LPADMIN" not in r.stdout
+    assert "keeping the existing queue" in r.stdout
+
+
+def test_a_cups_url_is_not_mistaken_for_ipp_usb(tmp_path):
+    sane = tmp_path / "sane"
+    sane.mkdir()
+    stubs = IPP_USB_STUBS + (
+        'lpstat() { [[ $1 == -v ]] && echo "device for OfficeJet: ipp://localhost:631/printers/x"; return 0; }; '
+        "cupsctl() { :; }; systemctl() { :; }"
+    )
+    r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path), SANE_DIR=str(sane), DROPIN_DIR=str(tmp_path / "d"))
+    assert r.returncode == 0, r.stderr
+    assert "LISTEN" not in r.stdout
+
+
+def test_udev_rule_starts_the_unit_that_runs_the_installed_script():
+    deploy = INSTALL.parent
+    rule = (deploy / "udev" / "70-printhub-printer.rules").read_text()
+    unit = (deploy / "systemd" / "printhub-printer.service").read_text()
+    assert 'ENV{ID_USB_INTERFACES}=="*:070104:*"' in rule
+    assert 'ENV{SYSTEMD_WANTS}+="printhub-printer.service"' in rule
+    assert "ExecStart=/usr/local/lib/printhub/printer-setup.sh\n" in unit
+    assert "install -D -m 0755 \"$REPO/deploy/printer-setup.sh\" /usr/local/lib/printhub/printer-setup.sh" in INSTALL.read_text()

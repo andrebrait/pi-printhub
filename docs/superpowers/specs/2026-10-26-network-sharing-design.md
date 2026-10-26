@@ -37,9 +37,9 @@ The installer sets `interface = all` in `/etc/ipp-usb/ipp-usb.conf` and restarts
 
 - A udev rule matches a USB device with an IPP-over-USB interface (`ID_USB_INTERFACES` contains `:070104:`, as ipp-usb's own rule does) and starts `printhub-printer.service`. The installer runs the same service once.
 - The service runs `deploy/printer-setup.sh`:
-  1. Waits for ipp-usb to serve the device and reads the device's local port from `ipp-usb status` (the first device gets 60000; another device may not).
-  2. Recreates the queue `OfficeJet` with `lpadmin -m driverless:ipp://localhost:<port>/ipp/print`, sets `printer-info` to the reported `printer-make-and-model`, shares it, and sets `printer-error-policy=retry-job`.
-  3. Writes `/etc/sane.d/airscan.conf` for `http://localhost:<port>/eSCL` and the printhub `scanner.conf` drop-in, then restarts AirSane.
+  1. Reads the device's local port from ipp-usb's state file for it (`/var/ipp-usb/dev/<vid>-<pid>[-<serial>]-<model>.state`, `http-port`; the first device gets 60000, another may not) and waits up to 30 s until the printer answers IPP there. ipp-usb writes the file before it serves the device.
+  2. Modifies the queue `OfficeJet` in place with `lpadmin -m driverless:ipp://localhost:<port>/ipp/print`, sets `printer-info` to the reported `printer-make-and-model`, shares it, and sets `printer-error-policy=retry-job`. A printer that does not answer IPP changes nothing.
+  3. Writes `/etc/sane.d/airscan.conf` for `http://localhost:<port>/eSCL` and the printhub `scanner.conf` drop-in, then restarts printhub and AirSane.
 - The queue name stays `OfficeJet`, the web app's configured `printer_queue`; clients see `printer-info`.
 - The installer no longer requires USB ID `03f0:0c54` for IPP-over-USB devices. The HPLIP fallback for devices without IPP-over-USB stays specific to the HP OfficeJet Pro 6970.
 
@@ -51,7 +51,7 @@ AirSane ignores `hpaio:/net/*` devices, so it publishes only the USB scanner.
 
 - Moving the printer to another VLAN or restricting it with firewall rules.
 - Changing the printer's settings from the Pi; the owner does that through its web interface.
-- More than one printer at a time: one queue and one scanner entry follow the most recently attached IPP-over-USB device.
+- More than one printer at a time: one queue and one scanner entry follow the first attached IPP-over-USB device ipp-usb has a state file for.
 
 ## 6. Printer-side settings (owner)
 
@@ -63,7 +63,7 @@ In the printer's web interface (`https://10.0.254.0`), after the Pi entries are 
 
 ## 7. Testing
 
-- Installer tests: udev rule match, `ipp-usb.conf` rewrite, port parsing from `ipp-usb status`, and the generated `airscan.conf` and drop-in.
+- Installer tests: udev rule and unit consistency, `ipp-usb.conf` rewrite, port lookup from ipp-usb state files, the IPP readiness wait, and the generated `airscan.conf` and drop-in.
 - On the Pi:
   - Replugging the printer rebuilds the queue, and `lpoptions -p OfficeJet` shows the real model.
   - A Mac added through Bonjour uses AirPrint and offers two-sided printing.
