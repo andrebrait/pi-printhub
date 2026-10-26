@@ -48,6 +48,33 @@ test("discovery failure exposes Retry and retries capabilities, not a scan", asy
   assert.equal(document.getElementById("scanner-status").textContent, "");
 });
 
+test("a saved scan opens for viewing and only Edit looks for the scanner", async () => {
+  const document = dom();
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(url);
+    if (url === "/api/scanner") return { ok: true, json: async () => ({ sources: ["flatbed"], resolutions: [300], modes: ["color"] }) };
+    if (url === "/api/recipients") return { ok: true, json: async () => [] };
+    return { ok: true, json: async () => ({ id: "x", title: "Receipt", pages: [], scanning: false }) };
+  };
+  const main = new Function("document", "location", "apiFetch", "errorMessage", "Sortable", "Option",
+    `${source("scan.js").replace(/main\(\);\s*$/, "")} return main;`)(
+      document, { search: "?doc=x" }, fetch, async () => "", { create: () => ({ option() {} }) },
+      class { constructor(text, value) { this.text = text; this.value = value; } },
+    );
+  main();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls.includes("/api/scanner"), false);
+  assert.equal(document.getElementById("scan-form").hidden, true);
+  const toggle = document.getElementById("edit-toggle");
+  assert.equal(toggle.hidden, false);
+  toggle.listeners.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls.includes("/api/scanner"), true);
+  assert.equal(document.getElementById("scan-form").hidden, false);
+  assert.equal(toggle.textContent, "Done");
+});
+
 test("an edited title is saved before an output link navigates", async () => {
   const document = dom();
   const order = [];

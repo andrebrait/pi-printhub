@@ -11,6 +11,9 @@ let docId = new URLSearchParams(location.search).get("doc");
 let doc = null;
 let lastSource = null;
 let cropper = null, cropping = null;
+// A saved scan opens for viewing; the scanner is only needed once the user edits or adds pages.
+let editing = !docId;
+let scannerFound = false;
 const docUrl = () => `/api/docs/${encodeURIComponent(docId)}`;
 
 function show(el, text) {
@@ -40,6 +43,7 @@ async function loadScanner() {
     $("settings").hidden = false;
     show($("scanner-status"), caps.sources.length ? "" : "The scanner offers no flatbed or feeder.");
     retry.hidden = true;
+    scannerFound = true;
     lastSource ??= caps.sources[0];
   } catch (e) {
     show($("scanner-status"), e.message);
@@ -154,16 +158,18 @@ function pageItem(page, i, busy) {
   const thumb = document.createElement("div");
   thumb.className = "thumb";
   thumb.style.aspectRatio = `${width} / ${height}`;
-  thumb.tabIndex = 0;
-  thumb.dataset.focusKey = `${page.id}:move`;
   thumb.setAttribute("role", "img");
-  thumb.setAttribute("aria-label", `Page ${n}${busy ? "" : ". Arrow keys move it; drag to reorder"}`);
-  thumb.addEventListener("keydown", (e) => {
-    const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
-    if (!step || busy) return;
-    e.preventDefault();
-    move(page.id, step);
-  });
+  thumb.setAttribute("aria-label", `Page ${n}${editing && !busy ? ". Arrow keys move it; drag to reorder" : ""}`);
+  if (editing) {
+    thumb.tabIndex = 0;
+    thumb.dataset.focusKey = `${page.id}:move`;
+    thumb.addEventListener("keydown", (e) => {
+      const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+      if (!step || busy) return;
+      e.preventDefault();
+      move(page.id, step);
+    });
+  }
   const rot = document.createElement("div");
   rot.className = "rot";
   rot.classList.toggle("turned", page.rotation % 180 !== 0);
@@ -206,7 +212,8 @@ function pageItem(page, i, busy) {
   button("delete", "Delete", "Delete", () => confirm(`Delete page ${n}?`) && patch((d) => ({ pages: d.pages.filter((p) => p.id !== page.id) })));
   button("reset", "Reset", "Undo rotation and crop on", () => editPage(page.id, () => ({ rotation: 0, crop: null })));
 
-  li.append(thumb, caption, tools);
+  li.append(thumb, caption);
+  if (editing) li.append(tools);
   return li;
 }
 
@@ -223,6 +230,10 @@ function render(d) {
   $("print").href = `/print.html?doc=${encodeURIComponent(docId)}`;
   $("outputs").hidden = !doc.pages.length;
   for (const b of [$("scan-flatbed"), $("scan-adf"), $("retry")]) b.disabled = busy;
+  $("scan-form").hidden = !editing;
+  $("edit-toggle").hidden = !doc.pages.length && editing; // an empty scan has nothing to view yet
+  $("edit-toggle").textContent = editing ? "Done" : "Edit or add pages";
+  $("edit-toggle").disabled = busy;
   // Another scan appends to this document.
   const verb = doc.pages.length ? "Add" : "Scan";
   $("scan-flatbed").textContent = `${verb} from glass`;
@@ -235,7 +246,7 @@ function render(d) {
   const focusKey = list.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
   list.replaceChildren(...doc.pages.map((p, i) => pageItem(p, i, busy)));
   if (focusKey) list.querySelector(`[data-focus-key="${focusKey}"]`)?.focus();
-  sortable.option("disabled", busy);
+  sortable.option("disabled", busy || !editing);
 }
 
 const sortable = Sortable.create($("pages"), {
@@ -305,6 +316,13 @@ $("scan-adf").addEventListener("click", () => scan("adf"));
 $("retry").addEventListener("click", () => scan(lastSource));
 $("scanner-retry").addEventListener("click", loadScanner);
 
+function setEditing(on) {
+  editing = on;
+  if (editing && !scannerFound) loadScanner();
+  if (doc) render(doc);
+}
+$("edit-toggle").addEventListener("click", () => setEditing(!editing));
+
 function saveTitle() {
   const title = $("title").value;
   return patch((d) => (d && title.trim() !== d.title ? { title } : null));
@@ -345,11 +363,17 @@ $("email").addEventListener("submit", async (e) => {
 });
 
 function main() {
-  loadScanner();
   loadRecipients();
-  if (!docId) return;
+  if (!docId) {
+    $("scan-form").hidden = false;
+    return void loadScanner();
+  }
   refresh().then(
-    () => doc.scanning && poll(),
+    () => {
+      if (!doc.scanning) return;
+      setEditing(true); // a scan still running belongs to the editor
+      poll();
+    },
     (e) => show($("load-error"), e.message),
   );
 }
