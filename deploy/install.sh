@@ -102,6 +102,17 @@ configure_dll_conf() {
 # AirSane's stock ignore list hides airscan:* devices, which is how it reaches this scanner.
 allow_airscan_in_airsane() { sed -i '/^airscan:/d' "$1"; }
 
+# pin_scanner DROPIN_DIR [DEVICE]: make printhub use DEVICE instead of full SANE discovery (about 10 s per lookup);
+# without DEVICE, drop the pin so printhub discovers the scanner itself.
+pin_scanner() {
+    if [[ -n ${2:-} ]]; then
+        install -d -m 0755 "$1"
+        printf '[Service]\nEnvironment=PRINTHUB_SCANNER=%s\n' "$2" >"$1/scanner.conf"
+    else
+        rm -f "$1/scanner.conf"
+    fi
+}
+
 install_packages() {
     log "Installing packages"
     apt-get update
@@ -155,9 +166,12 @@ setup_printer() {
     fi
     if ((ippusb)); then
         install -m 0644 "$REPO/deploy/sane/airscan.conf" /etc/sane.d/airscan.conf
+        # sane-airscan names the first [devices] entry of airscan.conf e0.
+        pin_scanner /etc/systemd/system/printhub.service.d airscan:e0:OfficeJet
     else
         # No eSCL endpoint to point sane-airscan at; hpaio drives the scanner.
         sed '/^"OfficeJet"/d' "$REPO/deploy/sane/airscan.conf" >/etc/sane.d/airscan.conf
+        pin_scanner /etc/systemd/system/printhub.service.d
     fi
     configure_dll_conf /etc/sane.d/dll.conf
     cupsctl --share-printers

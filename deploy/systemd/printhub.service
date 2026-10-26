@@ -10,9 +10,6 @@ WorkingDirectory=/opt/printhub
 Environment=PRINTHUB_CONFIG=/etc/printhub/config.toml
 # Multipart uploads spool here, not to the RAM-backed /tmp.
 Environment=TMPDIR=/var/lib/printhub/tmp
-# The scanner deploy/sane/airscan.conf defines (first [devices] entry = e0). Without this, every scanner lookup runs
-# full SANE discovery across all backends, which takes about 10 seconds on the Pi.
-Environment=PRINTHUB_SCANNER=airscan:e0:OfficeJet
 ExecStart=/usr/bin/python3 -m uvicorn printhub.app:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure
 ProtectSystem=strict
