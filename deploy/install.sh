@@ -28,18 +28,27 @@ printer_dev() {
     return 1
 }
 
-# True when the printer exposes an IPP-over-USB interface (class 07, subclass 01, protocol 04).
-has_ipp_usb() {
-    local dev i
-    dev=$(printer_dev) || return 1
-    for i in "$dev"/*:*; do
-        [[ -r $i/bInterfaceClass ]] || continue
-        if [[ $(<"$i/bInterfaceClass") == 07 && $(<"$i/bInterfaceSubClass") == 01 && $(<"$i/bInterfaceProtocol") == 04 ]]; then
-            return 0
-        fi
+# Prints the sysfs directory of the first attached device with an IPP-over-USB interface (class 07, subclass 01,
+# protocol 04), whatever its make.
+ipp_usb_dev() {
+    local d i
+    for d in "$USB_SYSFS"/*; do
+        for i in "$d"/*:*; do
+            [[ -r $i/bInterfaceClass ]] || continue
+            if [[ $(<"$i/bInterfaceClass") == 07 && $(<"$i/bInterfaceSubClass") == 01 && $(<"$i/bInterfaceProtocol") == 04 ]]; then
+                echo "$d"
+                return 0
+            fi
+        done
     done
     return 1
 }
+
+# ipp_usb_listen_all FILE: ipp-usb publishes the device's own IPP and eSCL services on the LAN, not only to the Pi.
+ipp_usb_listen_all() { sed -i 's/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)loopback/\1all/' "$1"; }
+
+# airsane_ignore_hpaio_net FILE: AirSane must not republish HPLIP's view of a printer's own network scanner.
+airsane_ignore_hpaio_net() { grep -qxF 'hpaio:/net/.*' "$1" || echo 'hpaio:/net/.*' >>"$1"; }
 
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_security() { [[ $1 == starttls || $1 == tls ]]; }
@@ -74,16 +83,6 @@ write_secret() {
     return 1
 }
 
-# wait_for_port HOST PORT SECONDS: succeeds once something listens there.
-wait_for_port() {
-    local n
-    for ((n = 0; n < $3; n++)); do
-        (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null && return 0
-        sleep 1
-    done
-    return 1
-}
-
 # pick_ppd LPINFO_M_OUTPUT: the OfficeJet Pro 6970 driver, or nothing.
 pick_ppd() {
     local ppd=drv:///hpcups.drv/hp-officejet_pro_6970.ppd line
@@ -114,12 +113,22 @@ install_packages() {
         libjpeg-turbo-progs poppler-utils libheif-examples libreoffice-nogui
 }
 
-create_ipp_usb_queue() {
+# The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printer-setup.sh runs now
+# and, through the udev rule and printhub-printer.service, on every plug. ipp-usb also publishes the device natively.
+setup_ipp_usb() {
     apt-get install -y ipp-usb
-    # ipp-usb is started by udev on plug; the printer was plugged in before it was installed.
+    ipp_usb_listen_all /etc/ipp-usb/ipp-usb.conf
+    install -D -m 0755 "$REPO/deploy/printer-setup.sh" /usr/local/lib/printhub/printer-setup.sh
+    install -D -m 0644 "$REPO/deploy/udev/70-printhub-printer.rules" /etc/udev/rules.d/70-printhub-printer.rules
+    udevadm control --reload
+    systemctl try-restart ipp-usb
+    # ipp-usb is started by udev on plug; the printer may have been plugged in before ipp-usb was installed.
     udevadm trigger --action=add --subsystem-match=usb
-    wait_for_port 127.0.0.1 60000 30 || die "ipp-usb is not listening on localhost:60000; replug the printer and re-run"
-    lpadmin -p "$PRINTER_QUEUE" -E -v ipp://localhost:60000/ipp/print -m everywhere
+    if ! ipp_usb_dev >/dev/null; then
+        log "Printer unplugged; keeping the existing queue. It is set up again when plugged in."
+    elif ! apply_printer; then
+        log "warning: the printer did not answer over IPP-over-USB (is IPP enabled in its settings?); queue unchanged. Re-run this script after fixing it."
+    fi
 }
 
 create_hplip_queue() { # create_hplip_queue USB_SYSFS_DIR
@@ -134,38 +143,29 @@ create_hplip_queue() { # create_hplip_queue USB_SYSFS_DIR
 }
 
 setup_printer() {
-    local dev uri ippusb
+    local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d} dev uri=""
     if lpstat -p "$PRINTER_QUEUE" &>/dev/null; then
         uri=$(lpstat -v "$PRINTER_QUEUE")
-        # Re-run: the queue exists, so the printer need not be on.
-        [[ $uri == *localhost:60000* ]] && ippusb=1 || ippusb=0
-    else
-        if ! dev=$(printer_dev); then
-            PRINTER_PENDING=1
-            log "Printer not connected (no USB device 03f0:0c54); skipping the print queue and scanner setup. Re-run this script after plugging it in."
-            return 0
-        fi
-        if has_ipp_usb; then
-            log "Printer speaks IPP-over-USB"
-            create_ipp_usb_queue
-            ippusb=1
-        else
+    fi
+    if ipp_usb_dev >/dev/null || [[ $uri == *//localhost:6* ]]; then
+        log "Printer speaks IPP-over-USB"
+        setup_ipp_usb
+    elif [[ -n $uri ]] || dev=$(printer_dev); then
+        if [[ -z $uri ]]; then
             log "Printer has no IPP-over-USB interface; using HPLIP"
             create_hplip_queue "$dev"
-            ippusb=0
         fi
-    fi
-    if ((ippusb)); then
-        airscan_conf 60000 OfficeJet >/etc/sane.d/airscan.conf
-        pin_scanner /etc/systemd/system/printhub.service.d "$(scanner_device OfficeJet)"
-    else
         # No eSCL endpoint to point sane-airscan at; hpaio drives the scanner.
-        printf '[options]\ndiscovery = disable\n' >/etc/sane.d/airscan.conf
-        pin_scanner /etc/systemd/system/printhub.service.d
+        printf '[options]\ndiscovery = disable\n' >"$sane/airscan.conf"
+        pin_scanner "$dropin"
+        cupsctl --share-printers
+        lpadmin -p "$PRINTER_QUEUE" -o printer-is-shared=true
+    else
+        PRINTER_PENDING=1
+        log "No printer connected; skipping the print queue and scanner setup. Re-run this script after plugging it in."
+        return 0
     fi
-    configure_dll_conf /etc/sane.d/dll.conf
-    cupsctl --share-printers
-    lpadmin -p "$PRINTER_QUEUE" -o printer-is-shared=true
+    configure_dll_conf "$sane/dll.conf"
 }
 
 install_airsane() {
@@ -182,6 +182,7 @@ install_airsane() {
     # With ipp-usb the scanner reaches SANE through sane-airscan, which AirSane sees as a network scanner.
     sed -i 's/^LOCAL_SCANNERS_ONLY=.*/LOCAL_SCANNERS_ONLY=false/' /etc/default/airsane
     allow_airscan_in_airsane /etc/airsane/ignore.conf
+    airsane_ignore_hpaio_net /etc/airsane/ignore.conf
 }
 
 install_traefik() {

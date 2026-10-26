@@ -10,4 +10,10 @@ Run on the Pi with the OfficeJet Pro 6970 attached, before release.
 - [ ] AirSane scans work from macOS Image Capture and Windows Scan
 - [ ] The share target works from Android
 - [ ] Unplugging the printer mid-job shows the banner, and the job resumes on replug
+- [ ] Replugging the printer runs `printhub-printer.service` successfully, and `lpoptions -p OfficeJet` shows the real model
+- [ ] A Mac adding `<model> @ raspberrypi` through Bonjour uses AirPrint and offers two-sided printing
+- [ ] iOS and Android print two-sided through both `<model> @ raspberrypi` and `<printer name> (USB)`
+- [ ] A phone cancels a job mid-print on `<model> @ raspberrypi`
+- [ ] Powering the printer off mid-job and back on completes the job on `<model> @ raspberrypi`
+- [ ] Image Capture or Windows Scan scans through both the AirSane and the `(USB)` scanner; the web app still scans
 - [ ] Confirm whether the ADF is single-sided

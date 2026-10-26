@@ -18,33 +18,67 @@ def make_device(root: Path, name: str, vid: str, pid: str, ifaces: list[tuple[st
         (iface / "bInterfaceProtocol").write_text(proto + "\n")
 
 
-def has_ipp_usb(root: Path) -> bool:
+def ipp_usb_dev(root: Path) -> str | None:
     r = subprocess.run(
-        ["bash", "-c", f'source "{INSTALL}" && has_ipp_usb'],
+        ["bash", "-c", f'source "{INSTALL}" && ipp_usb_dev'],
         env={"USB_SYSFS": str(root), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
     )
-    return r.returncode == 0
+    return r.stdout.strip() if r.returncode == 0 else None
 
 
 def test_ipp_usb_interface_detected(tmp_path):
     make_device(tmp_path, "1-1", "03f0", "0c54", [("07", "01", "02"), ("07", "01", "04")])
-    assert has_ipp_usb(tmp_path)
+    assert ipp_usb_dev(tmp_path) == str(tmp_path / "1-1")
 
 
 def test_printer_without_ipp_interface(tmp_path):
     make_device(tmp_path, "1-1", "03f0", "0c54", [("07", "01", "02"), ("ff", "01", "04")])
-    assert not has_ipp_usb(tmp_path)
+    assert ipp_usb_dev(tmp_path) is None
 
 
-def test_ipp_interface_on_other_device_is_ignored(tmp_path):
+def test_any_ipp_usb_printer_is_found(tmp_path):
     make_device(tmp_path, "1-1", "03f0", "0c54", [("07", "01", "02")])
     make_device(tmp_path, "1-2", "04b8", "1234", [("07", "01", "04")])
-    assert not has_ipp_usb(tmp_path)
+    assert ipp_usb_dev(tmp_path) == str(tmp_path / "1-2")
 
 
 def test_no_printer(tmp_path):
-    make_device(tmp_path, "1-2", "04b8", "1234", [("07", "01", "04")])
-    assert not has_ipp_usb(tmp_path)
+    make_device(tmp_path, "1-2", "046d", "c52b", [("03", "01", "02")])  # a USB receiver, no printer class
+    assert ipp_usb_dev(tmp_path) is None
+
+
+def test_ipp_usb_listens_on_all_interfaces(tmp_path):
+    f = tmp_path / "ipp-usb.conf"
+    f.write_text("[network]\n  http-min-port = 60000\n  interface = loopback # all | loopback\n")
+    for _ in range(2):
+        assert sh(f"ipp_usb_listen_all {f}").returncode == 0
+    assert f.read_text() == "[network]\n  http-min-port = 60000\n  interface = all # all | loopback\n"
+
+
+def test_airsane_ignores_hpaio_network_devices(tmp_path):
+    f = tmp_path / "ignore.conf"
+    f.write_text("escl:.*\n")
+    for _ in range(2):
+        assert sh(f"airsane_ignore_hpaio_net {f}").returncode == 0
+    assert f.read_text() == "escl:.*\nhpaio:/net/.*\n"
+
+
+def test_hplip_rerun_leaves_ipp_usb_alone(tmp_path):
+    # An HPLIP install re-run with the printer unplugged: no airscan device, no scanner pin, no ipp-usb changes.
+    sane, dropin = tmp_path / "sane", tmp_path / "dropin"
+    sane.mkdir()
+    stubs = (
+        'lpstat() { [[ $1 == -v ]] && echo "device for OfficeJet: hp:/usb/OfficeJet_Pro_6970?serial=X"; return 0; }; '
+        "lpadmin() { :; }; cupsctl() { :; }; configure_dll_conf() { :; }; "
+        'apply_printer() { echo APPLY; }; ipp_usb_listen_all() { echo LISTEN; }; apt-get() { echo APT "$*"; }'
+    )
+    r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path), SANE_DIR=str(sane), DROPIN_DIR=str(dropin))
+    assert r.returncode == 0, r.stderr
+    assert "APPLY" not in r.stdout and "LISTEN" not in r.stdout and "ipp-usb" not in r.stdout
+    assert "[devices]" not in (sane / "airscan.conf").read_text()
+    assert not (dropin / "scanner.conf").exists()
 
 
 def sh(expr: str, *args: str, input: str | None = None, **env: str) -> subprocess.CompletedProcess:
@@ -115,17 +149,6 @@ def test_airsane_ignore_list_keeps_only_escl(tmp_path):
     sh(f"allow_airscan_in_airsane {f}")
     sh(f"allow_airscan_in_airsane {f}")
     assert f.read_text() == "# comment\nescl:.*\n"
-
-
-def test_wait_for_port():
-    import socket
-
-    with socket.socket() as srv:
-        srv.bind(("127.0.0.1", 0))
-        srv.listen()
-        assert sh(f"wait_for_port 127.0.0.1 {srv.getsockname()[1]} 2").returncode == 0
-        port = srv.getsockname()[1]
-    assert sh(f"wait_for_port 127.0.0.1 {port} 1").returncode != 0
 
 
 def test_write_secret_is_atomic_and_private(tmp_path):

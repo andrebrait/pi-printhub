@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Started by deploy/udev/70-printhub-printer.rules when an IPP-over-USB printer is plugged in.
+[Unit]
+Description=Point the pi-printhub print queue and scanner at the attached printer
+After=ipp-usb.service cups.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/printhub/printer-setup.sh
