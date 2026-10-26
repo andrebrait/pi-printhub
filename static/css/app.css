@@ -97,7 +97,7 @@ form.stack { display: grid; gap: 0.75rem; max-width: 24rem; }
 form.stack label { display: grid; gap: 0.25rem; font-weight: 600; }
 
 /* Print page */
-.print-layout, .scan-layout { display: grid; gap: 1rem; }
+.print-layout, .scan-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 52rem) {
   .print-layout, .scan-layout { grid-template-columns: minmax(0, 1fr) 22rem; align-items: start; }
 }
@@ -112,7 +112,14 @@ figure.sheet-group figcaption { color: var(--muted); font-size: 0.9rem; }
   position: relative; background: var(--sheet); width: min(42vw, 11rem);
   box-shadow: 0 1px 6px var(--sheet-shadow);
 }
-@media (max-width: 30rem) { .sides { flex-direction: column; align-items: center; } .sheet { width: min(70vw, 16rem); } }
+@media (width < 52rem) {
+  /* One swipeable row keeps the options and Print button near the top on phones. */
+  .preview { flex-wrap: nowrap; overflow-x: auto; justify-content: safe center; scroll-snap-type: x mandatory; padding: 0.25rem 0.25rem 0.75rem; }
+  figure.sheet-group { flex: none; scroll-snap-align: center; }
+}
+@media (width >= 52rem) {
+  .print-layout .side { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+}
 .sheet .printable, .sheet .page { position: absolute; overflow: hidden; }
 .sheet .page { container-type: size; }
 .sheet .upright { position: absolute; inset: 0; }

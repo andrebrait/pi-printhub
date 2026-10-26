@@ -219,6 +219,10 @@ function render(d) {
   $("print").href = `/print.html?doc=${encodeURIComponent(docId)}`;
   $("outputs").hidden = !doc.pages.length;
   for (const b of [$("scan-flatbed"), $("scan-adf"), $("retry")]) b.disabled = busy;
+  // Another scan appends to this document.
+  const verb = doc.pages.length ? "Add" : "Scan";
+  $("scan-flatbed").textContent = `${verb} from glass`;
+  $("scan-adf").textContent = `${verb} from feeder`;
   show($("scan-status"), busy ? `Scanning… ${plural(doc.pages.length, "page")} so far` : "");
   $("scan-failed").hidden = busy || !doc.scan_error;
   $("scan-error").textContent = doc.scan_error ?? "";
@@ -297,10 +301,23 @@ $("scan-adf").addEventListener("click", () => scan("adf"));
 $("retry").addEventListener("click", () => scan(lastSource));
 $("scanner-retry").addEventListener("click", loadScanner);
 
-$("title").addEventListener("blur", (e) => {
-  const title = e.target.value;
+function saveTitle() {
+  const title = $("title").value;
   patch((d) => (d && title.trim() !== d.title ? { title } : null));
-});
+}
+$("title").addEventListener("blur", saveTitle);
+
+// Exports and print read the stored title, so a rename still being typed or saved goes first.
+for (const id of ["download-pdf", "download-jpeg", "print"]) {
+  $(id).addEventListener("click", async (e) => {
+    if (e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; // new tab or window: browser default
+    e.preventDefault();
+    const href = e.currentTarget.href;
+    saveTitle();
+    await saving;
+    location.assign(href);
+  });
+}
 
 $("email").addEventListener("submit", async (e) => {
   e.preventDefault();

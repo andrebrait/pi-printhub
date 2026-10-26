@@ -61,7 +61,8 @@ function fill(list, docs, page) {
     title.textContent = d.title;
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = `${d.page_count} p · ${new Date(d.modified).toLocaleString()}`;
+    const when = new Date(d.modified).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    meta.textContent = `${d.page_count} page${d.page_count === 1 ? "" : "s"} · ${when}`;
     a.append(title, meta);
     li.append(a);
     list.append(li);

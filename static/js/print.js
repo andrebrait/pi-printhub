@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { apiFetch, errorMessage } from "./api.js";
+import { apiFetch, errorMessage, reasonLabels } from "./api.js";
 import { mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
 
 const $ = (id) => document.getElementById(id);
@@ -229,8 +229,8 @@ function jobCard(jobId) {
       const { job, printer: p } = await res.json();
       state.className = `state ${job.state}`;
       state.textContent = JOB_LABELS[job.state] ?? job.state;
-      const reasons = [...job.reasons, ...p.state_reasons];
-      detail.textContent = reasons.length ? `Printer: ${[...new Set(reasons)].join(", ")}` : "";
+      const reasons = reasonLabels([...job.reasons, ...p.state_reasons]);
+      detail.textContent = reasons.length ? `Printer: ${reasons.join(", ")}` : "";
       if (TERMINAL.has(job.state)) return stop();
     } catch (e) {
       detail.textContent = `Status unavailable: ${e.message}`;

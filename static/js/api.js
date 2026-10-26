@@ -58,3 +58,33 @@ export function uploadFile(file, onProgress) {
     xhr.send(form);
   });
 }
+
+const REASONS = {
+  "marker-supply-low": "Ink low",
+  "marker-supply-empty": "Out of ink",
+  "toner-low": "Toner low",
+  "toner-empty": "Out of toner",
+  "media-low": "Paper low",
+  "media-empty": "Out of paper",
+  "media-needed": "Load paper",
+  "media-jam": "Paper jam",
+  "door-open": "Cover open",
+  "cover-open": "Cover open",
+  "input-tray-missing": "Paper tray missing",
+  "output-area-full": "Output tray full",
+  offline: "Offline",
+  "connecting-to-device": "Connecting",
+  paused: "Paused",
+  "printer-stopped": "Printer stopped",
+};
+
+/** Readable text for IPP printer/job state reasons; job- and cups- bookkeeping reasons repeat the state, so they go. */
+export function reasonLabels(reasons) {
+  const labels = reasons
+    .filter((r) => r !== "none" && !/^(job|cups)-/.test(r))
+    .map((r) => {
+      const key = r.replace(/-(report|warning|error)$/, "");
+      return REASONS[key] ?? key.charAt(0).toUpperCase() + key.slice(1).replaceAll("-", " ");
+    });
+  return [...new Set(labels)];
+}
