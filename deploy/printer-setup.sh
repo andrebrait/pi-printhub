@@ -45,3 +45,35 @@ pin_scanner() {
         rm -f "$1/scanner.conf"
     fi
 }
+
+# apply_printer: point the queue, sane-airscan and printhub at the attached device. Changes nothing unless the
+# device answers IPP: the previous queue keeps its jobs and settings.
+apply_printer() {
+    local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
+    local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
+    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri model i
+    # ipp-usb writes the device's state file once it has claimed it, shortly after udev reports the device.
+    for ((i = 0; i < 30; i++)); do
+        port=$(ipp_usb_port "$state" "$sysfs") && break
+        sleep 1
+    done
+    [[ -n $port ]] || { echo "no IPP-over-USB printer served by ipp-usb" >&2; return 1; }
+    uri=ipp://localhost:$port/ipp/print
+    model=$(ipptool -tv "$uri" get-printer-attributes.test |
+        sed -n 's/^[[:space:]]*printer-make-and-model ([^)]*) = //p' | head -n1) || true
+    [[ -n $model ]] || { echo "the printer at $uri does not answer IPP" >&2; return 1; }
+
+    lpadmin -p "$queue" -E -v "$uri" -m "driverless:$uri" -D "$model" \
+        -o printer-is-shared=true -o printer-error-policy=retry-job
+    cupsctl --share-printers
+    airscan_conf "$port" "$model" >"$sane/airscan.conf.new"
+    mv "$sane/airscan.conf.new" "$sane/airscan.conf"
+    pin_scanner "$dropin" "$(scanner_device "$model")"
+    systemctl daemon-reload
+    systemctl try-restart printhub airsaned
+}
+
+# Sourcing the file (for install.sh and tests) must not change anything.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    apply_printer
+fi

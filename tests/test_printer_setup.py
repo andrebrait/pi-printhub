@@ -73,3 +73,61 @@ def test_scanner_pin_escapes_systemd_specials(tmp_path):
     dropin = tmp_path / "d"
     sh(f'pin_scanner {dropin} "$1"', 'airscan:e0:A "B" 100% \\x')
     assert (dropin / "scanner.conf").read_text() == '[Service]\nEnvironment="PRINTHUB_SCANNER=airscan:e0:A \\"B\\" 100%% \\\\x"\n'
+
+
+IPPTOOL_OK = 'ipptool() { echo "        printer-make-and-model (textWithoutLanguage) = HP OfficeJet Pro 6970"; }'
+
+
+def apply(tmp_path: Path, stubs: str, attached: bool = True, state: bool = True) -> tuple[subprocess.CompletedProcess, str]:
+    """Run apply_printer with CUPS, systemd and sleep stubbed; returns the result and the command log."""
+    sysfs, statedir, log = tmp_path / "sysfs", tmp_path / "state", tmp_path / "log"
+    sysfs.mkdir(exist_ok=True)
+    if attached:
+        usb_device(sysfs, "1-1", "03f0", "0c54", "TH9152Q0KM")
+    if state:
+        state_file(statedir, "03f0-0c54-TH9152Q0KM-HP-OfficeJet-Pro-6970.state", 60000)
+    (tmp_path / "sane").mkdir(exist_ok=True)
+    base = (
+        f'log() {{ echo "$*" >>{log}; }}; lpadmin() {{ log "lpadmin $*"; }}; cupsctl() {{ log "cupsctl $*"; }}; '
+        f'systemctl() {{ log "systemctl $*"; }}; sleep() {{ log "sleep $*"; }}; '
+    )
+    r = sh(
+        f"{base}{stubs}; apply_printer",
+        STATE_DIR=str(statedir), USB_SYSFS=str(sysfs), SANE_DIR=str(tmp_path / "sane"),
+        DROPIN_DIR=str(tmp_path / "dropin"),
+    )
+    return r, log.read_text() if log.exists() else ""
+
+
+def test_apply_points_queue_scanner_and_pin_at_the_device(tmp_path):
+    r, log = apply(tmp_path, IPPTOOL_OK)
+    assert r.returncode == 0, r.stderr
+    assert (
+        "lpadmin -p OfficeJet -E -v ipp://localhost:60000/ipp/print -m driverless:ipp://localhost:60000/ipp/print "
+        "-D HP OfficeJet Pro 6970 -o printer-is-shared=true -o printer-error-policy=retry-job"
+    ) in log
+    assert "lpadmin -x" not in log  # queued jobs survive a replug
+    assert "cupsctl --share-printers" in log
+    assert '"HP OfficeJet Pro 6970" = http://localhost:60000/eSCL' in (tmp_path / "sane" / "airscan.conf").read_text()
+    assert "PRINTHUB_SCANNER=airscan:e0:HP OfficeJet Pro 6970" in (tmp_path / "dropin" / "scanner.conf").read_text()
+    assert "systemctl daemon-reload" in log
+    assert "systemctl try-restart printhub airsaned" in log
+
+
+def test_refused_ipp_changes_nothing(tmp_path):
+    # As when the printer's own IPP switch is off: ipp-usb is up but IPP answers nothing.
+    (tmp_path / "sane").mkdir()
+    (tmp_path / "sane" / "airscan.conf").write_text("previous\n")
+    r, log = apply(tmp_path, "ipptool() { return 1; }")
+    assert r.returncode != 0
+    assert "lpadmin" not in log and "systemctl" not in log
+    assert (tmp_path / "sane" / "airscan.conf").read_text() == "previous\n"
+    assert not (tmp_path / "dropin").exists()
+
+
+def test_waits_for_ipp_usb_then_gives_up(tmp_path):
+    r, log = apply(tmp_path, IPPTOOL_OK, state=False)
+    assert r.returncode != 0
+    assert log.count("sleep 1") == 30
+    assert "lpadmin" not in log
+    assert not (tmp_path / "sane" / "airscan.conf").exists()
