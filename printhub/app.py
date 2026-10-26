@@ -124,6 +124,13 @@ class DocumentResponse(Response):
         finally:
             self.guards.close()
 
+class RevalidatedStaticFiles(StaticFiles):
+    """Browsers revalidate (cheap 304) on every load, so a deploy never mixes new pages with stale scripts."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def create_app(
@@ -254,8 +261,11 @@ def create_app(
             convert.normalize(source, d / "print.pdf")
             convert.render_preview(d / "print.pdf", d / "thumbs")
         except convert.ConversionError as e:
-            # normalize may have copied the source to print.pdf; a broken one must not look converted
+            # normalize may have copied the source to print.pdf, and pdftoppm may have written early pages:
+            # a broken conversion must not look converted.
             (d / "print.pdf").unlink(missing_ok=True)
+            for png in (d / "thumbs").glob("page-*.png"):
+                png.unlink()
             return str(e)
         return None
 
@@ -608,7 +618,7 @@ def create_app(
         return recipients.list()
 
     app.include_router(api)
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")
+    app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")
     return app
 
 

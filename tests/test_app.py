@@ -15,6 +15,7 @@ from PIL import Image
 from test_mail import Recorder, server_tls, smtp_server, tls_files  # noqa: F401
 from test_scanning import fake_scanimage, make_png
 
+from printhub import convert
 from printhub.app import MAX_UPLOAD, create_app
 from printhub.auth import COOKIE, issue_session
 from printhub.documents import Crop, DocStore, Page, PrintRecord
@@ -284,6 +285,20 @@ def test_unconverted_doc_stays_readable_and_unprintable(client):
     assert doc.json()["preview_count"] == 0
     assert doc.json()["pdf_pages"] == []
     assert client.post(f"/api/docs/{doc_id}/print", json={}).status_code in (400, 422)
+
+
+def test_preview_failure_after_some_pages_leaves_no_previews(client, monkeypatch):
+    # pdftoppm can write early pages before failing on a later one or a full disk.
+    def half_rendered(pdf, out_dir, width=600):
+        (out_dir / "page-1.png").write_bytes(b"partial")
+        raise convert.ConversionError("pdftoppm failed on page 2")
+
+    monkeypatch.setattr("printhub.app.convert.render_preview", half_rendered)
+    r = client.post("/api/uploads", files={"file": ("a.jpg", jpeg_bytes(), "image/jpeg")})
+    assert r.status_code == 422
+    doc = client.get(f"/api/docs/{r.json()['doc_id']}").json()
+    assert doc["preview_count"] == 0
+    assert doc["pdf_pages"] == []
 
 
 def test_low_space_deletes_old_doc_then_uploads(client, store, space):
@@ -648,3 +663,12 @@ def test_startup_clears_pending(cfg, make_client):
     (pending / "orphan").write_bytes(b"x")
     make_client(login=False)
     assert list(pending.iterdir()) == []
+
+
+def test_static_files_are_revalidated_so_a_deploy_never_serves_stale_scripts(client):
+    for path in ("/", "/print.html", "/css/app.css", "/js/print.js"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.headers["cache-control"] == "no-cache", path
+    etag = client.get("/js/print.js").headers["etag"]
+    assert client.get("/js/print.js", headers={"If-None-Match": etag}).status_code == 304
