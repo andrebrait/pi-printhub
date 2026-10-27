@@ -241,3 +241,16 @@ def test_udev_rule_starts_the_unit_that_runs_the_installed_script():
     assert 'ENV{SYSTEMD_WANTS}+="printhub-printer.service"' in rule
     assert "ExecStart=/usr/local/lib/printhub/printer-setup.sh\n" in unit
     assert "install -D -m 0755 \"$REPO/deploy/printer-setup.sh\" /usr/local/lib/printhub/printer-setup.sh" in INSTALL.read_text()
+
+
+def test_printer_seen_before_the_ipp_usb_restart_is_set_up(tmp_path):
+    # Restarting ipp-usb and re-triggering udev briefly hides the interface files (seen on the Pi).
+    seen = tmp_path / "seen"
+    stubs = IPP_USB_STUBS + (
+        f'ipp_usb_dev() {{ [[ -e {seen} ]] && return 1; touch {seen}; echo /sys/x; }}; '
+        'lpstat() { return 1; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    )
+    r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert "SYSTEMCTL start printhub-printer.service" in r.stdout
+    assert "unplugged" not in r.stdout

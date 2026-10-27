@@ -115,7 +115,8 @@ install_packages() {
 
 # The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printhub-printer.service
 # runs printer-setup.sh now and, through the udev rule, on every plug. ipp-usb also publishes the device natively.
-# setup_ipp_usb QUEUE_URI: the existing queue's device line, empty without a queue.
+# setup_ipp_usb QUEUE_URI ATTACHED: the existing queue's device line (empty without a queue), and 1 when an
+# IPP-over-USB printer is attached. Detected before the restarts below, which briefly hide its USB interfaces.
 setup_ipp_usb() {
     apt-get install -y ipp-usb
     ipp_usb_listen_all /etc/ipp-usb/ipp-usb.conf
@@ -127,7 +128,7 @@ setup_ipp_usb() {
     systemctl try-restart ipp-usb
     # ipp-usb is started by udev on plug; the printer may have been plugged in before ipp-usb was installed.
     udevadm trigger --action=add --subsystem-match=usb
-    if ! ipp_usb_dev >/dev/null; then
+    if ((!$2)); then
         log "Printer unplugged; keeping the existing queue. It is set up again when plugged in."
     # The unit, not a direct call: it serializes with the run udev just triggered and keeps set -e intact.
     elif ! systemctl start printhub-printer.service; then
@@ -152,9 +153,12 @@ setup_printer() {
     if lpstat -p "$PRINTER_QUEUE" &>/dev/null; then
         uri=$(lpstat -v "$PRINTER_QUEUE")
     fi
-    if ipp_usb_dev >/dev/null || [[ $uri == *//localhost:6????/* ]]; then
+    if ipp_usb_dev >/dev/null; then
         log "Printer speaks IPP-over-USB"
-        setup_ipp_usb "$uri"
+        setup_ipp_usb "$uri" 1
+    elif [[ $uri == *//localhost:6????/* ]]; then
+        log "IPP-over-USB queue; printer not attached"
+        setup_ipp_usb "$uri" 0
     elif [[ -n $uri ]] || dev=$(printer_dev); then
         if [[ -z $uri ]]; then
             log "Printer has no IPP-over-USB interface; using HPLIP"
