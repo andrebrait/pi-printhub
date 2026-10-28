@@ -47,11 +47,44 @@ pin_scanner() {
     fi
 }
 
+# airprint_service MODEL QUEUE: an avahi service file advertising the CUPS queue the way a printer advertises its own
+# AirPrint service, from `ipptool -tv` attributes of the queue on stdin. macOS lists CUPS's own "<model> @ <host>"
+# advert as "Bonjour Shared" and picks a driver for it (Generic PostScript); this "<model> (Pi)" one gets AirPrint.
+# Both stay: no UUID, so clients that merge entries by UUID keep them apart.
+airprint_service() {
+    local attrs name value pdl="" f urf color duplex txt="" type
+    attrs=$(cat)
+    value() { sed -n "s/^[[:space:]]*$1 ([^)]*) = //p" <<<"$attrs" | head -n1; }
+    for f in application/pdf image/jpeg image/png image/pwg-raster image/urf; do
+        [[ ,$(value document-format-supported), == *,$f,* ]] && pdl+=${pdl:+,}$f
+    done
+    urf=$(value urf-supported)
+    [[ $(value color-supported) == true ]] && color=T || color=F
+    [[ $(value sides-supported) == *two-sided* ]] && duplex=T || duplex=F
+    # \& : a bare & in the replacement stands for the matched text (bash 5.2 patsub_replacement).
+    name=${1//&/\&amp;}
+    name=${name//</\&lt;}
+    name=${name//>/\&gt;}
+    for value in txtvers=1 qtotal=1 "rp=printers/$2" "ty=$name" "product=($name)" "pdl=$pdl" "URF=${urf:-none}" \
+        "Color=$color" "Duplex=$duplex" air=none; do
+        txt+="    <txt-record>$value</txt-record>"$'\n'
+    done
+    printf '<?xml version="1.0" standalone="no"?>\n<!DOCTYPE service-group SYSTEM "avahi-service.dtd">\n'
+    printf '<service-group>\n  <name>%s (Pi)</name>\n' "$name"
+    for type in _ipp _ipps; do
+        printf '  <service>\n    <type>%s._tcp</type>\n' "$type"
+        [[ $type == _ipp ]] && printf '    <subtype>_universal._sub._ipp._tcp</subtype>\n'
+        printf '    <port>631</port>\n%s  </service>\n' "$txt"
+    done
+    printf '</service-group>\n'
+}
+
 # apply_printer: point the queue, sane-airscan and printhub at the attached device. Changes nothing unless the
 # device answers IPP: the previous queue keeps its jobs and settings.
 apply_printer() {
     local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
+    local avahi=${AVAHI_DIR:-/etc/avahi/services}
     local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp
     # ipp-usb writes the state file before it serves the device (and keeps it from earlier plugs), so wait until
     # the printer itself answers.
@@ -68,6 +101,12 @@ apply_printer() {
 
     lpadmin -p "$queue" -E -v "$uri" -m "driverless:$uri" -D "$model" \
         -o printer-is-shared=true -o printer-error-policy=retry-job
+    install -d -m 0755 "$avahi"
+    tmp=$(mktemp "$avahi/.printhub-airprint.XXXXXX")
+    ipptool -tv "ipp://localhost:631/printers/$queue" get-printer-attributes.test | airprint_service "$model" "$queue" >"$tmp"
+    chmod 0644 "$tmp" # avahi-daemon reads it
+    mv "$tmp" "$avahi/printhub-airprint.service"
+    # After reading the queue: cupsctl restarts cupsd.
     cupsctl --share-printers
     tmp=$(mktemp "$sane/airscan.conf.XXXXXX")
     airscan_conf "$port" "$model" >"$tmp"

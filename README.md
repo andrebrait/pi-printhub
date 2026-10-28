@@ -25,7 +25,7 @@ The script installs packages, creates the CUPS queue, builds AirSane, installs T
 
 Any printer with an IPP-over-USB interface works; others fall back to HPLIP, which supports only the OfficeJet Pro 6970. Each time an IPP-over-USB printer is plugged in, `printhub-printer.service` points the `OfficeJet` queue, the scanner and the web app at it. The LAN then sees each device twice:
 
-- `<model> @ raspberrypi` (printer) and the AirSane scanner: CUPS and AirSane on the Pi accept the job or scan, render it, and talk to the printer themselves. Use these by default.
+- `<model> (Pi)` and `<model> @ raspberrypi` (printers) and the AirSane scanner: CUPS and AirSane on the Pi accept the job or scan, render it, and talk to the printer themselves. Use these by default. Both printers are the same CUPS queue: `(Pi)` is announced like a native AirPrint printer (`/etc/avahi/services/printhub-airprint.service`), which macOS sets up as AirPrint; macOS treats CUPS's own `@ raspberrypi` announcement as a shared CUPS printer and picks Generic PostScript for it.
 - `<printer name> (USB)`: ipp-usb passes the printer's own IPP and eSCL services through, with every native option.
 
 Keep IPP enabled in the printer's own settings: on the OfficeJet Pro 6970 that switch also controls IPP-over-USB. Logs: `journalctl -u printhub-printer -u ipp-usb`. Design: [`docs/superpowers/specs/2026-10-26-network-sharing-design.md`](docs/superpowers/specs/2026-10-26-network-sharing-design.md).
