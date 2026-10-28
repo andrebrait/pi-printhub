@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import multiprocessing
 
+import pytest
+
 from printhub.events import EventLog
 
 
@@ -82,3 +84,23 @@ def test_concurrent_appends_from_processes_keep_every_line(tmp_path):
     for p in procs:
         p.join()
     assert sorted(ids(EventLog(tmp_path), limit=1000)) == list(range(1, 101))
+
+
+def test_marking_read_beyond_the_latest_does_not_pre_read_future_events(tmp_path):
+    log = EventLog(tmp_path)
+    log.append("info", "job", "a")
+    log.mark_read(up_to=10**12, ids=[10**9])
+    log.append("error", "job", "b")
+    assert log.unread() == 1
+    assert [read for _, read in log.page()] == [False, True]
+
+
+@pytest.mark.parametrize("junk", [b"\xff\xfe\n", b"null\n", b"[]\n", b"5\n", b'{"id": "x", "at": "", "level": "info", "kind": "job", "title": "t"}\n'])
+def test_any_garbage_line_is_skipped(tmp_path, junk):
+    log = EventLog(tmp_path)
+    log.append("info", "job", "a")
+    with (tmp_path / "events.jsonl").open("ab") as f:
+        f.write(junk)
+    assert log.append("info", "job", "b").id == 2
+    assert [e.id for e, _ in log.page()] == [2, 1]
+    assert log.unread() == 2

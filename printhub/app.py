@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import functools
+import logging
 import re
 import secrets
 import shutil
@@ -56,8 +57,10 @@ PENDING_MAX_COUNT = 5
 PENDING_MAX_BYTES = 200 * 1024 * 1024
 ACTIVE_JOB_STATES = {"pending", "held", "processing", "stopped"}
 RECENT_JOBS = 20
+WATCH_INTERVAL = 3.0  # seconds between CUPS checks for notifications
 # cups.Connection() raises RuntimeError when cupsd is unreachable
 CUPS_ERRORS = (cups.IPPError, RuntimeError)
+log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -171,7 +174,18 @@ def create_app(
         d.mkdir(parents=True)
     scanner = scanner or Scanner()
     events = EventLog(cfg.data_dir)
-    scanner.on_error = lambda doc_id, message: events.append("error", "scan", "Scan failed", message, doc_id=doc_id)
+
+    def notify(level, kind, title, detail="", **ids) -> None:
+        # A notification must never cost the operation it reports, e.g. on a full disk.
+        try:
+            events.append(level, kind, title, detail, **ids)
+        except OSError:
+            log.exception("could not record a %s event", kind)
+
+    scanner.on_error = lambda doc_id, message: notify("error", "scan", "Scan failed", message, doc_id=doc_id)
+    # job id -> doc id for /api/jobs, rebuilt when documents appear or go (the docs directory changes).
+    job_docs: dict[int, str] = {}
+    job_docs_stamp = [None]
     free_bytes = free_bytes or (lambda: shutil.disk_usage(cfg.data_dir).free)
     min_free = int(cfg.min_free_gb * 1024**3)
     limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
@@ -199,9 +213,11 @@ def create_app(
         stop = threading.Event()
         if watch:
             watcher = Watcher(cups_conn_factory, cfg.printer_queue, events)
-            threading.Thread(target=watcher.run, args=(stop,), name="watcher", daemon=True).start()
-        yield
-        stop.set()
+            threading.Thread(target=watcher.run, args=(stop, WATCH_INTERVAL), name="watcher", daemon=True).start()
+        try:
+            yield
+        finally:
+            stop.set()
 
     app = FastAPI(openapi_url=None, lifespan=lifespan)
     app.add_middleware(Guard, cfg=cfg, admit_share=admit_share, release_share=share_lock.release)
@@ -288,7 +304,7 @@ def create_app(
             (d / "print.pdf").unlink(missing_ok=True)
             for png in (d / "thumbs").glob("page-*.png"):
                 png.unlink(missing_ok=True)  # a concurrent retry or delete may clear thumbs first
-            events.append("error", "conversion", "Conversion failed", str(e), doc_id=doc_id)
+            notify("error", "conversion", "Conversion failed", str(e), doc_id=doc_id)
             return str(e)
         return None
 
@@ -382,10 +398,9 @@ def create_app(
             info = printer_info(cups_conn())
         except ApiError as e:
             return out | {"error": e.error}
-        problems = [printing.reason_label(r) for r in info.state_reasons]
         out["printer"] = {
             "state": info.state, "state_reasons": info.state_reasons, "accepting": info.accepting,
-            "problems": [{"label": p[0], "level": p[1]} for p in problems if p],
+            "problems": [{"label": label, "level": level} for label, level in printing.problems(info.state_reasons).items()],
         }
         return out
 
@@ -613,11 +628,17 @@ def create_app(
         options = {k: str(v) for k, v in asdict(opts).items() if v is not None}
         with store.transaction(doc_id) as current:
             current.prints.append(PrintRecord(job_id=job_id, at=_now(), options=options))
+        job_docs[job_id] = doc_id
         return {"job_id": job_id}
 
     @api.get("/jobs")
     def jobs():
-        doc_of = {p.job_id: d.id for d in store.list() for p in d.prints}
+        stamp = store.root.stat().st_mtime_ns
+        if stamp != job_docs_stamp[0]:
+            job_docs.clear()
+            job_docs.update({p.job_id: d.id for d in store.list() for p in d.prints})
+            job_docs_stamp[0] = stamp
+        doc_of = job_docs
         listed = [
             asdict(j) | {"doc_id": doc_of.get(j.id), "reason_labels": [lab[0] for r in j.reasons if (lab := printing.reason_label(r))]}
             for j in queue_jobs(cups_conn())

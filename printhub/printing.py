@@ -101,6 +101,16 @@ def reason_label(reason: str) -> tuple[str, Literal["warning", "error"]] | None:
     return label, "error" if reason.endswith("-error") else "warning"
 
 
+def problems(reasons: list[str]) -> dict[str, Literal["warning", "error"]]:
+    """Readable problems, once per label at its worst level: "-warning" and "-report" of one reason are one problem."""
+    out: dict[str, Literal["warning", "error"]] = {}
+    for reason in reasons:
+        if found := reason_label(reason):
+            label, level = found
+            out[label] = "error" if "error" in (level, out.get(label)) else level
+    return out
+
+
 def _allowed(key: str, info: PrinterInfo) -> list[str]:
     """Values accepted for an option; empty means the printer does not offer it."""
     return PRINT_SCALING if key == "print-scaling" else info.supported[key]

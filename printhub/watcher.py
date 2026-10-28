@@ -21,14 +21,14 @@ class Watcher:
         self.events = events
         # None until CUPS first answers: that tick is a baseline, so restarts do not replay history.
         self.jobs: dict[int, str] | None = None
-        self.reasons: set[str] | None = None
+        self.problems: dict[str, str] | None = None
         self.down = False
 
     def tick(self) -> None:
         try:
             conn = self.conn_factory()
             jobs = printing.queue_jobs(conn, self.queue)
-            reasons = set(printing.printer_info(conn, self.queue).state_reasons)
+            problems = printing.problems(printing.printer_info(conn, self.queue).state_reasons)
         except (cups.IPPError, RuntimeError, OSError) as e:
             if not self.down:
                 self.down = True
@@ -43,15 +43,15 @@ class Watcher:
                 level = JOB_EVENTS.get(job.state)
                 if level and self.jobs.get(job.id) != job.state:
                     self.events.append(level, "job", f"Job {job.id} {job.state}", _describe(job), job_id=job.id)
-        if self.reasons is not None:
-            for reason in sorted(reasons - self.reasons, key=_severity):
-                if label := printing.reason_label(reason):
-                    self.events.append(label[1], "printer", label[0])
-            for reason in sorted(self.reasons - reasons):
-                if label := printing.reason_label(reason):
-                    self.events.append("info", "printer", f"{label[0]} cleared")
+        if self.problems is not None:
+            # New problems and changed levels; warnings first, so the worst is the newest notification.
+            for label, level in sorted(problems.items(), key=lambda p: p[1] == "error"):
+                if self.problems.get(label) != level:
+                    self.events.append(level, "printer", label)
+            for label in sorted(self.problems.keys() - problems.keys()):
+                self.events.append("info", "printer", f"{label} cleared")
         self.jobs = {job.id: job.state for job in jobs}
-        self.reasons = reasons
+        self.problems = problems
 
     def run(self, stop: threading.Event, interval: float = 3.0) -> None:
         while not stop.is_set():
@@ -60,11 +60,6 @@ class Watcher:
             except Exception:
                 log.exception("watcher tick failed")
             stop.wait(interval)
-
-
-def _severity(reason: str) -> int:
-    # Warnings before errors, so the most severe problem is the newest notification.
-    return 1 if reason.endswith("-error") else 0
 
 
 def _describe(job: printing.JobInfo) -> str:

@@ -124,7 +124,10 @@ function buildBar(host) {
   const pill = el("a", "badge rounded-pill text-bg-secondary text-decoration-none text-truncate status-pill", "Checking printer…");
   pill.href = "/jobs.html";
   pill.id = "printer-status";
-  pill.setAttribute("role", "status");
+  // The live region wraps the link, so the pill stays a link for assistive technology.
+  const live = el("span", "d-inline-flex min-w-0");
+  live.setAttribute("role", "status");
+  live.append(pill);
   const bell = el("button", "btn btn-outline-secondary position-relative bell");
   bell.type = "button";
   bell.setAttribute("data-bs-toggle", "offcanvas");
@@ -142,7 +145,7 @@ function buildBar(host) {
   toggler.setAttribute("aria-expanded", "false");
   toggler.setAttribute("aria-label", "Menu");
   toggler.append(el("span", "navbar-toggler-icon"));
-  tools.append(pill, bell, toggler);
+  tools.append(live, bell, toggler);
 
   const collapse = el("div", "collapse navbar-collapse");
   collapse.id = "main-nav";

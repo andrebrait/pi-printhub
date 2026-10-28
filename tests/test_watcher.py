@@ -177,3 +177,21 @@ def test_run_survives_a_failing_tick(log):
 
     Flaky(lambda: None, "OfficeJet", log).run(stop, interval=0)
     assert len(calls) == 3
+
+
+def test_reasons_with_the_same_label_are_one_problem(cups_, watcher, log):
+    watcher.tick()
+    cups_.reasons = ["marker-supply-low-warning", "marker-supply-low-report"]
+    watcher.tick()
+    cups_.reasons = ["marker-supply-low-report"]  # same problem, other severity suffix
+    watcher.tick()
+    assert events(log) == [("warning", "printer", "Ink low", None)]
+
+
+def test_problem_level_change_is_reported_as_the_new_level(cups_, watcher, log):
+    watcher.tick()
+    cups_.reasons = ["media-low-warning"]
+    watcher.tick()
+    cups_.reasons = ["media-low-error"]
+    watcher.tick()
+    assert events(log) == [("warning", "printer", "Paper low", None), ("error", "printer", "Paper low", None)]

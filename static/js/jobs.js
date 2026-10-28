@@ -71,6 +71,7 @@ async function cancel(id, button) {
     if (!res.ok) throw new Error(await errorMessage(res));
     error.hidden = true;
   } catch (e) {
+    error.dataset.from = "cancel";
     error.textContent = `Could not cancel job ${id}: ${e.message}`;
     error.hidden = false;
     button.disabled = false;
@@ -83,23 +84,31 @@ function fill(list, jobs, empty) {
   document.getElementById(empty).hidden = jobs.length > 0;
 }
 
-async function refresh() {
+let shown = null; // the last /api/jobs body rendered, as JSON
+let scrolled = false;
+
+export async function refresh() {
   const error = document.getElementById("jobs-error");
   try {
     const res = await apiFetch("/api/jobs");
     if (!res.ok) throw new Error(await errorMessage(res));
-    const { active, recent } = await res.json();
-    fill(document.getElementById("active-jobs"), active, "no-active");
-    fill(document.getElementById("recent-jobs"), recent, "no-recent");
+    const body = await res.json();
+    if (error.dataset.from === "refresh") error.hidden = true; // a failed Cancel's message stays
     document.getElementById("jobs-loading").hidden = true;
-    // A link to #job-N from a notification: bring that job into view once it is listed.
-    const target = location.hash && document.querySelector(location.hash);
-    if (target && !target.dataset.seen) {
-      target.dataset.seen = "1";
+    // Rebuilding unchanged rows every few seconds would drop keyboard focus from their buttons.
+    if (JSON.stringify(body) === shown) return;
+    shown = JSON.stringify(body);
+    fill(document.getElementById("active-jobs"), body.active, "no-active");
+    fill(document.getElementById("recent-jobs"), body.recent, "no-recent");
+    // A link to #job-N from a notification: bring that job into view once, when it is first listed.
+    const target = !scrolled && location.hash && document.getElementById(location.hash.slice(1));
+    if (target) {
+      scrolled = true;
       target.classList.add("list-group-item-info");
       target.scrollIntoView({ block: "center" });
     }
   } catch (e) {
+    error.dataset.from = "refresh";
     error.textContent = `Jobs unavailable: ${e.message}`;
     error.hidden = false;
   }

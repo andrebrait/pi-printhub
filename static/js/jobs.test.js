@@ -40,3 +40,34 @@ test("Cancel calls back with the job id", () => {
   find(item, (el) => el.tagName === "BUTTON").listeners.click();
   assert.equal(cancelled, 12);
 });
+
+test("refreshing keeps the list (and focus) when nothing changed and scrolls to a linked job once", async () => {
+  const doc = fakeDocument();
+  const ids = {};
+  for (const id of ["active-jobs", "recent-jobs", "no-active", "no-recent", "jobs-loading", "jobs-error"]) ids[id] = doc.createElement("div");
+  ids["jobs-error"].hidden = true;
+  doc.getElementById = (id) => ids[id] ?? find(ids["active-jobs"], (el) => el.attributes.id === id) ?? find(ids["recent-jobs"], (el) => el.attributes.id === id);
+  let body = { active: [job({ id: 5 })], recent: [] };
+  globalThis.document = doc;
+  globalThis.location = { hash: "#job-5", pathname: "/jobs.html", search: "" };
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => structuredClone(body) });
+  const { refresh } = await import("./jobs.js");
+  try {
+    await refresh();
+    const first = ids["active-jobs"].children[0];
+    await refresh();
+    assert.equal(ids["active-jobs"].children[0], first, "unchanged jobs must not be rebuilt");
+    body = { active: [job({ id: 5, sheets: 2 })], recent: [] };
+    await refresh();
+    assert.notEqual(ids["active-jobs"].children[0], first);
+    assert.equal(first.scrolled + (ids["active-jobs"].children[0].scrolled ?? 0), 1, "scrolled to the linked job once");
+    globalThis.location.hash = "#1x"; // not a valid CSS selector
+    body = { active: [], recent: [] };
+    await refresh();
+    assert.equal(ids["jobs-error"].hidden, true);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.location;
+    delete globalThis.fetch;
+  }
+});

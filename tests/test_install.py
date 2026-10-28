@@ -276,3 +276,11 @@ def test_job_details_are_shown_in_the_default_policy_only(tmp_path):
     )
     # Unchanged on a re-run, so the installer restarts CUPS only once.
     assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "unchanged"
+
+
+def test_job_details_line_is_added_when_the_policy_lacks_it(tmp_path):
+    f = tmp_path / "cupsd.conf"
+    f.write_text("<Policy default>\n  JobPrivateAccess default\n  <Limit All>\n  </Limit>\n</Policy>\n")
+    assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "changed"
+    assert "<Policy default>\n  JobPrivateValues none\n  JobPrivateAccess default\n" in f.read_text()
+    assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "unchanged"

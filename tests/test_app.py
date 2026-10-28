@@ -2,6 +2,7 @@
 import asyncio
 import io
 import tempfile
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -678,11 +679,11 @@ OURS = "ipp://localhost/printers/OfficeJet"
 
 
 def test_status_reports_printer_and_unread(client, make_client, fake_cups, cfg):
-    fake_cups.state, fake_cups.reasons = 4, ["media-jam-error", "job-printing"]
+    fake_cups.state, fake_cups.reasons = 4, ["media-jam-error", "job-printing", "media-jam-report"]
     EventLog(cfg.data_dir).append("error", "printer", "Paper jam")
     s = client.get("/api/status").json()
     assert s["printer"] == {
-        "state": "processing", "accepting": True, "state_reasons": ["media-jam-error", "job-printing"],
+        "state": "processing", "accepting": True, "state_reasons": ["media-jam-error", "job-printing", "media-jam-report"],
         "problems": [{"label": "Paper jam", "level": "error"}],
     }
     assert (s["error"], s["unread"], s["latest_event"]) == (None, 1, 1)
@@ -757,3 +758,39 @@ def test_conversion_and_scan_failures_become_events(client, cfg, tmp_path, monke
         time.sleep(0.05)
     events = [(e.kind, e.level, e.doc_id) for e, _ in reversed(EventLog(cfg.data_dir).page())]
     assert events == [("conversion", "error", doc_id), ("scan", "error", scan_id)]
+
+
+def test_failed_conversion_keeps_retry_when_the_event_log_cannot_be_written(client, monkeypatch):
+    def full(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(EventLog, "append", full)
+    r = client.post("/api/uploads", files={"file": ("broken.pdf", b"%PDF-1.4\nnot really", "application/pdf")})
+    assert r.status_code == 422 and r.json()["doc_id"]
+
+
+def test_jobs_link_documents_printed_or_deleted_after_the_first_listing(client, store, fake_cups):
+    assert client.get("/api/jobs").json() == {"active": [], "recent": []}
+    doc = scan_doc(store, n=1)
+    job_id = client.post(f"/api/docs/{doc.id}/print", json=PRINT_OPTS).json()["job_id"]
+    fake_cups.jobs = {job_id: {"job-printer-uri": OURS, "job-state": 9}}
+    assert client.get("/api/jobs").json()["recent"][0]["doc_id"] == doc.id
+    store.delete(doc.id)
+    assert client.get("/api/jobs").json()["recent"][0]["doc_id"] is None
+
+
+def test_the_running_app_records_events(cfg, fake_cups, monkeypatch):
+    # watch=True is what the real service runs; its watcher must actually record job outcomes.
+    monkeypatch.setattr("printhub.app.WATCH_INTERVAL", 0.02)
+    fake_cups.jobs = {7: {"job-printer-uri": OURS, "job-state": 5}}
+    app = create_app(cfg, cups_conn_factory=lambda: fake_cups, scanner=Scanner(), free_bytes=lambda: PLENTY, watch=True)
+    with TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}) as c:
+        assert c.post("/api/login", json={"password": "secret"}).status_code == 204
+        time.sleep(0.1)  # baseline
+        fake_cups.jobs = {7: {"job-printer-uri": OURS, "job-state": 9}}
+        for _ in range(100):
+            if c.get("/api/status").json()["unread"]:
+                break
+            time.sleep(0.02)
+        assert [e["title"] for e in c.get("/api/notifications").json()["events"]] == ["Job 7 completed"]
+    assert not any(t.name == "watcher" and t.is_alive() for t in threading.enumerate())

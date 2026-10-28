@@ -54,8 +54,14 @@ airsane_ignore_hpaio_net() { grep -qxF 'hpaio:/net/.*' "$1" || echo 'hpaio:/net/
 # default policy only. Succeeds when it changed the file, so the caller restarts CUPS only then.
 show_job_details() {
     grep -q '^<Policy default>' "$1" || return 1
-    sed -n '/^<Policy default>/,/^<\/Policy>/p' "$1" | grep -q '^[[:space:]]*JobPrivateValues none$' && return 1
-    sed -i '/^<Policy default>/,/^<\/Policy>/ s/^\([[:space:]]*JobPrivateValues\) .*/\1 none/' "$1"
+    local policy
+    policy=$(sed -n '/^<Policy default>/,/^<\/Policy>/p' "$1")
+    grep -q '^[[:space:]]*JobPrivateValues none$' <<<"$policy" && return 1
+    if grep -q '^[[:space:]]*JobPrivateValues ' <<<"$policy"; then
+        sed -i '/^<Policy default>/,/^<\/Policy>/ s/^\([[:space:]]*JobPrivateValues\) .*/\1 none/' "$1"
+    else
+        sed -i '/^<Policy default>/a\  JobPrivateValues none' "$1"
+    fi
 }
 
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }

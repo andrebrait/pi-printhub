@@ -42,6 +42,9 @@ class FakeElement {
   addEventListener(type, fn) {
     this.listeners[type] = fn;
   }
+  scrollIntoView() {
+    this.scrolled = (this.scrolled ?? 0) + 1;
+  }
   get classList() {
     const el = this;
     return {

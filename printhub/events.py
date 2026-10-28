@@ -59,17 +59,18 @@ class EventLog:
 
     def _events(self) -> list[Event]:
         try:
-            lines = self.events_path.read_text().splitlines()
+            lines = self.events_path.read_text(errors="replace").splitlines()
         except FileNotFoundError:
             return []
         out = []
         for line in lines:
-            # A power loss mid-append leaves a truncated line; it must not hide the rest.
+            # A power loss mid-append or a stray edit leaves a bad line; it must not hide the rest.
             try:
-                raw = json.loads(line)
-                out.append(Event(**{k: v for k, v in raw.items() if k in _EVENT_FIELDS}))
-            except (ValueError, TypeError):
+                event = Event(**{k: v for k, v in json.loads(line).items() if k in _EVENT_FIELDS})
+            except (ValueError, TypeError, AttributeError):
                 continue
+            if isinstance(event.id, int):
+                out.append(event)
         return out
 
     def _read_state(self) -> tuple[int, set[int]]:
@@ -107,7 +108,9 @@ class EventLog:
 
     def mark_read(self, *, up_to: int | None = None, ids: list[int] | None = None) -> None:
         with self._locked():
+            # Never past the newest event: ids not yet issued must not be born read.
+            latest = self.latest()
             current, read_ids = self._read_state()
-            current = max(current, up_to or 0)
-            read_ids = {i for i in read_ids | set(ids or []) if i > current}
+            current = max(current, min(up_to or 0, latest))
+            read_ids = {i for i in read_ids | set(ids or []) if current < i <= latest}
             _replace(self.read_path, json.dumps({"up_to": current, "ids": sorted(read_ids)}))
