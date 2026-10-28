@@ -5,17 +5,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Print Hub</title>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="/css/app.css">
   <link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
+<header id="shell"></header>
 <main>
   <header class="bar">
     <h1>Print Hub</h1>
     <button id="logout" type="button">Log out</button>
   </header>
-
-  <div id="printer-banner" class="banner" role="status" hidden></div>
 
   <section class="actions" aria-labelledby="print-heading">
     <h2 id="print-heading" class="visually-hidden">Start</h2>
@@ -130,7 +130,8 @@ $("logout").addEventListener("click", async () => {
 
 refreshDocs();
 </script>
-<script type="module" src="/js/printer-banner.js"></script>
+<script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script type="module" src="/js/shell.js"></script>
 <script type="module" src="/js/sw-register.js"></script>
 </body>
 </html>

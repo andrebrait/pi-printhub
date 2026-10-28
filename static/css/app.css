@@ -166,3 +166,7 @@ ul.pages {
 .crop-dialog label { display: grid; gap: 0.25rem; font-weight: 600; max-width: 14rem; margin-bottom: 0.75rem; }
 .crop-stage { height: min(65vh, 40rem); margin-bottom: 0.75rem; }
 .crop-stage img { display: block; max-width: 100%; }
+.navbar .navbar-brand { flex: none; }
+/* Status and bell share the brand's row on phones; the pill gives way first. */
+.navbar .shell-tools { flex: 1 1 0; min-width: 0; justify-content: flex-end; }
+.status-pill { min-width: 0; max-width: 20rem; overflow: hidden; }

@@ -618,7 +618,10 @@ def create_app(
     @api.get("/jobs")
     def jobs():
         doc_of = {p.job_id: d.id for d in store.list() for p in d.prints}
-        listed = [asdict(j) | {"doc_id": doc_of.get(j.id)} for j in queue_jobs(cups_conn())]
+        listed = [
+            asdict(j) | {"doc_id": doc_of.get(j.id), "reason_labels": [lab[0] for r in j.reasons if (lab := printing.reason_label(r))]}
+            for j in queue_jobs(cups_conn())
+        ]
         active = [j for j in listed if j["state"] in ACTIVE_JOB_STATES]
         recent = [j for j in listed if j["state"] not in ACTIVE_JOB_STATES][:RECENT_JOBS]
         return {"active": active, "recent": recent}

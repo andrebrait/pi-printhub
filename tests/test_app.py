@@ -700,7 +700,8 @@ def test_jobs_lists_external_jobs_and_links_web_app_jobs(client, store, fake_cup
     job_id = client.post(f"/api/docs/{doc.id}/print", json=PRINT_OPTS).json()["job_id"]
     fake_cups.jobs = {
         job_id: {"job-printer-uri": OURS, "job-state": 5, "job-name": "Scan"},
-        900: {"job-printer-uri": OURS, "job-state": 3, "job-name": "boarding pass", "job-originating-user-name": "phone"},
+        900: {"job-printer-uri": OURS, "job-state": 3, "job-name": "boarding pass", "job-originating-user-name": "phone",
+              "job-state-reasons": ["job-queued", "printer-stopped"]},
         **{n: {"job-printer-uri": OURS, "job-state": 9} for n in range(1, 26)},
         950: {"job-printer-uri": "ipp://localhost/printers/Other", "job-state": 5},
     }
@@ -709,6 +710,7 @@ def test_jobs_lists_external_jobs_and_links_web_app_jobs(client, store, fake_cup
     assert set(active) == {job_id, 900}
     assert active[job_id]["doc_id"] == doc.id
     assert (active[900]["doc_id"], active[900]["name"], active[900]["user"]) == (None, "boarding pass", "phone")
+    assert active[900]["reason_labels"] == ["Printer stopped"]
     assert [j["id"] for j in jobs["recent"]] == list(range(25, 5, -1))
 
 

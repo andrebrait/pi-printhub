@@ -3,7 +3,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isLoadableMedia, mediaLabel } from "./layout.js";
-import { reasonLabels } from "./api.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
 const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [],
@@ -123,33 +122,4 @@ test("a failed rename keeps the page and shows the error instead of following th
   assert.deepEqual(went, []);
   assert.equal(document.getElementById("edit-error").textContent, "Title too long");
   assert.equal(document.getElementById("edit-error").hidden, false);
-});
-
-test("one printer banner updater serves all authenticated screens", async () => {
-  for (const page of ["index", "print", "scan"]) {
-    const html = readFileSync(new URL(`../${page}.html`, import.meta.url), "utf8");
-    assert.match(html, /src="\/js\/printer-banner.js"/);
-    assert.match(html, /id="printer-banner"/);
-  }
-  const document = dom();
-  let refresh;
-  let state = { state: "stopped", state_reasons: ["offline"] };
-  new Function("document", "apiFetch", "errorMessage", "reasonLabels", "setInterval", source("printer-banner.js"))(
-    document, async () => ({ ok: true, json: async () => state }), async () => "unavailable", reasonLabels,
-    (fn) => { refresh = fn; },
-  );
-  const banner = document.getElementById("printer-banner");
-  await refresh();
-  assert.equal(banner.hidden, false);
-  assert.equal(banner.textContent, "Printer stopped: Offline");
-  state = { state: "idle", state_reasons: ["marker-supply-low-warning", "media-jam-error"] };
-  await refresh();
-  assert.equal(banner.textContent, "Printer: Ink low, Paper jam");
-  // CUPS bookkeeping while a job runs is not a printer problem.
-  state = { state: "processing", state_reasons: ["cups-waiting-for-job-completed"] };
-  await refresh();
-  assert.equal(banner.hidden, true);
-  state = { state: "idle", state_reasons: [] };
-  await refresh();
-  assert.equal(banner.hidden, true);
 });
