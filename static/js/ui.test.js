@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { isLoadableMedia, mediaLabel } from "./layout.js";
+import { isLoadableMedia, mediaLabel, mediaSizeMm, sheetLayout } from "./layout.js";
 import { snapCrop } from "./crop.js";
 import { fakeDocument } from "./fake-dom.test-util.js";
 
@@ -223,6 +223,21 @@ test("print separates advanced options without changing supported values or defa
   assert.deepEqual(controls["orientation-requested"].children.map((option) => option.value), ["auto", "3", "4"]);
 });
 
+
+test("the preview turns a landscape page on Auto and keeps it upright on Portrait", () => {
+  const document = fakeDocument();
+  const preview = new Function("document", "location", "mediaLabel", "isLoadableMedia", "mediaSizeMm", "sheetLayout", "Image",
+    `${source("print.js").replace(/main\(\);\s*$/, "")}
+      return (orientation) => {
+        printer = { defaults: {}, margins: {} };
+        controls["orientation-requested"] = { value: orientation };
+        pages = [{ pt: [842, 595], url: "p.png" }];
+        return sheetEl(1, false);
+      };`)(document, { search: "" }, mediaLabel, isLoadableMedia, mediaSizeMm, sheetLayout, class {});
+  const frame = (sheet) => sheet.children[0].children[0].children[0].className; // sheet > printable > page > frame
+  assert.equal(frame(preview("auto")), "turn");
+  assert.equal(frame(preview("3")), "upright");
+});
 
 test("keyboard cropping moves and resizes within the image on its existing MCU grid", () => {
   const document = dom();

@@ -76,12 +76,14 @@ def test_unoffered_option_is_not_validated_or_submitted(tmp_path):
             self.options = options
             return 1
 
-    info = replace(INFO, supported={**INFO.supported, "sides": []})
-    opts = replace(OPTS, sides="two-sided-long-edge")
+    info = replace(INFO, supported={**INFO.supported, "sides": [], "orientation-requested": []})
+    opts = replace(OPTS, sides="two-sided-long-edge", orientation_requested="4")
     printing.validate(opts, info)
     conn = FakeConn()
     printing.submit(conn, "q", tmp_path / "x.pdf", "t", opts, info)
     assert "sides" not in conn.options
+    # without an orientation to keep, CUPS must still be free to turn the page to fit
+    assert "orientation-requested" not in conn.options and "pdfAutoRotate" not in conn.options
     assert conn.options["media"] == "iso_a4_210x297mm"
     assert conn.options["print-scaling"] == "fit"
 

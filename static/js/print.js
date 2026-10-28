@@ -85,6 +85,7 @@ function buildControls() {
     select.id = `opt-${c.key}`;
     select.className = "form-select";
     for (const v of values) select.add(new Option(c.format?.(v) ?? c.labels[v] ?? v, v));
+    // Auto ignores the printer's orientation default: an explicit one would stop CUPS fitting each page's shape.
     const preset = c.key === "print-scaling" && doc.kind === "scan" ? "none" : c.key === "orientation-requested" ? "auto" : printer.defaults[c.key];
     select.value = values.includes(preset) ? preset : values.includes(FALLBACK[c.key]) ? FALLBACK[c.key] : values[0];
     select.addEventListener("change", render);

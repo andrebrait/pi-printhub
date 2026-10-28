@@ -161,9 +161,9 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
 def validate(opts: PrintOptions, info: PrinterInfo) -> None:
     for key in OPTION_KEYS:
         value = getattr(opts, key.replace("-", "_"))
-        allowed = _allowed(key, info)
         if key == "orientation-requested" and value == "auto":
             continue
+        allowed = _allowed(key, info)
         if allowed and value not in allowed:
             raise ValueError(f"{key.replace('-', '_')} {value!r} is not supported by the printer")
     if not 1 <= opts.copies <= 99:
@@ -188,7 +188,7 @@ def submit(
     # print the same sheet as the other. Auto leaves that turning on; Portrait and Landscape switch it off.
     if opts.orientation_requested == "auto":
         options.pop("orientation-requested", None)
-    else:
+    elif "orientation-requested" in options:
         options["pdfAutoRotate"] = "false"
     options["copies"] = str(opts.copies)
     if opts.page_ranges is not None:
