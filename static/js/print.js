@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { apiFetch, errorMessage, reasonLabels } from "./api.js";
+import { apiFetch, errorMessage } from "./api.js";
+import { showToast } from "./shell.js";
 import { isLoadableMedia, mediaLabel, mediaSizeMm, sheetLayout, parsePageRanges, sheetsFor } from "./layout.js";
 
 const $ = (id) => document.getElementById(id);
@@ -38,17 +39,6 @@ const FALLBACK = {
   "print-scaling": "fit",
 };
 const SCALING_ALL = ["auto", "auto-fit", "fit", "fill", "none"];
-const JOB_LABELS = {
-  pending: "Queued",
-  held: "Held",
-  processing: "Printing",
-  stopped: "Stopped",
-  canceled: "Canceled",
-  aborted: "Aborted",
-  completed: "Completed",
-};
-const TERMINAL = new Set(["completed", "canceled", "aborted"]);
-
 let printer, doc, pages; // pages: [{url, ptSize, rotation, turned, full, crop}]
 const controls = {}; // key -> <select> | null
 
@@ -90,13 +80,18 @@ function buildControls() {
     }
     const select = document.createElement("select");
     select.id = `opt-${c.key}`;
+    select.className = "form-select";
     for (const v of values) select.add(new Option(c.format?.(v) ?? c.labels[v] ?? v, v));
     const preset = c.key === "print-scaling" && doc.kind === "scan" ? "none" : printer.defaults[c.key];
     select.value = values.includes(preset) ? preset : values.includes(FALLBACK[c.key]) ? FALLBACK[c.key] : values[0];
     select.addEventListener("change", render);
     const label = document.createElement("label");
-    label.append(c.label, select);
-    host.append(label);
+    label.className = "form-label";
+    label.htmlFor = select.id;
+    label.textContent = c.label;
+    const field = document.createElement("div");
+    field.append(label, select);
+    host.append(field);
     controls[c.key] = select;
   }
 }
@@ -195,62 +190,6 @@ function render() {
   });
 }
 
-function jobCard(jobId) {
-  const card = document.createElement("div");
-  card.className = "card job";
-  // The live region is in the page while still empty: screen readers announce text added to a region they already know.
-  const live = document.createElement("div");
-  live.setAttribute("role", "status");
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.textContent = "Cancel";
-  card.append(live, cancel);
-  $("jobs").prepend(card);
-  const title = document.createElement("strong");
-  title.textContent = `Job ${jobId}: `;
-  const state = document.createElement("span");
-  state.className = "state";
-  const detail = document.createElement("p");
-  live.append(title, state, detail);
-
-  let timer;
-  const stop = () => {
-    clearTimeout(timer);
-    cancel.hidden = true;
-  };
-  async function poll() {
-    try {
-      const res = await apiFetch(`/api/jobs/${jobId}`);
-      if (res.status === 404) {
-        state.textContent = "Finished";
-        detail.textContent = "The printer no longer lists this job.";
-        return stop();
-      }
-      if (!res.ok) throw new Error(await errorMessage(res));
-      const { job, printer: p } = await res.json();
-      state.className = `state ${job.state}`;
-      state.textContent = JOB_LABELS[job.state] ?? job.state;
-      const reasons = reasonLabels([...job.reasons, ...p.state_reasons]);
-      detail.textContent = reasons.length ? `Printer: ${reasons.join(", ")}` : "";
-      if (TERMINAL.has(job.state)) return stop();
-    } catch (e) {
-      detail.textContent = `Status unavailable: ${e.message}`;
-    }
-    timer = setTimeout(poll, 2000);
-  }
-  cancel.addEventListener("click", async () => {
-    cancel.disabled = true;
-    try {
-      const res = await apiFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
-      if (!res.ok) throw new Error(await errorMessage(res));
-    } catch (e) {
-      detail.textContent = `Cancel failed: ${e.message}`;
-    }
-    cancel.disabled = false;
-  });
-  poll();
-}
-
 async function print(e) {
   e.preventDefault();
   const button = $("print");
@@ -271,7 +210,8 @@ async function print(e) {
       },
     });
     if (!res.ok) throw new Error(await errorMessage(res));
-    jobCard((await res.json()).job_id);
+    const { job_id: jobId } = await res.json();
+    showToast(`Job ${jobId} sent to the printer`, { href: `/jobs.html#job-${jobId}` });
   } catch (err) {
     show($("print-error"), err.message);
   }

@@ -11,38 +11,41 @@
 </head>
 <body>
 <header id="shell"></header>
-<main>
-  <header class="bar">
-    <h1 id="title">Print</h1>
-    <a href="/">Home</a>
-  </header>
+<main class="container-lg pb-4">
+  <h1 id="title" class="h3 mb-3 text-break">Print</h1>
+  <p id="load-error" class="alert alert-danger error" role="alert" hidden></p>
 
-  <p id="load-error" class="error" role="alert" hidden></p>
-
-  <section id="convert" class="card" hidden>
-    <p id="convert-message" class="error" role="alert"></p>
-    <button id="retry" type="button">Retry</button>
+  <section id="convert" class="card mb-3" hidden>
+    <div class="card-body">
+      <p id="convert-message" class="error" role="alert"></p>
+      <button id="retry" class="btn btn-outline-primary" type="button">Retry</button>
+    </div>
   </section>
 
-  <div id="layout" class="print-layout" hidden>
-    <section aria-label="Preview">
+  <div id="layout" class="row g-3" hidden>
+    <section class="col-lg-8 min-w-0" aria-label="Preview">
       <div id="preview" class="preview"></div>
     </section>
-    <div class="side">
-      <form id="options" class="card options">
-        <div id="controls" class="options"></div>
-        <label>Copies
-          <input id="copies" type="number" inputmode="numeric" min="1" max="99" step="1" value="1" required aria-describedby="copies-error">
-        </label>
-        <small id="copies-error" class="error" hidden></small>
-        <label>Pages
-          <input id="page-ranges" type="text" placeholder="All, or e.g. 1-3,5" autocomplete="off" aria-describedby="range-error">
-        </label>
-        <small id="range-error" class="error" hidden></small>
-        <button id="print" class="primary" type="submit">Print</button>
-        <p id="print-error" class="error" role="alert" hidden></p>
-      </form>
-      <div id="jobs"></div>
+    <div class="col-lg-4">
+      <div class="sticky-side">
+        <form id="options" class="card">
+          <div class="card-body d-grid gap-3">
+            <div id="controls" class="d-grid gap-3"></div>
+            <div>
+              <label class="form-label" for="copies">Copies</label>
+              <input id="copies" class="form-control" type="number" inputmode="numeric" min="1" max="99" step="1" value="1" required aria-describedby="copies-error">
+              <small id="copies-error" class="error" hidden></small>
+            </div>
+            <div>
+              <label class="form-label" for="page-ranges">Pages</label>
+              <input id="page-ranges" class="form-control" type="text" placeholder="All, or e.g. 1-3,5" autocomplete="off" aria-describedby="range-error">
+              <small id="range-error" class="error" hidden></small>
+            </div>
+            <button id="print" class="btn btn-primary" type="submit">Print</button>
+            <p id="print-error" class="alert alert-danger error mb-0" role="alert" hidden></p>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 </main>

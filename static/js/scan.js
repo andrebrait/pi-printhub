@@ -199,6 +199,7 @@ function pageItem(page, i, busy) {
   const button = (action, text, label, onClick) => {
     const b = document.createElement("button");
     b.type = "button";
+    b.className = "btn btn-sm btn-outline-secondary";
     b.textContent = text;
     b.setAttribute("aria-label", `${label} page ${n}`);
     b.dataset.focusKey = `${page.id}:${action}`;
@@ -345,7 +346,7 @@ $("email").addEventListener("submit", async (e) => {
   const status = $("email-status");
   const to = $("to").value.split(",").map((a) => a.trim()).filter(Boolean);
   $("send").disabled = true;
-  status.className = "";
+  status.className = "mb-0";
   show(status, "Sending…");
   try {
     const res = await apiFetch(`${docUrl()}/email`, {
@@ -356,7 +357,7 @@ $("email").addEventListener("submit", async (e) => {
     show(status, `Sent to ${to.join(", ")}`);
     loadRecipients();
   } catch (err) {
-    status.className = "error";
+    status.className = "mb-0 error";
     show(status, err.message);
   }
   $("send").disabled = false;

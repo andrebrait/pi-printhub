@@ -123,3 +123,21 @@ test("a failed rename keeps the page and shows the error instead of following th
   assert.equal(document.getElementById("edit-error").textContent, "Title too long");
   assert.equal(document.getElementById("edit-error").hidden, false);
 });
+
+test("printing shows a toast linking to the job and adds nothing under the options", async () => {
+  const document = dom();
+  const toasts = [];
+  const created = [];
+  document.createElement = (tag) => (created.push(tag), element());
+  const env = new Function("document", "location", "apiFetch", "errorMessage", "showToast", "mediaLabel", "isLoadableMedia",
+    `${source("print.js").replace(/main\(\);\s*$/, "")}
+    return { print, setPrinter: (p) => { printer = p; } };`)(
+      document, { search: "?doc=x" }, async () => ({ ok: true, json: async () => ({ job_id: 42 }) }), async () => "",
+      (message, opts) => toasts.push({ message, ...opts }), mediaLabel, isLoadableMedia,
+    );
+  env.setPrinter({ defaults: {} });
+  await env.print({ preventDefault() {} });
+  assert.deepEqual(toasts, [{ message: "Job 42 sent to the printer", href: "/jobs.html#job-42" }]);
+  assert.deepEqual(created, []);
+  assert.equal(document.getElementById("print-error").hidden, true);
+});

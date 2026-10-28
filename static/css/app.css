@@ -1,126 +1,48 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
+/* Bootstrap provides the base, forms, buttons and cards; this file holds what is particular to Print Hub. */
 :root {
-  color-scheme: light dark;
-  --bg: #f6f7f9;
-  --surface: #fff;
-  --text: #1b1f24;
-  --muted: #5b6570;
-  --border: #cfd5dc;
-  --accent: #0b5fd6;
-  --accent-text: #fff;
-  --danger: #b3261e;
-  --warn-bg: #fff4d6;
-  --ok: #17633a;
   --sheet: #fff;
   --sheet-shadow: rgb(0 0 0 / 0.25);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171a;
-    --surface: #1e2327;
-    --text: #e8ebee;
-    --muted: #9aa5b1;
-    --border: #3a434c;
-    --accent: #6ea8ff;
-    --accent-text: #0a1320;
-    --danger: #ff8a80;
-    --warn-bg: #4a3b10;
-    --ok: #6fd69b;
-    --sheet-shadow: rgb(0 0 0 / 0.6);
-  }
-}
+[data-bs-theme="dark"] { --sheet-shadow: rgb(0 0 0 / 0.6); }
 
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 1rem/1.45 system-ui, sans-serif;
-}
-main { max-width: 64rem; margin: 0 auto; padding: 1rem; }
-h1 { font-size: 1.4rem; margin: 0; }
-h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
-a { color: var(--accent); }
-
-header.bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-header.bar a.brand { color: inherit; text-decoration: none; }
-
-button, .button, input, select {
-  font: inherit;
-  min-height: 2.75rem; /* touch target */
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--surface);
-  color: var(--text);
-  padding: 0.4rem 0.8rem;
-}
-button, .button { cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
-button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-
-.visually-hidden {
-  position: absolute; width: 1px; height: 1px; overflow: hidden;
-  clip-path: inset(50%); white-space: nowrap;
-}
-
-.banner { background: var(--warn-bg); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.6rem 0.9rem; margin-bottom: 1rem; }
-.error { color: var(--danger); overflow-wrap: anywhere; } /* paths and URLs in messages have no spaces */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; }
-p:empty { display: none; }
-#convert-message { white-space: pre-line; }
 [hidden] { display: none !important; }
+p:empty { display: none; }
+/* Messages often carry paths and URLs without spaces. */
+.error { color: var(--bs-danger-text-emphasis); overflow-wrap: anywhere; }
+#convert-message { white-space: pre-line; }
+/* Touch targets on phones. */
+.btn:not(.btn-sm):not(.btn-close):not(.nav-link), .form-control, .form-select { min-height: 2.75rem; }
+
+/* Top bar */
+.navbar .navbar-brand { flex: none; }
+/* Status and bell share the brand's row on phones; the pill gives way first. */
+.navbar .shell-tools { flex: 1 1 0; min-width: 0; justify-content: flex-end; }
+.status-pill { min-width: 0; max-width: 20rem; overflow: hidden; }
 
 /* Home */
-.actions { display: grid; gap: 0.75rem; }
 .drop {
-  display: block; text-align: center; padding: 2rem 1rem;
-  border: 2px dashed var(--border); border-radius: 0.75rem; cursor: pointer;
+  display: block; text-align: center; padding: 2rem 1rem; cursor: pointer;
+  border: 2px dashed var(--bs-border-color); border-radius: var(--bs-border-radius-lg);
 }
-.drop.over, .drop:focus-within { border-color: var(--accent); background: var(--surface); }
-progress { width: 100%; height: 1rem; margin-top: 0.75rem; }
-ul.docs { list-style: none; margin: 0; padding: 0; }
-ul.docs li a {
-  display: flex; justify-content: space-between; gap: 1rem; min-height: 2.75rem; align-items: center;
-  padding: 0.4rem 0; border-bottom: 1px solid var(--border); text-decoration: none; color: inherit;
-}
-ul.docs .meta { color: var(--muted); font-size: 0.9rem; white-space: nowrap; }
+.drop.over, .drop:focus-within { border-color: var(--bs-primary); background: var(--bs-tertiary-bg); }
 
-/* Login */
-form.stack { display: grid; gap: 0.75rem; max-width: 24rem; }
-form.stack label { display: grid; gap: 0.25rem; font-weight: 600; grid-template-columns: minmax(0, 1fr); }
-
-/* Print page */
-.print-layout, .scan-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
-/* minmax(0, 1fr): a select is as wide as its longest option, which must not widen the column past the card. */
-.options { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr); }
-.options label { display: grid; gap: 0.25rem; font-weight: 600; grid-template-columns: minmax(0, 1fr); }
-.options input:invalid { border-color: var(--danger); }
+/* Print page: the sheet preview */
+.min-w-0 { min-width: 0; }
 /* Phones: one swipeable row keeps the options and Print button near the top. Auto margins centre a short row
    and let a long one scroll from its first sheet. */
 .preview { display: flex; flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x mandatory; gap: 1.25rem; padding: 0.25rem 0.25rem 0.75rem; }
 .preview > :first-child { margin-left: auto; }
 .preview > :last-child { margin-right: auto; }
-figure.sheet-group { flex: none; scroll-snap-align: center; }
-figure.sheet-group { margin: 0; display: grid; gap: 0.4rem; justify-items: center; }
-figure.sheet-group figcaption { color: var(--muted); font-size: 0.9rem; }
+figure.sheet-group { flex: none; scroll-snap-align: center; margin: 0; display: grid; gap: 0.4rem; justify-items: center; }
+figure.sheet-group figcaption { color: var(--bs-secondary-color); font-size: 0.9rem; }
 .sides { display: flex; gap: 0.75rem; align-items: flex-start; }
-.sheet {
-  position: relative; background: var(--sheet); width: min(42vw, 11rem);
-  box-shadow: 0 1px 6px var(--sheet-shadow);
-}
-@media (min-width: 52rem) {
-  .print-layout, .scan-layout { grid-template-columns: minmax(0, 1fr) 22rem; align-items: start; }
+.sheet { position: relative; background: var(--sheet); width: min(42vw, 11rem); box-shadow: 0 1px 6px var(--sheet-shadow); }
+@media (min-width: 992px) {
   .preview { flex-wrap: wrap; justify-content: center; overflow-x: visible; scroll-snap-type: none; }
   .preview > :first-child, .preview > :last-child { margin-inline: 0; }
   /* The options stay in view; padding keeps focus rings and card shadows clear of the scroll clip. */
-  .print-layout .side {
+  .sticky-side {
     position: sticky; top: 0.6rem; padding: 0.4rem; margin: -0.4rem;
     max-height: calc(100vh - 1.2rem); max-height: calc(100dvh - 1.2rem); overflow-y: auto;
   }
@@ -134,39 +56,26 @@ figure.sheet-group figcaption { color: var(--muted); font-size: 0.9rem; }
 .rot img { position: absolute; left: 50%; top: 50%; width: 100cqw; height: 100cqh; transform: translate(-50%, -50%) rotate(var(--rot, 0deg)); }
 .rot.turned img { width: 100cqh; height: 100cqw; }
 .sheet.gray img { filter: grayscale(1); }
-.job .state { font-weight: 700; }
-.job .state.completed { color: var(--ok); }
-.job .state.aborted, .job .state.canceled { color: var(--danger); }
-.row { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
 
-/* Scan page */
-.scan-layout h2 { margin-top: 0; }
-#edit-toggle { margin-bottom: 1rem; }
-.settings { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }
-.settings label { display: grid; gap: 0.25rem; font-weight: 600; grid-template-columns: minmax(0, 1fr); }
-fieldset { border: 0; margin: 0; padding: 0; }
-legend { font-weight: 600; padding: 0; margin-bottom: 0.25rem; }
-.options label.choice { display: flex; align-items: center; gap: 0.4rem; font-weight: normal; min-height: 2.75rem; }
-.choice input { min-height: auto; }
+/* Scan page: page thumbnails and crop */
 ul.pages {
   list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem;
   grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); align-items: start;
 }
-.scan-page { margin: 0; padding: 0.6rem; display: grid; gap: 0.4rem; }
-.scan-page .page-no { margin: 0; color: var(--muted); font-size: 0.9rem; text-align: center; }
+.scan-page { padding: 0.6rem; display: grid; gap: 0.4rem; }
+.scan-page .page-no { margin: 0; color: var(--bs-secondary-color); font-size: 0.9rem; text-align: center; }
 .thumb { position: relative; overflow: hidden; background: var(--sheet); box-shadow: 0 1px 4px var(--sheet-shadow); cursor: grab; touch-action: manipulation; }
-.thumb .crop-mark { position: absolute; outline: 2px solid var(--accent); box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.55); }
-.scan-page .tools { display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: center; }
-.scan-page .tools button { padding: 0.3rem 0.6rem; min-width: 2.75rem; }
 .thumb:not([tabindex]) { cursor: default; } /* view mode: nothing to drag */
+.thumb .crop-mark { position: absolute; outline: 2px solid var(--bs-primary); box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.55); }
+.scan-page .tools { display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: center; }
+.scan-page .tools .btn { min-width: 2.75rem; min-height: 2.25rem; }
 .sortable-ghost { opacity: 0.4; }
-.crop-dialog { width: min(96vw, 60rem); border: 1px solid var(--border); border-radius: 0.75rem; background: var(--surface); color: var(--text); }
+.crop-dialog {
+  width: min(96vw, 60rem); padding: 1rem; color: var(--bs-body-color); background: var(--bs-body-bg);
+  border: var(--bs-border-width) solid var(--bs-border-color); border-radius: var(--bs-border-radius-lg);
+}
 .crop-dialog::backdrop { background: rgb(0 0 0 / 0.6); }
-.crop-dialog h2 { margin-top: 0; }
-.crop-dialog label { display: grid; gap: 0.25rem; font-weight: 600; max-width: 14rem; margin-bottom: 0.75rem; }
 .crop-stage { height: min(65vh, 40rem); margin-bottom: 0.75rem; }
 .crop-stage img { display: block; max-width: 100%; }
-.navbar .navbar-brand { flex: none; }
-/* Status and bell share the brand's row on phones; the pill gives way first. */
-.navbar .shell-tools { flex: 1 1 0; min-width: 0; justify-content: flex-end; }
-.status-pill { min-width: 0; max-width: 20rem; overflow: hidden; }
+.form-control[aria-invalid="true"], .form-control:invalid { border-color: var(--bs-form-invalid-border-color); }
+.justify-self-start { justify-self: start; }

@@ -5,18 +5,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Log in – Print Hub</title>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="/css/app.css">
   <link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
-<main>
-  <header class="bar"><h1>Print Hub</h1></header>
-  <form id="form" class="stack">
-    <label>Password
-      <input id="password" type="password" autocomplete="current-password" required autofocus>
-    </label>
-    <button class="primary" type="submit">Log in</button>
-    <p id="status" class="error" role="alert"></p>
+<main class="container py-5" style="max-width: 24rem">
+  <h1 class="h3 mb-4">Print Hub</h1>
+  <form id="form" class="d-grid gap-3">
+    <div>
+      <label class="form-label" for="password">Password</label>
+      <input id="password" class="form-control" type="password" autocomplete="current-password" required autofocus>
+    </div>
+    <button class="btn btn-primary" type="submit">Log in</button>
+    <p id="status" class="error mb-0" role="alert"></p>
     <a id="continue" href="/" hidden>Continue without the shared file</a>
   </form>
 </main>
@@ -61,6 +63,7 @@ document.getElementById("form").addEventListener("submit", async (e) => {
   }
 });
 </script>
+<script type="module" src="/js/shell.js"></script>
 <script type="module" src="/js/sw-register.js"></script>
 </body>
 </html>

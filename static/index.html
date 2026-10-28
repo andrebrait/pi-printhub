@@ -11,61 +11,63 @@
 </head>
 <body>
 <header id="shell"></header>
-<main>
-  <header class="bar">
-    <h1>Print Hub</h1>
-    <button id="logout" type="button">Log out</button>
-  </header>
-
-  <section class="actions" aria-labelledby="print-heading">
-    <h2 id="print-heading" class="visually-hidden">Start</h2>
-    <label class="drop" id="drop">
-      <strong>Print a file</strong><br>
-      Drop a file here or tap to choose one
-      <input id="file" class="visually-hidden" type="file">
-    </label>
-    <progress id="progress" max="1" value="0" aria-label="Upload progress" hidden></progress>
-    <p id="upload-status" role="status"></p>
-    <a class="button primary" href="/scan.html">New scan</a>
+<main class="container-lg pb-4">
+  <h1 class="visually-hidden">Print Hub</h1>
+  <section class="row g-3 mb-4" aria-labelledby="start-heading">
+    <h2 id="start-heading" class="visually-hidden">Start</h2>
+    <div class="col-md-8">
+      <label class="drop h-100 d-flex flex-column justify-content-center" id="drop">
+        <span class="fs-5 fw-semibold">Print a file</span>
+        <span class="text-body-secondary">Drop a file here or tap to choose one</span>
+        <input id="file" class="visually-hidden" type="file">
+      </label>
+      <progress id="progress" class="w-100 mt-2" max="1" value="0" aria-label="Upload progress" hidden></progress>
+      <p id="upload-status" class="mt-2 mb-0" role="status"></p>
+    </div>
+    <div class="col-md-4 d-grid">
+      <a class="btn btn-primary btn-lg d-flex align-items-center justify-content-center" href="/scan.html">New scan</a>
+    </div>
   </section>
 
-  <section aria-labelledby="recent-prints">
-    <h2 id="recent-prints">Recent prints</h2>
-    <ul id="prints" class="docs"></ul>
-  </section>
-  <section aria-labelledby="recent-scans">
-    <h2 id="recent-scans">Recent scans</h2>
-    <ul id="scans" class="docs"></ul>
-  </section>
+  <div class="row g-4">
+    <section class="col-md-6" aria-labelledby="recent-prints">
+      <h2 id="recent-prints" class="h5">Recent prints</h2>
+      <div id="prints" class="list-group"></div>
+    </section>
+    <section class="col-md-6" aria-labelledby="recent-scans">
+      <h2 id="recent-scans" class="h5">Recent scans</h2>
+      <div id="scans" class="list-group"></div>
+    </section>
+  </div>
 </main>
 
 <script type="module">
 // SPDX-License-Identifier: AGPL-3.0-only
-import { apiFetch, errorMessage, uploadFile } from "/js/api.js";
+import { apiFetch, uploadFile } from "/js/api.js";
 
 const $ = (id) => document.getElementById(id);
-
 
 function fill(list, docs, page) {
   list.replaceChildren();
   if (!docs.length) {
-    const li = document.createElement("li");
-    li.textContent = "Nothing yet";
-    list.append(li);
+    const empty = document.createElement("div");
+    empty.className = "list-group-item text-body-secondary";
+    empty.textContent = "Nothing yet";
+    list.append(empty);
   }
   for (const d of docs.slice(0, 10)) {
-    const li = document.createElement("li");
     const a = document.createElement("a");
+    a.className = "list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3";
     a.href = `/${page}.html?doc=${encodeURIComponent(d.id)}`;
     const title = document.createElement("span");
+    title.className = "text-break";
     title.textContent = d.title;
-    const meta = document.createElement("span");
-    meta.className = "meta";
+    const meta = document.createElement("small");
+    meta.className = "text-body-secondary text-end";
     const when = new Date(d.modified).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
     meta.textContent = `${d.page_count} page${d.page_count === 1 ? "" : "s"} · ${when}`;
     a.append(title, meta);
-    li.append(a);
-    list.append(li);
+    list.append(a);
   }
 }
 
@@ -79,7 +81,7 @@ async function refreshDocs() {
 
 async function upload(file) {
   const status = $("upload-status"), bar = $("progress");
-  status.className = "";
+  status.className = "mt-2 mb-0";
   status.textContent = `Uploading ${file.name}…`;
   bar.value = 0;
   bar.hidden = false;
@@ -98,10 +100,10 @@ async function upload(file) {
       location.href = `/print.html?doc=${encodeURIComponent(body.doc_id)}&error=${encodeURIComponent(message)}`;
       return;
     }
-    status.className = "error";
+    status.className = "mt-2 mb-0 error";
     status.textContent = message;
   } catch (e) {
-    status.className = "error";
+    status.className = "mt-2 mb-0 error";
     status.textContent = e.message;
   }
   bar.hidden = true;
@@ -122,10 +124,6 @@ drop.addEventListener("drop", (e) => {
   e.preventDefault();
   drop.classList.remove("over");
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
-});
-$("logout").addEventListener("click", async () => {
-  await apiFetch("/api/logout", { method: "POST" });
-  location.href = "/login.html";
 });
 
 refreshDocs();
