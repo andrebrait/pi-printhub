@@ -67,6 +67,8 @@ async function scan(source) {
   const settings = { source, resolution: Number($("resolution").value), mode: $("mode").value, area: $("area").value };
   let res;
   try {
+    // A scan locks the document, so edits still saving would fail with "busy": they go first.
+    if (!(await settleEdits())) throw new Error("Not scanned: the latest change could not be saved.");
     res = await apiFetch("/api/scans", { method: "POST", body: { settings, doc_id: docId } });
     if (!res.ok) throw new Error(await errorMessage(res));
   } catch (e) {
@@ -355,14 +357,24 @@ function saveTitle() {
 }
 $("title").addEventListener("blur", saveTitle);
 
-// Exports and print read the stored title, so a rename still being typed or saved goes first.
+/**
+ * Save a rename still being typed and wait for every queued edit. False when any of them failed: output that reads
+ * the stored pages (download, print, email) or another scan (which locks the document) must not go ahead.
+ */
+async function settleEdits() {
+  const failures = editFailures;
+  await saveTitle();
+  return editFailures === failures;
+}
+
+// Exports and print read the stored pages and title, so edits still saving go first.
 for (const id of ["download-pdf", "download-jpeg", "print"]) {
   $(id).addEventListener("click", async (e) => {
     if (e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; // new tab or window: browser default
     e.preventDefault();
     const href = e.currentTarget.href;
-    // A failed rename keeps the page, so its error stays visible.
-    if (await saveTitle()) location.assign(href);
+    // A failed edit keeps the page, so its error stays visible.
+    if (await settleEdits()) location.assign(href);
   });
 }
 
@@ -374,10 +386,7 @@ $("email").addEventListener("submit", async (e) => {
   status.className = "mb-0";
   show(status, "Sending…");
   try {
-    // The export reads the stored pages: edits and a rename still saving go first, and a failed one stops the send.
-    const failures = editFailures;
-    await saveTitle();
-    if (editFailures > failures) throw new Error("Not sent: the latest change could not be saved.");
+    if (!(await settleEdits())) throw new Error("Not sent: the latest change could not be saved.");
     const res = await apiFetch(`${docUrl()}/email`, {
       method: "POST",
       body: { to, subject: $("subject").value.trim() || doc.title, format: e.target.elements.format.value },

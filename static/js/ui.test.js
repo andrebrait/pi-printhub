@@ -270,3 +270,60 @@ test("keyboard cropping waits for the cropper, keeps at least one block and repo
   press("ArrowDown", true); // the locked ratio ignores a height-only change
   assert.match(document.getElementById("crop-status").textContent, /16 by 16/);
 });
+
+function scanEnv({ editOk }) {
+  const document = dom();
+  document.createElement = fakeDocument().createElement; // a failed edit redraws the pages
+  const order = [];
+  let release;
+  const fetch = async (url, opts) => {
+    if (opts?.method === "PATCH") {
+      order.push("patch");
+      await new Promise((r) => (release = r));
+      return editOk ? { ok: true, json: async () => ({ id: "x", title: "Scan", pages: [], scanning: false }) } : { ok: false };
+    }
+    if (url === "/api/scans") {
+      order.push("scan");
+      return { ok: true, json: async () => ({ doc_id: "x" }) };
+    }
+    return { ok: true, json: async () => ({ id: "x", title: "Scan", pages: [], scanning: false }) };
+  };
+  const location = { search: "?doc=x", assign(url) { order.push(`go ${url}`); } };
+  const env = new Function("document", "location", "apiFetch", "errorMessage", "Sortable", "Option", "Image", "setTimeout",
+    `${source("scan.js").replace(/main\(\);\s*$/, "")} return { setDoc: (d) => { doc = d; }, rotate, scan };`)(
+      document, location, fetch, async () => "Page edit failed", { create: () => ({ option() {} }) }, class {}, class {}, () => {},
+    );
+  const page = { id: "p1", rotation: 0, crop: null, page_info: { width: 10, height: 20, mcu: 8 } };
+  env.setDoc({ id: "x", title: "Scan", pages: [page], scanning: false });
+  document.getElementById("title").value = "Scan"; // unchanged title: only the page edit is pending
+  return { document, order, env, release: () => release() };
+}
+
+test("an output link does not follow when a queued page edit fails", async () => {
+  const { document, order, env, release } = scanEnv({ editOk: false });
+  env.rotate("p1", 90);
+  const link = document.getElementById("print");
+  link.href = "/print.html?doc=x";
+  const clicked = link.listeners.click({ preventDefault() {}, currentTarget: link });
+  await new Promise((r) => setTimeout(r, 0));
+  release();
+  await clicked;
+  assert.deepEqual(order, ["patch"]);
+});
+
+test("another scan waits for queued page edits and does not start when one fails", async () => {
+  for (const editOk of [true, false]) {
+    const { document, order, env, release } = scanEnv({ editOk });
+    env.rotate("p1", 90);
+    const started = env.scan("flatbed");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(order, ["patch"], "the scan waits for the edit");
+    release();
+    await started;
+    if (editOk) assert.deepEqual(order, ["patch", "scan"]);
+    else {
+      assert.deepEqual(order, ["patch"]);
+      assert.match(document.getElementById("scan-error").textContent, /not scanned/i);
+    }
+  }
+});
