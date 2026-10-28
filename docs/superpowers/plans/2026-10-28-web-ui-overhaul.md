@@ -108,12 +108,12 @@
   - `test_cancel_refuses_another_queues_job`: job on `/printers/Other` → 404, not in `fake_cups.cancelled`; job on our queue → 204.
   - `test_notifications_page_and_mark_read`: 3 events appended to the app's log → list newest first; `read` with `ids` then `up_to` updates `unread`; empty body → 422.
   - `test_conversion_and_scan_failures_become_events`: the existing failing-conversion fixture → one `error` `conversion` event with `doc_id`; a scan failing via `fake_scanimage` → one `scan` event.
-  - Delete the `GET /api/jobs/{job_id}` assertions from `test_print_and_job_status` (endpoint removed).
+  - Delete the `GET /api/jobs/{job_id}` assertions from `test_print_scan_doc` (endpoint removed); keep its cancel assertions.
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_app.py -v -k "status or jobs or cancel or notifications or failures"`. Expected: FAIL.
 - [ ] **Step 3:** Implement: one `EventLog(cfg.data_dir)` per app; remove `GET /api/jobs/{job_id}`; append conversion events in `conversion_error`; set `scanner.on_error`.
 - [ ] **Step 4:** Run `python3 -m pytest -q -k "not slow"`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat: status, jobs and notifications API`.
-  - Delete the `GET /api/jobs/{job_id}` assertions from `test_print_scan_doc` (endpoint removed); keep its cancel assertions.
+
 ### Task 4: Bootstrap shell, notification center and Jobs page
 
 **Files:**
