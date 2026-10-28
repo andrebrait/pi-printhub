@@ -31,11 +31,13 @@ class FakeCups:
         self.printed = []
         self.cancelled = []
         self.active = set()
+        self.state, self.reasons = 3, ["none"]
+        self.jobs = {}  # job id -> attributes, as getJobs(which_jobs="all") returns them
 
     def getPrinterAttributes(self, queue, requested_attributes=None):
         return {
-            "printer-state": 3,
-            "printer-state-reasons": ["none"],
+            "printer-state": self.state,
+            "printer-state-reasons": self.reasons,
             "printer-is-accepting-jobs": True,
             "media-supported": ["iso_a4_210x297mm"],
             "print-quality-supported": [3, 4, 5],
@@ -57,6 +59,8 @@ class FakeCups:
         self.cancelled.append(job_id)
 
     def getJobs(self, which_jobs, requested_attributes=None):
+        if which_jobs == "all":
+            return self.jobs
         return {j: {"job-printer-uri": "ipp://localhost/printers/OfficeJet"} for j in self.active}
 
 

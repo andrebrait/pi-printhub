@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -59,6 +60,53 @@ class JobStatus:
         "pending", "held", "processing", "stopped", "canceled", "aborted", "completed"
     ]
     reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class JobInfo:
+    id: int
+    name: str
+    user: str
+    host: str
+    state: str
+    reasons: list[str]
+    created: str | None
+    completed: str | None
+    sheets: int | None
+
+
+# Readable printer and job state reasons. Bookkeeping that only repeats a state is not shown.
+ROUTINE_REASONS = {
+    "none", "job-incoming", "job-queued", "job-printing", "job-completed-successfully",
+    "processing-to-stop-point", "cups-waiting-for-job-completed",
+}
+REASON_LABELS = {
+    "marker-supply-low": "Ink low",
+    "marker-supply-empty": "Out of ink",
+    "toner-low": "Toner low",
+    "toner-empty": "Out of toner",
+    "media-low": "Paper low",
+    "media-empty": "Out of paper",
+    "media-needed": "Load paper",
+    "media-jam": "Paper jam",
+    "door-open": "Cover open",
+    "cover-open": "Cover open",
+    "input-tray-missing": "Paper tray missing",
+    "output-area-full": "Output tray full",
+    "offline": "Offline",
+    "connecting-to-device": "Connecting",
+    "paused": "Paused",
+    "printer-stopped": "Printer stopped",
+}
+
+
+def reason_label(reason: str) -> tuple[str, Literal["warning", "error"]] | None:
+    """("Paper jam", "error") for "media-jam-error"; None for routine reasons."""
+    if reason in ROUTINE_REASONS:
+        return None
+    key = re.sub(r"-(report|warning|error)$", "", reason)
+    label = REASON_LABELS.get(key) or key[:1].upper() + key[1:].replace("-", " ")
+    return label, "error" if reason.endswith("-error") else "warning"
 
 
 def _allowed(key: str, info: PrinterInfo) -> list[str]:
@@ -160,3 +208,34 @@ def active_job_ids(conn: cups.Connection, queue: str) -> set[int]:
         for job_id, attrs in jobs.items()
         if attrs["job-printer-uri"].rsplit("/", 1)[-1] == queue
     }
+
+
+def _iso(seconds) -> str | None:
+    return datetime.fromtimestamp(seconds, UTC).isoformat() if seconds else None
+
+
+def queue_jobs(conn: cups.Connection, queue: str) -> list[JobInfo]:
+    """Every job CUPS still lists for the queue (active and finished), newest first."""
+    jobs = conn.getJobs(
+        which_jobs="all",
+        requested_attributes=[
+            "job-id", "job-name", "job-originating-user-name", "job-originating-host-name", "job-state",
+            "job-state-reasons", "time-at-creation", "time-at-completed", "job-media-sheets-completed",
+            "job-printer-uri",
+        ],
+    )
+    return [
+        JobInfo(
+            id=job_id,
+            name=a.get("job-name", ""),
+            user=a.get("job-originating-user-name", ""),
+            host=a.get("job-originating-host-name", ""),
+            state=JOB_STATES[a["job-state"]],
+            reasons=[r for r in _list(a.get("job-state-reasons", [])) if r != "none"],
+            created=_iso(a.get("time-at-creation")),
+            completed=_iso(a.get("time-at-completed")),
+            sheets=a.get("job-media-sheets-completed"),
+        )
+        for job_id, a in sorted(jobs.items(), reverse=True)
+        if a.get("job-printer-uri", "").rsplit("/", 1)[-1] == queue
+    ]
