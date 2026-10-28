@@ -47,15 +47,19 @@ pin_scanner() {
     fi
 }
 
-# airprint_service MODEL QUEUE: an avahi service file advertising the CUPS queue the way a printer advertises its own
-# AirPrint service, from `ipptool -tv` attributes of the queue on stdin. macOS lists CUPS's own "<model> @ <host>"
-# advert as "Bonjour Shared" and picks a driver for it (Generic PostScript); this "<model> (Pi)" one gets AirPrint.
-# Both stay: no UUID, so clients that merge entries by UUID keep them apart.
+# airprint_service MODEL QUEUE [generic]: an avahi service file announcing the CUPS queue, from `ipptool -tv`
+# attributes of the queue on stdin.
+# - "<model> (Pi)" is shaped like a printer's own AirPrint announcement; macOS sets it up as AirPrint.
+# - "<model> (Pi) (Generic)" is what CUPS itself announces (PostScript, printer-type); macOS lists that as "Bonjour
+#   Shared" and picks a driver, usually Generic PostScript. It replaces CUPS's own "<model> @ <host>" as a fallback.
+# No UUID: clients that merge entries by UUID would show the two as one.
 airprint_service() {
-    local attrs name value pdl="" f urf color duplex txt="" type
+    local attrs name value pdl="" f formats urf color duplex txt="" type generic=${3:-}
     attrs=$(cat)
     value() { sed -n "s/^[[:space:]]*$1 ([^)]*) = //p" <<<"$attrs" | head -n1; }
-    for f in application/pdf image/jpeg image/png image/pwg-raster image/urf; do
+    formats="application/pdf image/jpeg image/png image/pwg-raster image/urf"
+    [[ -n $generic ]] && formats="application/pdf application/postscript image/jpeg image/png image/pwg-raster image/urf"
+    for f in $formats; do
         [[ ,$(value document-format-supported), == *,$f,* ]] && pdl+=${pdl:+,}$f
     done
     urf=$(value urf-supported)
@@ -65,12 +69,23 @@ airprint_service() {
     name=${1//&/\&amp;}
     name=${name//</\&lt;}
     name=${name//>/\&gt;}
-    for value in txtvers=1 qtotal=1 "rp=printers/$2" "ty=$name" "product=($name)" "pdl=$pdl" "URF=${urf:-none}" \
-        "Color=$color" "Duplex=$duplex" air=none; do
+    local -a records=(txtvers=1 qtotal=1 "rp=printers/$2" "ty=$name" "product=($name)" "pdl=$pdl" "URF=${urf:-none}"
+        "Color=$color" "Duplex=$duplex")
+    value=$(value printer-location)
+    value=${value//&/\&amp;}
+    value=${value//</\&lt;}
+    [[ -n $value ]] && records+=("note=${value//>/\&gt;}")
+    if [[ -n $generic ]]; then
+        value=$(value printer-type)
+        [[ -n $value ]] && records+=("printer-type=$(printf '0x%X' "$value")")
+    else
+        records+=(air=none)
+    fi
+    for value in "${records[@]}"; do
         txt+="    <txt-record>$value</txt-record>"$'\n'
     done
     printf '<?xml version="1.0" standalone="no"?>\n<!DOCTYPE service-group SYSTEM "avahi-service.dtd">\n'
-    printf '<service-group>\n  <name>%s (Pi)</name>\n' "$name"
+    printf '<service-group>\n  <name>%s (Pi)%s</name>\n' "$name" "${generic:+ (Generic)}"
     for type in _ipp _ipps; do
         printf '  <service>\n    <type>%s._tcp</type>\n' "$type"
         [[ $type == _ipp ]] && printf '    <subtype>_universal._sub._ipp._tcp</subtype>\n'
@@ -85,7 +100,7 @@ apply_printer() {
     local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
     local avahi=${AVAHI_DIR:-/etc/avahi/services}
-    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp
+    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp attrs kind
     # ipp-usb writes the state file before it serves the device (and keeps it from earlier plugs), so wait until
     # the printer itself answers.
     for ((i = 0; i < 30; i++)); do
@@ -99,15 +114,20 @@ apply_printer() {
     done
     [[ -n $model ]] || { echo "no IPP-over-USB printer answered IPP${uri:+ at $uri}" >&2; return 1; }
 
-    lpadmin -p "$queue" -E -v "$uri" -m "driverless:$uri" -D "$model" \
+    # Location: the hostname, which AirSane's scanner also shows.
+    lpadmin -p "$queue" -E -v "$uri" -m "driverless:$uri" -D "$model" -L "$(hostname)" \
         -o printer-is-shared=true -o printer-error-policy=retry-job
     install -d -m 0755 "$avahi"
-    tmp=$(mktemp "$avahi/.printhub-airprint.XXXXXX")
-    ipptool -tv "ipp://localhost:631/printers/$queue" get-printer-attributes.test | airprint_service "$model" "$queue" >"$tmp"
-    chmod 0644 "$tmp" # avahi-daemon reads it
-    mv "$tmp" "$avahi/printhub-airprint.service"
+    attrs=$(ipptool -tv "ipp://localhost:631/printers/$queue" get-printer-attributes.test) || true
+    for kind in airprint generic; do
+        tmp=$(mktemp "$avahi/.printhub-$kind.XXXXXX")
+        airprint_service "$model" "$queue" "${kind#airprint}" <<<"$attrs" >"$tmp"
+        chmod 0644 "$tmp" # avahi-daemon reads it
+        mv "$tmp" "$avahi/printhub-$kind.service"
+    done
+    # Shared, but announced by the files above instead of by CUPS, which always names it "<info> @ <host>".
     # After reading the queue: cupsctl restarts cupsd.
-    cupsctl --share-printers
+    cupsctl --share-printers BrowseLocalProtocols=none
     tmp=$(mktemp "$sane/airscan.conf.XXXXXX")
     airscan_conf "$port" "$model" >"$tmp"
     chmod 0644 "$tmp" # saned and printhub read it

@@ -149,7 +149,8 @@ create_hplip_queue() { # create_hplip_queue USB_SYSFS_DIR
 }
 
 setup_printer() {
-    local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d} dev uri=""
+    local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
+    local avahi=${AVAHI_DIR:-/etc/avahi/services} dev uri=""
     if lpstat -p "$PRINTER_QUEUE" &>/dev/null; then
         uri=$(lpstat -v "$PRINTER_QUEUE")
     fi
@@ -167,7 +168,9 @@ setup_printer() {
         # No eSCL endpoint to point sane-airscan at; hpaio drives the scanner.
         printf '[options]\ndiscovery = disable\n' >"$sane/airscan.conf"
         pin_scanner "$dropin"
-        cupsctl --share-printers
+        # printer-setup.sh's announcements belong to an ipp-usb queue; CUPS announces this one itself.
+        rm -f "$avahi/printhub-airprint.service" "$avahi/printhub-generic.service"
+        cupsctl --share-printers BrowseLocalProtocols=dnssd
         lpadmin -p "$PRINTER_QUEUE" -o printer-is-shared=true
     else
         PRINTER_PENDING=1

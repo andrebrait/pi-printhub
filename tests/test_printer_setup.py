@@ -89,7 +89,7 @@ def apply(tmp_path: Path, stubs: str, attached: bool = True, state: bool = True)
     (tmp_path / "sane").mkdir(exist_ok=True)
     base = (
         f'log() {{ echo "$*" >>{log}; }}; lpadmin() {{ log "lpadmin $*"; }}; cupsctl() {{ log "cupsctl $*"; }}; '
-        f'systemctl() {{ log "systemctl $*"; }}; sleep() {{ log "sleep $*"; }}; '
+        f'systemctl() {{ log "systemctl $*"; }}; sleep() {{ log "sleep $*"; }}; hostname() {{ echo testhost; }}; '
     )
     r = sh(
         f"{base}{stubs}; apply_printer",
@@ -104,7 +104,7 @@ def test_apply_points_queue_scanner_and_pin_at_the_device(tmp_path):
     assert r.returncode == 0, r.stderr
     assert (
         "lpadmin -p OfficeJet -E -v ipp://localhost:60000/ipp/print -m driverless:ipp://localhost:60000/ipp/print "
-        "-D HP OfficeJet Pro 6970 -o printer-is-shared=true -o printer-error-policy=retry-job"
+        "-D HP OfficeJet Pro 6970 -L testhost -o printer-is-shared=true -o printer-error-policy=retry-job"
     ) in log
     assert "lpadmin -x" not in log  # queued jobs survive a replug
     assert '"HP OfficeJet Pro 6970" = http://localhost:60000/eSCL' in (tmp_path / "sane" / "airscan.conf").read_text()
@@ -208,13 +208,12 @@ def test_airprint_advert_escapes_the_model_for_xml(tmp_path):
     assert "<txt-record>Duplex=F</txt-record>" in xml and "<txt-record>Color=F</txt-record>" in xml
 
 
-def test_apply_adds_the_airprint_advert_next_to_cups_own(tmp_path):
+def test_apply_writes_a_readable_airprint_advert(tmp_path):
     r, log = apply(tmp_path, IPPTOOL_OK)
     assert r.returncode == 0, r.stderr
     service = tmp_path / "avahi" / "printhub-airprint.service"
     assert "ty=HP OfficeJet Pro 6970" in service.read_text()
     assert service.stat().st_mode & 0o777 == 0o644
-    assert "cupsctl --share-printers" in log and "BrowseLocalProtocols" not in log  # CUPS's own advert stays
 
 
 def test_queue_is_read_before_cupsctl_restarts_cups(tmp_path):
@@ -229,3 +228,37 @@ def test_queue_is_read_before_cupsctl_restarts_cups(tmp_path):
     r, _ = apply(tmp_path, stubs)
     assert r.returncode == 0, r.stderr
     assert "<txt-record>Duplex=T</txt-record>" in (tmp_path / "avahi" / "printhub-airprint.service").read_text()
+
+
+def test_generic_advert_is_the_cups_style_fallback_under_its_own_name(tmp_path):
+    (tmp_path / "attrs").write_text(QUEUE_ATTRS + "        printer-type (enum) = 36892\n")
+    xml = sh(f'airprint_service "$1" OfficeJet generic <{tmp_path / "attrs"}', "HP OfficeJet Pro 6970").stdout
+    assert "<name>HP OfficeJet Pro 6970 (Pi) (Generic)</name>" in xml
+    # What CUPS itself announces, and what makes macOS treat it as a shared CUPS printer.
+    assert "<txt-record>pdl=application/pdf,application/postscript,image/jpeg,image/png,image/pwg-raster,image/urf</txt-record>" in xml
+    assert "<txt-record>printer-type=0x901C</txt-record>" in xml
+    assert "air=none" not in xml and "UUID=" not in xml
+
+
+def test_apply_announces_both_entries_instead_of_cups(tmp_path):
+    r, log = apply(tmp_path, IPPTOOL_OK)
+    assert r.returncode == 0, r.stderr
+    avahi = tmp_path / "avahi"
+    assert "<name>HP OfficeJet Pro 6970 (Pi)</name>" in (avahi / "printhub-airprint.service").read_text()
+    assert "<name>HP OfficeJet Pro 6970 (Pi) (Generic)</name>" in (avahi / "printhub-generic.service").read_text()
+    assert (avahi / "printhub-generic.service").stat().st_mode & 0o777 == 0o644
+    assert "cupsctl --share-printers BrowseLocalProtocols=none" in log
+
+
+def test_location_is_the_hostname_on_the_queue_and_both_adverts(tmp_path):
+    # AirSane's scanner already shows the hostname as its location; the printers match it.
+    stubs = (
+        'hostname() { echo printpi; }; ipptool() { '
+        'echo "        printer-make-and-model (textWithoutLanguage) = HP OfficeJet Pro 6970"; '
+        'echo "        printer-location (textWithoutLanguage) = printpi"; }'
+    )
+    r, log = apply(tmp_path, stubs)
+    assert r.returncode == 0, r.stderr
+    assert "-D HP OfficeJet Pro 6970 -L printpi" in log
+    for kind in ("airprint", "generic"):
+        assert "<txt-record>note=printpi</txt-record>" in (tmp_path / "avahi" / f"printhub-{kind}.service").read_text()

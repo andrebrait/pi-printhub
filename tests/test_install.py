@@ -67,18 +67,24 @@ def test_airsane_ignores_hpaio_network_devices(tmp_path):
 
 def test_hplip_rerun_leaves_ipp_usb_alone(tmp_path):
     # An HPLIP install re-run with the printer unplugged: no airscan device, no scanner pin, no ipp-usb changes.
-    sane, dropin = tmp_path / "sane", tmp_path / "dropin"
+    sane, dropin, avahi = tmp_path / "sane", tmp_path / "dropin", tmp_path / "avahi"
     sane.mkdir()
+    avahi.mkdir()
+    (avahi / "printhub-airprint.service").write_text("stale")
     stubs = (
         'lpstat() { [[ $1 == -v ]] && echo "device for OfficeJet: hp:/usb/OfficeJet_Pro_6970?serial=X"; return 0; }; '
-        "lpadmin() { :; }; cupsctl() { :; }; configure_dll_conf() { :; }; "
+        'lpadmin() { :; }; cupsctl() { echo "CUPSCTL $*"; }; configure_dll_conf() { :; }; '
         'apply_printer() { echo APPLY; }; ipp_usb_listen_all() { echo LISTEN; }; apt-get() { echo APT "$*"; }'
     )
-    r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path), SANE_DIR=str(sane), DROPIN_DIR=str(dropin))
+    r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path), SANE_DIR=str(sane), DROPIN_DIR=str(dropin),
+           AVAHI_DIR=str(avahi))
     assert r.returncode == 0, r.stderr
     assert "APPLY" not in r.stdout and "LISTEN" not in r.stdout and "ipp-usb" not in r.stdout
     assert "[devices]" not in (sane / "airscan.conf").read_text()
     assert not (dropin / "scanner.conf").exists()
+    # The printhub announcements belong to the ipp-usb queue; CUPS announces the HPLIP one itself.
+    assert not (avahi / "printhub-airprint.service").exists()
+    assert "CUPSCTL --share-printers BrowseLocalProtocols=dnssd" in r.stdout
 
 
 def sh(expr: str, *args: str, input: str | None = None, **env: str) -> subprocess.CompletedProcess:
