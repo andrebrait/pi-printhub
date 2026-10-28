@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import threading
 import time
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path, PurePath
@@ -35,6 +35,7 @@ from printhub.auth import (
 )
 from printhub.config import Config, load_config
 from printhub.documents import Crop, Doc, DocBusy, DocNotFound, DocStore, MailRecord, Page, PrintRecord
+from printhub.events import EventLog
 from printhub.mail import (
     MAX_ATTACHMENT_BYTES,
     Attachment,
@@ -48,10 +49,13 @@ from printhub.middleware import MAX_BODY, MAX_UPLOAD, Guard
 from printhub.printing import PrintOptions
 from printhub.retention import DiskFull, busy_policy, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
+from printhub.watcher import Watcher
 
 THUMB_PX = 400
 PENDING_MAX_COUNT = 5
 PENDING_MAX_BYTES = 200 * 1024 * 1024
+ACTIVE_JOB_STATES = {"pending", "held", "processing", "stopped"}
+RECENT_JOBS = 20
 # cups.Connection() raises RuntimeError when cupsd is unreachable
 CUPS_ERRORS = (cups.IPPError, RuntimeError)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -86,6 +90,11 @@ class EmailRequest(BaseModel):
     to: list[str]
     subject: str
     format: Literal["pdf", "jpeg"]
+
+
+class MarkRead(BaseModel):
+    up_to: int | None = None
+    ids: list[int] | None = None
 
 
 def _now() -> str:
@@ -140,6 +149,7 @@ def create_app(
     cups_conn_factory=printing.connect,
     scanner: Scanner | None = None,
     free_bytes=None,
+    watch: bool = False,
 ) -> FastAPI:
     store = DocStore(cfg.data_dir / "docs")
     store.root.mkdir(parents=True, exist_ok=True)
@@ -160,6 +170,8 @@ def create_app(
         shutil.rmtree(d, ignore_errors=True)
         d.mkdir(parents=True)
     scanner = scanner or Scanner()
+    events = EventLog(cfg.data_dir)
+    scanner.on_error = lambda doc_id, message: events.append("error", "scan", "Scan failed", message, doc_id=doc_id)
     free_bytes = free_bytes or (lambda: shutil.disk_usage(cfg.data_dir).free)
     min_free = int(cfg.min_free_gb * 1024**3)
     limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
@@ -182,7 +194,16 @@ def create_app(
         share_lock.release()
         return denied
 
-    app = FastAPI(openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(_app):
+        stop = threading.Event()
+        if watch:
+            watcher = Watcher(cups_conn_factory, cfg.printer_queue, events)
+            threading.Thread(target=watcher.run, args=(stop,), name="watcher", daemon=True).start()
+        yield
+        stop.set()
+
+    app = FastAPI(openapi_url=None, lifespan=lifespan)
     app.add_middleware(Guard, cfg=cfg, admit_share=admit_share, release_share=share_lock.release)
 
     def using_document(fn=None, *, exclusive=False):
@@ -267,6 +288,7 @@ def create_app(
             (d / "print.pdf").unlink(missing_ok=True)
             for png in (d / "thumbs").glob("page-*.png"):
                 png.unlink(missing_ok=True)  # a concurrent retry or delete may clear thumbs first
+            events.append("error", "conversion", "Conversion failed", str(e), doc_id=doc_id)
             return str(e)
         return None
 
@@ -352,6 +374,37 @@ def create_app(
     @api.get("/printer")
     def get_printer():
         return printer_info(cups_conn())
+
+    @api.get("/status")
+    def status():
+        out = {"printer": None, "error": None, "unread": events.unread(), "latest_event": events.latest()}
+        try:
+            info = printer_info(cups_conn())
+        except ApiError as e:
+            return out | {"error": e.error}
+        problems = [printing.reason_label(r) for r in info.state_reasons]
+        out["printer"] = {
+            "state": info.state, "state_reasons": info.state_reasons, "accepting": info.accepting,
+            "problems": [{"label": p[0], "level": p[1]} for p in problems if p],
+        }
+        return out
+
+    def queue_jobs(conn) -> list[printing.JobInfo]:
+        try:
+            return printing.queue_jobs(conn, cfg.printer_queue)
+        except CUPS_ERRORS:
+            raise ApiError(503, "CUPS unavailable") from None
+
+    @api.get("/notifications")
+    def notifications(before: int | None = None, limit: int = 50):
+        page = [asdict(e) | {"read": read} for e, read in events.page(before=before, limit=min(limit, 200))]
+        return {"events": page, "unread": events.unread(), "latest": events.latest()}
+
+    @api.post("/notifications/read", status_code=204)
+    def notifications_read(body: MarkRead):
+        if body.up_to is None and body.ids is None:
+            raise ApiError(422, "Give up_to or ids")
+        events.mark_read(up_to=body.up_to, ids=body.ids)
 
     @api.post("/uploads")
     def upload(file: UploadFile):
@@ -562,20 +615,22 @@ def create_app(
             current.prints.append(PrintRecord(job_id=job_id, at=_now(), options=options))
         return {"job_id": job_id}
 
-    @api.get("/jobs/{job_id}")
-    def job(job_id: int):
-        conn = cups_conn()
-        try:
-            status = printing.job_status(conn, job_id)
-        except cups.IPPError:
-            raise ApiError(404, "Unknown job") from None
-        info = printer_info(conn)
-        return {"job": status, "printer": {"state": info.state, "state_reasons": info.state_reasons}}
+    @api.get("/jobs")
+    def jobs():
+        doc_of = {p.job_id: d.id for d in store.list() for p in d.prints}
+        listed = [asdict(j) | {"doc_id": doc_of.get(j.id)} for j in queue_jobs(cups_conn())]
+        active = [j for j in listed if j["state"] in ACTIVE_JOB_STATES]
+        recent = [j for j in listed if j["state"] not in ACTIVE_JOB_STATES][:RECENT_JOBS]
+        return {"active": active, "recent": recent}
 
     @api.post("/jobs/{job_id}/cancel", status_code=204)
     def cancel_job(job_id: int):
+        conn = cups_conn()
+        # Any job of our queue, whoever sent it; never another queue's.
+        if job_id not in {j.id for j in queue_jobs(conn)}:
+            raise ApiError(404, "Unknown job")
         try:
-            printing.cancel(cups_conn(), job_id)
+            printing.cancel(conn, job_id)
         except cups.IPPError:
             raise ApiError(404, "Unknown job") from None
 
@@ -625,7 +680,7 @@ def create_app(
 
 @functools.cache
 def _default_app() -> FastAPI:
-    return create_app(load_config())
+    return create_app(load_config(), watch=True)
 
 
 def __getattr__(name: str):

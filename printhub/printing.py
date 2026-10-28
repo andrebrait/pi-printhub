@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -52,14 +52,6 @@ class PrintOptions:
     copies: int = 1
     page_ranges: str | None = None
     print_scaling: str = "fit"
-
-
-@dataclass
-class JobStatus:
-    state: Literal[
-        "pending", "held", "processing", "stopped", "canceled", "aborted", "completed"
-    ]
-    reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -184,14 +176,6 @@ def submit(
     if opts.page_ranges is not None:
         options["page-ranges"] = opts.page_ranges
     return conn.printFile(queue, str(pdf), title, options)
-
-
-def job_status(conn: cups.Connection, job_id: int) -> JobStatus:
-    attrs = conn.getJobAttributes(
-        job_id, requested_attributes=["job-state", "job-state-reasons"]
-    )
-    reasons = [r for r in _list(attrs.get("job-state-reasons", [])) if r != "none"]
-    return JobStatus(state=JOB_STATES[attrs["job-state"]], reasons=reasons)
 
 
 def cancel(conn: cups.Connection, job_id: int) -> None:

@@ -50,6 +50,14 @@ ipp_usb_listen_all() { sed -i 's/^\([[:space:]]*interface[[:space:]]*=[[:space:]
 # airsane_ignore_hpaio_net FILE: AirSane must not republish HPLIP's view of a printer's own network scanner.
 airsane_ignore_hpaio_net() { grep -qxF 'hpaio:/net/.*' "$1" || echo 'hpaio:/net/.*' >>"$1"; }
 
+# show_job_details CUPSD_CONF: let the Jobs page see job names and senders (CUPS hides them by default), in the
+# default policy only. Succeeds when it changed the file, so the caller restarts CUPS only then.
+show_job_details() {
+    grep -q '^<Policy default>' "$1" || return 1
+    sed -n '/^<Policy default>/,/^<\/Policy>/p' "$1" | grep -q '^[[:space:]]*JobPrivateValues none$' && return 1
+    sed -i '/^<Policy default>/,/^<\/Policy>/ s/^\([[:space:]]*JobPrivateValues\) .*/\1 none/' "$1"
+}
+
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_security() { [[ $1 == starttls || $1 == tls ]]; }
 
@@ -286,6 +294,9 @@ write_traefik_env() {
 }
 
 start_services() {
+    if show_job_details /etc/cups/cupsd.conf; then
+        systemctl restart cups
+    fi
     install -m 0644 "$REPO"/deploy/systemd/*.service "$REPO"/deploy/systemd/*.timer /etc/systemd/system/
     systemctl daemon-reload
     # Pick up new code and config on re-runs; enable --now then starts whatever was not running.

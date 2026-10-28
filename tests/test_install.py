@@ -260,3 +260,19 @@ def test_printer_seen_before_the_ipp_usb_restart_is_set_up(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "SYSTEMCTL start printhub-printer.service" in r.stdout
     assert "unplugged" not in r.stdout
+
+
+def test_job_details_are_shown_in_the_default_policy_only(tmp_path):
+    # The Jobs page lists names and senders of jobs from every device; CUPS hides them by default.
+    f = tmp_path / "cupsd.conf"
+    f.write_text(
+        "<Policy default>\n  JobPrivateAccess default\n  JobPrivateValues default\n</Policy>\n"
+        "<Policy kerberos>\n  JobPrivateValues default\n</Policy>\n"
+    )
+    assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "changed"
+    assert f.read_text() == (
+        "<Policy default>\n  JobPrivateAccess default\n  JobPrivateValues none\n</Policy>\n"
+        "<Policy kerberos>\n  JobPrivateValues default\n</Policy>\n"
+    )
+    # Unchanged on a re-run, so the installer restarts CUPS only once.
+    assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "unchanged"

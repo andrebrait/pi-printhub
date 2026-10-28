@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -131,6 +132,8 @@ def ingest(png: Path, dest_jpg: Path, resolution: int) -> None:
 class Scanner:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Called with (doc_id, message) after a scan ends in an error.
+        self.on_error: Callable[[str, str], None] | None = None
 
     def start(self, store: DocStore, doc_id: str, settings: ScanSettings) -> None:
         if not self._lock.acquire(blocking=False):
@@ -166,6 +169,8 @@ class Scanner:
                 shutil.rmtree(incoming, ignore_errors=True)
                 with store.transaction(doc_id) as doc:
                     doc.scanning, doc.scan_error = False, error
+                if error and self.on_error:
+                    self.on_error(doc_id, error)
         finally:
             guards.close()
             self._lock.release()

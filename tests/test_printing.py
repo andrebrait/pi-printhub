@@ -106,12 +106,16 @@ def pdf(tmp_path) -> Path:
     return path
 
 
-def wait_for(conn, job_id: int, state: str, timeout: float = 30) -> printing.JobStatus:
+def job_state(conn, queue: str, job_id: int) -> str:
+    return next(j.state for j in printing.queue_jobs(conn, queue) if j.id == job_id)
+
+
+def wait_for(conn, queue: str, job_id: int, state: str, timeout: float = 30) -> str:
     deadline = time.monotonic() + timeout
     while True:
-        status = printing.job_status(conn, job_id)
-        if status.state == state or time.monotonic() > deadline:
-            return status
+        current = job_state(conn, queue, job_id)
+        if current == state or time.monotonic() > deadline:
+            return current
         time.sleep(0.2)
 
 
@@ -155,7 +159,7 @@ def test_submitted_options_reach_the_printer(conn, queue, pdf):
     title = uuid.uuid4().hex
     job_id = printing.submit(conn, queue, pdf, title, opts, info)
 
-    assert wait_for(conn, job_id, "completed").state == "completed"
+    assert wait_for(conn, queue, job_id, "completed") == "completed"
     env = logged_job(title)
     assert env["IPP_SIDES"] == "two-sided-short-edge"
     assert env["IPP_PRINT_COLOR_MODE"] == "monochrome"
@@ -175,18 +179,18 @@ def test_submitted_options_reach_the_printer(conn, queue, pdf):
 def test_job_completes(conn, queue, pdf):
     info = printing.printer_info(conn, queue)
     job_id = printing.submit(conn, queue, pdf, uuid.uuid4().hex, OPTS, info)
-    assert wait_for(conn, job_id, "completed").state == "completed"
+    assert wait_for(conn, queue, job_id, "completed") == "completed"
     assert job_id not in printing.active_job_ids(conn, queue)
 
 
 @pytest.mark.cups
 def test_cancel_held_job(conn, queue, pdf):
     job_id = conn.printFile(queue, str(pdf), uuid.uuid4().hex, {"job-hold-until": "indefinite"})
-    assert printing.job_status(conn, job_id).state == "held"
+    assert job_state(conn, queue, job_id) == "held"
     assert job_id in printing.active_job_ids(conn, queue)
 
     printing.cancel(conn, job_id)
 
-    assert wait_for(conn, job_id, "canceled").state == "canceled"
+    assert wait_for(conn, queue, job_id, "canceled") == "canceled"
     assert job_id not in printing.active_job_ids(conn, queue)
 

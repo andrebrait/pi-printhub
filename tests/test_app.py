@@ -19,6 +19,7 @@ from printhub import convert
 from printhub.app import MAX_UPLOAD, create_app
 from printhub.auth import COOKIE, issue_session
 from printhub.documents import Crop, DocStore, Page, PrintRecord
+from printhub.events import EventLog
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
 
@@ -49,11 +50,6 @@ class FakeCups:
     def printFile(self, queue, path, title, options):
         self.printed.append((queue, path, title, options))
         return 41 + len(self.printed)
-
-    def getJobAttributes(self, job_id, requested_attributes=None):
-        if job_id not in [41 + i for i in range(1, len(self.printed) + 1)]:
-            raise cups.IPPError(1030, "client-error-not-found")
-        return {"job-state": 5, "job-state-reasons": ["job-printing"]}
 
     def cancelJob(self, job_id):
         self.cancelled.append(job_id)
@@ -462,9 +458,7 @@ def test_print_scan_doc(client, store, fake_cups):
     assert options["copies"] == "1"
     assert [p.job_id for p in store.get(doc.id).prints] == [job_id]
 
-    status = client.get(f"/api/jobs/{job_id}").json()
-    assert status == {"job": {"state": "processing", "reasons": ["job-printing"]}, "printer": {"state": "idle", "state_reasons": []}}
-    assert client.get("/api/jobs/999").status_code == 404
+    fake_cups.jobs = {job_id: {"job-printer-uri": "ipp://localhost/printers/OfficeJet", "job-state": 5}}
     assert client.post(f"/api/jobs/{job_id}/cancel").status_code == 204
     assert fake_cups.cancelled == [job_id]
 
@@ -676,3 +670,88 @@ def test_static_files_are_revalidated_so_a_deploy_never_serves_stale_scripts(cli
         assert r.headers["cache-control"] == "no-cache", path
     etag = client.get("/js/print.js").headers["etag"]
     assert client.get("/js/print.js", headers={"If-None-Match": etag}).status_code == 304
+
+
+# Status, jobs and notifications
+
+OURS = "ipp://localhost/printers/OfficeJet"
+
+
+def test_status_reports_printer_and_unread(client, make_client, fake_cups, cfg):
+    fake_cups.state, fake_cups.reasons = 4, ["media-jam-error", "job-printing"]
+    EventLog(cfg.data_dir).append("error", "printer", "Paper jam")
+    s = client.get("/api/status").json()
+    assert s["printer"] == {
+        "state": "processing", "accepting": True, "state_reasons": ["media-jam-error", "job-printing"],
+        "problems": [{"label": "Paper jam", "level": "error"}],
+    }
+    assert (s["error"], s["unread"], s["latest_event"]) == (None, 1, 1)
+
+    def down():
+        raise RuntimeError("cupsd is not running")
+
+    s = make_client(cups_conn_factory=down).get("/api/status")
+    assert s.status_code == 200
+    assert s.json()["printer"] is None and s.json()["error"] == "CUPS unavailable"
+
+
+def test_jobs_lists_external_jobs_and_links_web_app_jobs(client, store, fake_cups):
+    doc = scan_doc(store, n=1)
+    job_id = client.post(f"/api/docs/{doc.id}/print", json=PRINT_OPTS).json()["job_id"]
+    fake_cups.jobs = {
+        job_id: {"job-printer-uri": OURS, "job-state": 5, "job-name": "Scan"},
+        900: {"job-printer-uri": OURS, "job-state": 3, "job-name": "boarding pass", "job-originating-user-name": "phone"},
+        **{n: {"job-printer-uri": OURS, "job-state": 9} for n in range(1, 26)},
+        950: {"job-printer-uri": "ipp://localhost/printers/Other", "job-state": 5},
+    }
+    jobs = client.get("/api/jobs").json()
+    active = {j["id"]: j for j in jobs["active"]}
+    assert set(active) == {job_id, 900}
+    assert active[job_id]["doc_id"] == doc.id
+    assert (active[900]["doc_id"], active[900]["name"], active[900]["user"]) == (None, "boarding pass", "phone")
+    assert [j["id"] for j in jobs["recent"]] == list(range(25, 5, -1))
+
+
+def test_cancel_refuses_another_queues_job(client, fake_cups):
+    fake_cups.jobs = {
+        5: {"job-printer-uri": "ipp://localhost/printers/Other", "job-state": 5},
+        6: {"job-printer-uri": OURS, "job-state": 5},
+    }
+    assert client.post("/api/jobs/5/cancel").status_code == 404
+    assert client.post("/api/jobs/7/cancel").status_code == 404
+    assert fake_cups.cancelled == []
+    assert client.post("/api/jobs/6/cancel").status_code == 204
+    assert fake_cups.cancelled == [6]
+
+
+def test_notifications_page_and_mark_read(client, cfg):
+    log = EventLog(cfg.data_dir)
+    for title in ("a", "b", "c"):
+        log.append("info", "job", title, job_id=1)
+    page = client.get("/api/notifications", params={"limit": 2}).json()
+    assert [e["title"] for e in page["events"]] == ["c", "b"]
+    assert page["events"][0] | {"at": None} == {
+        "id": 3, "at": None, "level": "info", "kind": "job", "title": "c", "detail": "", "job_id": 1, "doc_id": None,
+        "read": False,
+    }
+    assert (page["unread"], page["latest"]) == (3, 3)
+    assert [e["id"] for e in client.get("/api/notifications", params={"before": 2}).json()["events"]] == [1]
+
+    assert client.post("/api/notifications/read", json={"ids": [3]}).status_code == 204
+    assert client.get("/api/status").json()["unread"] == 2
+    assert client.post("/api/notifications/read", json={"up_to": 3}).status_code == 204
+    assert client.get("/api/status").json()["unread"] == 0
+    assert client.post("/api/notifications/read", json={}).status_code == 422
+
+
+def test_conversion_and_scan_failures_become_events(client, cfg, tmp_path, monkeypatch):
+    r = client.post("/api/uploads", files={"file": ("broken.pdf", b"%PDF-1.4\nnot really", "application/pdf")})
+    doc_id = r.json()["doc_id"]
+    fake_scanimage(tmp_path, monkeypatch, 'echo "scanimage: open of device test failed: Device busy" >&2\nexit 1')
+    scan_id = client.post("/api/scans", json={"settings": {"source": "flatbed"}}).json()["doc_id"]
+    for _ in range(200):
+        if not client.get(f"/api/docs/{scan_id}").json()["scanning"]:
+            break
+        time.sleep(0.05)
+    events = [(e.kind, e.level, e.doc_id) for e, _ in reversed(EventLog(cfg.data_dir).page())]
+    assert events == [("conversion", "error", doc_id), ("scan", "error", scan_id)]
