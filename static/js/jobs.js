@@ -46,7 +46,6 @@ export function jobItem(job, document, onCancel) {
   item.append(main);
 
   const side = el("div", "d-flex align-items-center gap-2 ms-auto");
-  side.append(el("span", `badge ${STATE_CLASS[job.state] ?? "text-bg-secondary"}`, STATE_TEXT[job.state] ?? job.state));
   if (job.doc_id) {
     const open = el("a", "btn btn-sm btn-outline-secondary", "Document");
     open.href = `/print.html?doc=${encodeURIComponent(job.doc_id)}`;
@@ -59,6 +58,8 @@ export function jobItem(job, document, onCancel) {
     cancel.addEventListener("click", () => onCancel(job.id, cancel));
     side.append(cancel);
   }
+  // Every job has a state, not every job has buttons: the state goes last so the badges line up down the list.
+  side.append(el("span", `badge ${STATE_CLASS[job.state] ?? "text-bg-secondary"}`, STATE_TEXT[job.state] ?? job.state));
   item.append(side);
   return item;
 }

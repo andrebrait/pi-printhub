@@ -71,3 +71,11 @@ test("refreshing keeps the list (and focus) when nothing changed and scrolls to 
     delete globalThis.fetch;
   }
 });
+
+test("the state badge is always the rightmost item, with buttons before it", () => {
+  for (const fields of [{ state: "processing", doc_id: "d1" }, { state: "completed", doc_id: "d1" }, { state: "completed" }]) {
+    const item = jobItem(job(fields), fakeDocument(), () => {});
+    const side = item.children.at(-1);
+    assert.match(side.children.at(-1).className, /\bbadge\b/, JSON.stringify(fields));
+  }
+});
