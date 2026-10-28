@@ -116,7 +116,7 @@ Option values come from the CUPS queue's printer attributes, read through `pytho
 | Paper size | `media` |
 | Quality (draft, normal, best) | `print-quality` |
 | Color or grayscale | `print-color-mode` |
-| Auto (match the page), portrait or landscape | `orientation-requested` (Auto omits it) |
+| Auto (match the page), portrait or landscape | `orientation-requested` (Auto sends portrait and lets CUPS turn pages) |
 | One-sided, two-sided long edge, two-sided short edge | `sides` |
 | Copies | `copies` |
 | Page range | `page-ranges` |

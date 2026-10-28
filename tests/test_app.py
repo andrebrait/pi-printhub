@@ -804,6 +804,7 @@ def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(cli
         r = client.post(f"/api/docs/{doc.id}/print", json={**PRINT_OPTS, "orientation_requested": orientation})
         assert r.status_code == 200, r.text
     auto, portrait, landscape = (options for *_, options in fake_cups.printed)
-    assert "orientation-requested" not in auto and "pdfAutoRotate" not in auto
+    # Auto is portrait with turning left on, so a landscape queue default cannot turn pages the other way
+    assert (auto["orientation-requested"], "pdfAutoRotate" in auto) == ("3", False)
     assert (portrait["orientation-requested"], portrait["pdfAutoRotate"]) == ("3", "false")
     assert (landscape["orientation-requested"], landscape["pdfAutoRotate"]) == ("4", "false")

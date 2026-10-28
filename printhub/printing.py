@@ -185,11 +185,13 @@ def submit(
         key: getattr(opts, key.replace("-", "_")) for key in OPTION_KEYS if _allowed(key, info)
     }
     # CUPS (pdftopdf) turns any page whose shape does not match the sheet, which makes an explicit orientation
-    # print the same sheet as the other. Auto leaves that turning on; Portrait and Landscape switch it off.
-    if opts.orientation_requested == "auto":
-        options.pop("orientation-requested", None)
-    elif "orientation-requested" in options:
-        options["pdfAutoRotate"] = "false"
+    # print the same sheet as the other. Auto leaves that turning on, as portrait so a queue default cannot turn
+    # pages the other way; Portrait and Landscape switch it off.
+    if "orientation-requested" in options:
+        if opts.orientation_requested == "auto":
+            options["orientation-requested"] = "3"
+        else:
+            options["pdfAutoRotate"] = "false"
     options["copies"] = str(opts.copies)
     if opts.page_ranges is not None:
         options["page-ranges"] = opts.page_ranges
