@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[Unit]
+Description=Hourly pi-printhub retention cleanup
+
+[Timer]
+OnCalendar=hourly
+
+[Install]
+WantedBy=timers.target

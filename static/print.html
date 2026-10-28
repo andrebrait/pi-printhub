@@ -1,0 +1,71 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Print – Print Hub</title>
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+<header id="shell"></header>
+<main class="container-lg pb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <h1 class="h3 mb-0 text-break">Print <span id="title" class="fw-normal"></span></h1>
+    <a class="btn btn-outline-secondary" href="/#drop">Change file</a>
+  </div>
+  <p id="load-error" class="alert alert-danger error" role="alert" hidden></p>
+
+  <section id="convert" class="card mb-3" hidden>
+    <div class="card-body">
+      <p id="convert-message" class="error" role="alert"></p>
+      <button id="retry" class="btn btn-outline-primary" type="button">Retry</button>
+    </div>
+  </section>
+
+  <div id="layout" class="row g-4" hidden>
+    <section class="col-lg-7 min-w-0" aria-labelledby="preview-heading">
+      <div class="d-flex justify-content-between align-items-baseline gap-2">
+        <h2 id="preview-heading" class="h5">Preview</h2>
+        <p id="preview-help" class="small text-body-secondary mb-2 d-lg-none">Scroll for more →<span class="visually-hidden">. Focus the preview and use arrow keys, or swipe sideways.</span></p>
+      </div>
+      <div id="preview" class="preview" tabindex="0" role="region" aria-label="Print preview" aria-describedby="preview-help"></div>
+    </section>
+    <section class="col-lg-5" aria-labelledby="options-heading">
+      <form id="options" class="card">
+        <div class="card-body d-grid gap-3">
+          <h2 id="options-heading" class="h5 mb-0">Print settings</h2>
+          <div id="controls" class="d-grid gap-3"></div>
+          <div class="print-counts">
+            <div>
+              <label class="form-label" for="copies">Copies</label>
+              <input id="copies" class="form-control" type="number" inputmode="numeric" min="1" max="99" step="1" value="1" required aria-describedby="copies-error">
+              <small id="copies-error" class="error" hidden></small>
+            </div>
+            <div>
+              <label class="form-label" for="page-ranges">Pages</label>
+              <input id="page-ranges" class="form-control" type="text" placeholder="All pages" autocomplete="off" aria-describedby="range-help range-error">
+              <small id="range-help" class="text-body-secondary">For example: 1-3,5</small>
+              <small id="range-error" class="error" hidden></small>
+            </div>
+          </div>
+          <details id="print-advanced" class="border-top pt-2">
+            <summary>Layout and quality<span id="layout-summary" class="small text-body-secondary d-block" aria-live="polite"></span></summary>
+            <div id="advanced-controls" class="d-grid gap-3 pt-2"></div>
+          </details>
+          <button id="print" class="btn btn-primary" type="submit">Print</button>
+          <p id="print-error" class="alert alert-danger error mb-0" role="alert" hidden></p>
+        </div>
+      </form>
+    </section>
+  </div>
+</main>
+<script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script type="module" src="/js/shell.js"></script>
+<script type="module" src="/js/print.js"></script>
+<script type="module" src="/js/sw-register.js"></script>
+</body>
+</html>

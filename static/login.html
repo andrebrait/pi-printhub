@@ -1,0 +1,70 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in – Print Hub</title>
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+<main class="container py-5" style="max-width: 24rem">
+  <h1 class="h3 mb-4">Print Hub</h1>
+  <form id="form" class="d-grid gap-3">
+    <div>
+      <label class="form-label" for="password">Password</label>
+      <input id="password" class="form-control" type="password" autocomplete="current-password" required autofocus>
+    </div>
+    <button class="btn btn-primary" type="submit">Log in</button>
+    <p id="status" class="error mb-0" role="alert"></p>
+    <a id="continue" href="/" hidden>Continue without the shared file</a>
+  </form>
+</main>
+
+<script type="module">
+// SPDX-License-Identifier: AGPL-3.0-only
+import { safeNext } from "/js/api.js";
+
+const params = new URLSearchParams(location.search);
+const share = params.get("share");
+const dest = safeNext(params.get("next"), location.origin);
+const status = document.getElementById("status");
+const fail = async (res) => {
+  status.textContent = (await res.json().catch(() => null))?.error ?? `${res.status} ${res.statusText}`;
+};
+const post = (path, body) =>
+  fetch(path, {
+    method: "POST",
+    headers: body && { "Content-Type": "application/json" },
+    body: body && JSON.stringify(body),
+  });
+
+document.getElementById("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  status.textContent = "";
+  try {
+    const login = await post("/api/login", { password: document.getElementById("password").value });
+    if (!login.ok) return await fail(login);
+    if (!share) return void (location.href = location.origin + dest);
+    const claim = await post(`/api/share/${encodeURIComponent(share)}/claim`);
+    const body = await claim.json().catch(() => null);
+    if (claim.ok) return void (location.href = `/print.html?doc=${encodeURIComponent(body.doc_id)}`);
+    if (claim.status === 422 && body?.doc_id) {
+      return void (location.href = `/print.html?doc=${encodeURIComponent(body.doc_id)}&error=${encodeURIComponent(body.error)}`);
+    }
+    status.textContent = body?.error ?? `${claim.status} ${claim.statusText}`;
+    const cont = document.getElementById("continue");
+    cont.href = location.origin + dest;
+    cont.hidden = false;
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+</script>
+<script type="module" src="/js/shell.js"></script>
+<script type="module" src="/js/sw-register.js"></script>
+</body>
+</html>

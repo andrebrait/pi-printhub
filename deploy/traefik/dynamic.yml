@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+http:
+  routers:
+    printhub:
+      rule: Host(`print.brait.dev`)
+      entryPoints:
+        - websecure
+      service: printhub
+      tls:
+        certResolver: le
+  services:
+    printhub:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:8000

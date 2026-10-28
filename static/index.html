@@ -1,0 +1,136 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Print Hub</title>
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+<header id="shell"></header>
+<main class="container-lg pb-4">
+  <h1 class="visually-hidden">Print Hub</h1>
+  <section class="row g-3 mb-4" aria-labelledby="start-heading">
+    <h2 id="start-heading" class="visually-hidden">Start</h2>
+    <div class="col-md-8">
+      <label class="drop h-100 d-flex flex-column justify-content-center" id="drop">
+        <span class="fs-5 fw-semibold">Print a file</span>
+        <span class="text-body-secondary">Drop a file here or tap to choose one</span>
+        <input id="file" class="visually-hidden" type="file">
+      </label>
+      <progress id="progress" class="w-100 mt-2" max="1" value="0" aria-label="Upload progress" hidden></progress>
+      <p id="upload-status" class="mt-2 mb-0" role="status"></p>
+    </div>
+    <div class="col-md-4 d-grid">
+      <a class="btn btn-primary btn-lg d-flex align-items-center justify-content-center" href="/scan.html">New scan</a>
+    </div>
+  </section>
+
+  <div class="row g-4">
+    <section class="col-md-6" aria-labelledby="recent-prints">
+      <h2 id="recent-prints" class="h5">Recent prints</h2>
+      <div id="prints" class="list-group"></div>
+    </section>
+    <section class="col-md-6" aria-labelledby="recent-scans">
+      <h2 id="recent-scans" class="h5">Recent scans</h2>
+      <div id="scans" class="list-group"></div>
+    </section>
+  </div>
+</main>
+
+<script type="module">
+// SPDX-License-Identifier: AGPL-3.0-only
+import { apiFetch, uploadFile } from "/js/api.js";
+
+const $ = (id) => document.getElementById(id);
+
+function fill(list, docs, page) {
+  list.replaceChildren();
+  if (!docs.length) {
+    const empty = document.createElement("div");
+    empty.className = "list-group-item text-body-secondary";
+    empty.textContent = "Nothing yet";
+    list.append(empty);
+  }
+  for (const d of docs.slice(0, 10)) {
+    const a = document.createElement("a");
+    a.className = "list-group-item list-group-item-action d-grid gap-1";
+    a.href = `/${page}.html?doc=${encodeURIComponent(d.id)}`;
+    const title = document.createElement("span");
+    title.className = "text-break";
+    title.textContent = d.title;
+    const meta = document.createElement("small");
+    meta.className = "text-body-secondary";
+    const when = new Date(d.modified).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    meta.textContent = `${d.page_count} page${d.page_count === 1 ? "" : "s"} · ${when}`;
+    a.append(title, meta);
+    list.append(a);
+  }
+}
+
+async function refreshDocs() {
+  const res = await apiFetch("/api/docs");
+  if (!res.ok) return;
+  const docs = await res.json();
+  fill($("prints"), docs.filter((d) => d.kind === "print"), "print");
+  fill($("scans"), docs.filter((d) => d.kind === "scan"), "scan");
+}
+
+async function upload(file) {
+  const status = $("upload-status"), bar = $("progress");
+  status.className = "mt-2 mb-0";
+  status.textContent = `Uploading ${file.name}…`;
+  bar.value = 0;
+  bar.hidden = false;
+  try {
+    const { status: code, body } = await uploadFile(file, (f) => {
+      bar.value = f;
+      if (f === 1) status.textContent = "Converting…";
+    });
+    if (code === 200) {
+      location.href = `/print.html?doc=${encodeURIComponent(body.doc_id)}`;
+      return;
+    }
+    const message = body?.error ?? `Upload failed (${code})`;
+    if (code === 422 && body?.doc_id) {
+      // The document was kept; the print page offers Retry.
+      location.href = `/print.html?doc=${encodeURIComponent(body.doc_id)}&error=${encodeURIComponent(message)}`;
+      return;
+    }
+    status.className = "mt-2 mb-0 error";
+    status.textContent = message;
+  } catch (e) {
+    status.className = "mt-2 mb-0 error";
+    status.textContent = e.message;
+  }
+  bar.hidden = true;
+}
+
+$("file").addEventListener("change", (e) => {
+  const [file] = e.target.files;
+  e.target.value = ""; // lets the same file be picked again after a failure
+  if (file) upload(file);
+});
+const drop = $("drop");
+drop.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  drop.classList.add("over");
+});
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+});
+
+refreshDocs();
+</script>
+<script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script type="module" src="/js/shell.js"></script>
+<script type="module" src="/js/sw-register.js"></script>
+</body>
+</html>

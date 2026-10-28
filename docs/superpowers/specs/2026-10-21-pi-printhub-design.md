@@ -1,0 +1,238 @@
+# pi-printhub design
+
+Date: 2026-10-21
+Status: draft, awaiting owner review
+License: AGPL-3.0-only
+
+## 1. Purpose
+
+Printing over the network from Android, macOS and Windows to an HP OfficeJet Pro 6970 is unreliable. pi-printhub moves the printer off the network and behind a Raspberry Pi connected over USB. The Pi:
+
+1. appears to every client OS as a standard network printer and scanner, and
+2. serves a web application at `https://print.brait.dev` that prints uploaded files and runs a scan, edit, export and email workflow.
+
+The web application is the fallback for when a client's print or scan stack misbehaves, and the main tool for scanning.
+
+### Success criteria
+
+- Android (Mopria), iOS and macOS (AirPrint), and Windows 10/11 (IPP) discover and print to the Pi without vendor drivers.
+- macOS Image Capture, Windows Scan and Android Mopria Scan discover and scan through the Pi.
+- From a browser on the LAN, the owner can upload a PDF, image or Office file, preview it with the chosen options, and print it.
+- From a browser on the LAN, the owner can scan pages from the flatbed or the document feeder; crop, rotate, reorder and delete pages; and export the result as PDF or JPEG, email it, or print it.
+- Page edits never re-encode a scanned JPEG.
+
+### Non-goals
+
+- Access from outside the LAN.
+- Multiple user accounts or per-user history.
+- Native Android or iOS applications.
+- Image filters (brightness, contrast, deskew, automatic crop). These require re-encoding and are deferred.
+- Fax.
+
+## 2. Hardware and constraints
+
+| Item | Value |
+|---|---|
+| Host | Raspberry Pi 4, 4 GB RAM, 64 GB microSD |
+| OS | Raspberry Pi OS Lite 64-bit (Debian Trixie base) |
+| Printer | HP OfficeJet Pro 6970, USB, product ID `03f0:0c54` |
+| Domain | `print.brait.dev`, DNS hosted on Cloudflare |
+
+HPLIP's `models.dat` lists the 6970 with `plugin=0` (no proprietary plugin), `scan-src=3` (flatbed and document feeder) and `scan-type=7` (HPLIP `hpaio` scanning). Whether the printer also exposes an IPP-over-USB interface (USB class 7, subclass 1, protocol 4) is unknown until it is attached to the Pi. Section 3 handles both cases.
+
+The document feeder is assumed to be single-sided. Verify this on the device; it affects nothing in this design except the absence of automatic front/back interleaving.
+
+## 3. System layout
+
+| Component | Role |
+|---|---|
+| `ipp-usb`, or HPLIP (`printer-driver-hpcups`, `libsane-hpaio`) | USB transport and driver. The installer probes the USB descriptor and uses `ipp-usb` when IPP-over-USB is present, HPLIP otherwise. |
+| CUPS + Avahi | One shared queue named `OfficeJet`, advertised over DNS-SD for AirPrint, Mopria and IPP Everywhere clients. |
+| AirSane | Publishes the SANE scanner over eSCL (AirScan) for native scan clients. |
+| `printhub` | The web application: FastAPI under uvicorn, listening only on `127.0.0.1:8000`. |
+| Traefik | Reverse proxy on ports 80 and 443. Port 80 redirects to HTTPS. Obtains and renews the `print.brait.dev` certificate from Let's Encrypt through the Cloudflare DNS-01 challenge. |
+| LibreOffice (headless) | Converts Office and text documents to PDF. Invoked by `printhub`, one conversion at a time. |
+
+### Name resolution
+
+The LAN resolver carries a host override `print.brait.dev → <Pi LAN address>`, and the Pi has a DHCP reservation. No public A record is required; Cloudflare only hosts the transient ACME TXT records. This avoids DNS rebinding protection on the LAN resolver discarding a public record that points at a private address.
+
+### Scanner contention
+
+A SANE device serves one client at a time. When AirSane holds the scanner, `printhub` reports "Scanner busy" with a Retry action. Scans are not queued.
+
+## 4. Data and configuration
+
+### Documents
+
+Every print upload and every scan is a document stored in `/var/lib/printhub/docs/<id>/`:
+
+- `doc.json`: kind (`print` or `scan`), title, creation and last-modified timestamps, page order, per-page rotation and crop, print history and email log.
+- `pages/<n>.jpg`: scanned page originals, written once, never modified.
+- `source.<ext>` and `print.pdf`: for print documents, the uploaded file and its normalized PDF.
+- `thumbs/`: derived thumbnails, regenerated as needed.
+
+Document lifetimes use Unix `flock`: stable `docs/.locks/<id>.use` and `<id>.metadata` files are outside document directories and never unlinked. Operations pin originals with shared use locks; deletion takes exclusive use nonblocking and rechecks current metadata and eligibility. All mutations serialize the entire re-read/check/modify/save transaction under an exclusive metadata lock, acquired after use; writes use unique same-directory temporary files, fsync and atomic replacement. Page-changing PATCH takes exclusive use (409 while in use), so it cannot unlink a reader's originals. Renames remain shared-use transactions.
+
+### Retention and disk space
+
+- An hourly systemd timer deletes documents whose last-modified time is older than `retention_days` (default 30), rechecking expiry and the shared busy policy under deletion locks.
+- Before writing an upload or a scan, `printhub` ensures that at least `min_free_gb` (default 2) is free. Cleanup visits oldest-first eligible documents, skipping active CUPS jobs, scans and operation pins (conversion/export/mail/print/file delivery). Append targets are pinned before reclamation. When CUPS cannot answer, protect all print history because held jobs have no age bound. If none can be reclaimed, return "Disk full".
+- Anonymous shares never evict. Before the first body read, a nonblocking single-in-flight reservation checks the 5-pending/200MiB quota against the maximum upload and free space against the maximum multipart body plus the configured floor. Admission is released on success, refusal, malformed input and disconnect.
+
+### Configuration
+
+`/etc/printhub/config.toml`, owned by the service user, mode `0600`:
+
+- `password_hash` (argon2), `session_secret` (signs session cookies; generated by the installer)
+- `smtp_host`, `smtp_port`, `smtp_security` (`starttls` or `tls`), `smtp_user`, `smtp_password`, `mail_from`
+- `retention_days`, `min_free_gb`
+- `printer_queue` (default `OfficeJet`)
+
+The SMTP password is stored in plain text in this file; unattended sending requires it. One `CF_DNS_API_TOKEN`, with both Zone → Zone → Read and Zone → DNS → Edit scoped only to `brait.dev`, lives in Traefik's environment file with mode `0600`. Zone Read lets lego resolve the zone ID; DNS Edit permits the DNS-01 TXT records. Never use a global API key.
+
+## 5. Printing from the web application
+
+### Upload
+
+- Sources: drag and drop, the file picker, or the Android share sheet through the PWA's Web Share Target.
+- Accepted types, identified by content rather than extension: PDF; JPEG, PNG, HEIC; DOC, DOCX, ODT, RTF, TXT; XLS, XLSX, ODS; PPT, PPTX, ODP.
+- Maximum upload size: 100 MB.
+
+### Normalization
+
+Every upload becomes one PDF:
+
+- JPEG and PNG: `img2pdf`. JPEG data is embedded without re-encoding.
+- HEIC: `heif-dec` (from `libheif-examples`) to JPEG, then `img2pdf`.
+- Office and text: `soffice --headless --convert-to pdf`, running as the unprivileged service user with a throwaway profile directory and a 120-second timeout.
+
+### Options
+
+Option values come from the CUPS queue's printer attributes, read through `python3-cups`. Only values the printer reports are offered, and the printer's defaults are preselected.
+
+| Option | IPP attribute |
+|---|---|
+| Paper size | `media` |
+| Quality (draft, normal, best) | `print-quality` |
+| Color or grayscale | `print-color-mode` |
+| Portrait or landscape | `orientation-requested` |
+| One-sided, two-sided long edge, two-sided short edge | `sides` |
+| Copies | `copies` |
+| Page range | `page-ranges` |
+| Scaling (fit, fill, actual size) | `print-scaling` |
+
+### Preview
+
+The server renders thumbnails of the normalized PDF with `pdftoppm`. The browser composes them onto a sheet of the selected size and orientation, applying the scaling mode and the printer's reported margins (`media-*-margin`). A page whose shape does not match the sheet (a portrait page on a landscape sheet, or the reverse) is shown turned 90° clockwise, as CUPS prints it. Grayscale uses a CSS filter. Two-sided output is shown as front and back pairs with an indication of the flip edge. The preview is accurate for layout but not for color.
+
+### Job submission and status
+
+`printhub` submits the PDF to CUPS with the selected IPP options. A status card refreshes every 2 seconds with the job state (queued, printing, completed, aborted), the printer's `printer-state-reasons` (for example, out of paper or low ink) and a Cancel action.
+
+### History
+
+Print documents follow the retention rules in section 4. A "Recent prints" list allows reprinting any of them with new options.
+
+## 6. Scanning and the page editor
+
+### Scanning
+
+- Settings are read from the SANE device: source (flatbed or document feeder), resolution (default 300 dpi), color mode (color or grayscale) and scan area (A4, Letter or full bed).
+- Flatbed: each Scan action adds one page.
+- Document feeder: one Scan action acquires every sheet in the feeder.
+- `scanimage` writes lossless PNG; `printhub` encodes it once as JPEG at quality 90 and discards the PNG. That is the only encode a page ever undergoes.
+- Pages appear in the editor as each one completes.
+- Any existing scan document can receive more pages.
+- A scan worker holds its document pin until its final metadata transaction. Restart recovery clears interrupted busy flags with a retryable error, removes abandoned incoming PNGs and keeps completed JPEGs; a failed thread launch also rolls back busy state.
+
+### Editor
+
+- Thumbnail grid. Pages are reordered by dragging (SortableJS).
+- Per-page actions: rotate 90° left or right, delete, crop, reset.
+- Crop opens the page with a Cropper.js box, either free or locked to the selected paper's aspect ratio.
+- Edits are stored as operations in `doc.json`. Originals never change; Reset restores a page.
+
+### Lossless application of edits
+
+At export, `jpegtran` applies each page's rotation and then its crop to the original JPEG, without decoding to pixels. The crop's left and top edges snap to the JPEG's iMCU grid (8 or 16 px, about 1 mm at 300 dpi). The editor displays the snapped crop box so the result matches what the user sees.
+
+### Export
+
+The document title defaults to `Scan YYYY-MM-DD HH-MM` and can be renamed.
+
+- PDF: `img2pdf` over the edited JPEGs. Each page keeps its physical size from its own original JPEG density; `page_info.dpi` supplies the same per-page preview size even after appending at a different resolution. Transparent PNG normalization preserves source DPI. Scan printing uses a private PDF until CUPS has read it.
+- JPEG: a single page downloads as `.jpg`; several pages download as a `.zip` with `01.jpg`, `02.jpg`, and so on.
+- Email: one or more typed recipients, with recently used addresses suggested; subject defaults to the title; attachments as PDF or as individual JPEGs. Sending is refused when attachments exceed 25 MiB; the cumulative exported file size is checked on disk before any attachment bytes are loaded into memory. SMTP errors are shown verbatim. Each send is recorded in `doc.json`.
+- Print: opens the print page of section 5 with the exported PDF and scaling preset to actual size.
+
+## 7. Authentication and request security
+
+- A single shared password, verified against an argon2 hash.
+- Session cookie: `Secure; HttpOnly; SameSite=Lax`, valid for 30 days.
+- Login attempts are limited to 5 per minute per client address.
+- Every state-changing request must carry `Origin: https://print.brait.dev`; others are rejected.
+- A Web Share Target request without a valid session stores the shared file for 10 minutes under a random token, redirects to login, and then opens the print page with that file.
+
+## 8. Progressive web application
+
+- A web app manifest and a service worker that caches the static shell only. Documents and API responses are never cached.
+- `share_target` accepts the upload types from section 5 via `POST multipart/form-data`.
+- iOS Safari does not support Web Share Target. iOS users print through AirPrint and can still use the web application in the browser.
+
+## 9. Error handling
+
+| Condition | Behavior |
+|---|---|
+| Printer offline or unplugged | One shared banner updater on home/print/scan, querying authenticated CUPS printer state; login reveals no printer status. Jobs stay queued and print when the printer returns. |
+| Scanner busy or missing | "Scanner busy" or "Scanner unavailable" with Retry; initial discovery Retry reloads capabilities, while scan-operation Retry restarts the requested source. |
+| Conversion failure or timeout | Error shown; the uploaded file is kept; Retry available. |
+| Disk full after cleanup | "Disk full" error; nothing is written. |
+| SMTP failure | Server response shown verbatim; the document is unchanged. |
+
+## 10. Testing
+
+Automated tests use pytest and run in GitHub Actions without printer hardware:
+
+- Printing: `ippeveprinter` (from `cups-ipp-utils`) provides a virtual IPP printer registered in a test CUPS instance. Tests assert the IPP attributes of submitted jobs for each option.
+- Scanning: the SANE `test` backend supplies pages.
+- Email: `aiosmtpd` acts as the SMTP server; tests assert recipients, subject and attachments.
+- Conversion: a sample DOCX converts through LibreOffice.
+- Lossless guarantee: the JPEG streams embedded in an exported PDF are byte-identical to the `jpegtran` output for the same operations.
+- Crop mapping: browser crop coordinates map to `jpegtran -crop` arguments correctly at 8 px and 16 px iMCU boundaries, after each rotation.
+- Retention and space reclamation: oldest-first deletion, skipping documents with active jobs or scans, and the disk-full error.
+
+A manual hardware checklist runs on the Pi before release: every print option from the web application; printing from AirPrint (iOS and macOS), Mopria (Android) and Windows; flatbed and feeder scans from the web application; and an AirSane scan from macOS or Windows.
+
+## 11. Installation and operations
+
+`deploy/install.sh` targets a fresh Raspberry Pi OS Lite 64-bit and is safe to re-run.
+
+1. Installs packages with apt: `cups`, `avahi-daemon`, `sane-utils`, `sane-airscan`, `img2pdf`, `python3-cups`, `libjpeg-turbo-progs`, `poppler-utils`, `libheif-examples`, `libreoffice-nogui`, and either `ipp-usb` or HPLIP.
+2. Probes the USB descriptor. With IPP-over-USB it creates a driverless queue (`lpadmin -m everywhere`); otherwise it creates an HPLIP queue. It then enables printer sharing.
+3. Builds and installs AirSane from source; Debian does not package it.
+4. Installs the Traefik arm64 release binary and its static configuration.
+5. Creates the `printhub` system user and copies the application to `/opt/printhub`. Every Python dependency is a Debian package, so there is no virtual environment and no pip.
+6. Installs systemd units: `printhub.service`, `traefik.service`, `airsaned.service`, and `printhub-retention.timer`.
+7. Prompts for the web password, SMTP settings and the Cloudflare token when they are not already configured.
+
+Updates: `git pull && sudo deploy/install.sh`. Logs go to journald.
+
+## 12. Repository layout
+
+```
+printhub/
+  app.py         FastAPI application, routes, static files
+  auth.py        password, sessions, rate limit, Origin check
+  printing.py    CUPS attributes, job submission, job status
+  convert.py     upload normalization (img2pdf, heif-dec, LibreOffice)
+  scanning.py    SANE options and acquisition
+  documents.py   doc.json model, jpegtran edits, export
+  mail.py        SMTP sending
+  retention.py   age-based cleanup and space reclamation
+static/          HTML, JS, CSS, vendored Cropper.js and SortableJS, manifest, service worker
+deploy/          install.sh, systemd units, Traefik configuration
+tests/
+LICENSE          AGPL-3.0
+README.md
+```

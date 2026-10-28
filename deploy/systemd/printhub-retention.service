@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[Unit]
+Description=pi-printhub retention cleanup
+
+[Service]
+Type=oneshot
+User=printhub
+WorkingDirectory=/opt/printhub
+Environment=PRINTHUB_CONFIG=/etc/printhub/config.toml
+ExecStart=/usr/bin/python3 -m printhub.retention
+ProtectSystem=strict
+ReadWritePaths=/var/lib/printhub
+PrivateTmp=true
+NoNewPrivileges=true

@@ -1,0 +1,112 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Bootstrap provides the base, forms, buttons and cards; this file holds what is particular to Print Hub. */
+:root {
+  --sheet: #fff;
+  --sheet-shadow: rgb(0 0 0 / 0.25);
+}
+[data-bs-theme="dark"] { --sheet-shadow: rgb(0 0 0 / 0.6); }
+
+[hidden] { display: none !important; }
+p:empty { display: none; }
+/* Messages often carry paths and URLs without spaces. */
+.error { color: var(--bs-danger-text-emphasis); overflow-wrap: anywhere; }
+#convert-message { white-space: pre-line; }
+/* Touch targets on phones. */
+.btn:not(.btn-sm):not(.btn-close):not(.nav-link), .form-control, .form-select { min-height: 2.75rem; }
+/* With a min-height, link buttons must centre their text like <button> does. */
+a.btn { display: inline-flex; align-items: center; justify-content: center; }
+
+/* Top bar */
+.navbar .navbar-brand { flex: none; }
+.navbar > .container-lg { column-gap: 0.5rem; }
+/* Keep the complete printer problem visible, on its own row on phones. */
+.navbar .shell-tools { flex: none; min-width: 0; justify-content: flex-end; }
+.status-pill {
+  min-width: 0; max-width: 20rem; min-height: 2.75rem; padding: 0.65rem 0.8rem;
+  display: flex; align-items: center; white-space: normal; text-align: left;
+  line-height: 1.4; overflow-wrap: anywhere;
+}
+@media (max-width: 767.98px) {
+  .printer-live { width: 100%; margin-top: 0.5rem; }
+  .status-pill { width: 100%; max-width: none; }
+}
+.btn-sm, .navbar-toggler { min-height: 2.75rem; }
+.btn-close { min-width: 1.5rem; min-height: 1.5rem; }
+[data-bs-theme="dark"] .btn-outline-secondary {
+  --bs-btn-color: var(--bs-secondary-color); --bs-btn-border-color: var(--bs-secondary-color);
+}
+[data-bs-theme="dark"] .btn-outline-primary {
+  --bs-btn-color: var(--bs-primary-text-emphasis); --bs-btn-border-color: var(--bs-primary-text-emphasis);
+}
+[data-bs-theme="dark"] .btn-outline-danger {
+  --bs-btn-color: var(--bs-danger-text-emphasis); --bs-btn-border-color: var(--bs-danger-text-emphasis);
+}
+#notifications .offcanvas-header { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; }
+#notifications .offcanvas-header .btn-close { grid-column: 2; grid-row: 1; margin: 0; }
+#notifications .offcanvas-header .btn-outline-secondary { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+.print-counts { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 1rem; }
+#print-advanced summary { min-height: 2.75rem; padding-block: 0.5rem; cursor: pointer; }
+.preview:focus-visible, .thumb:focus-visible, .crop-stage:focus-visible { outline: 3px solid var(--bs-primary); outline-offset: 3px; }
+
+/* Home */
+.drop {
+  display: block; text-align: center; padding: 2rem 1rem; cursor: pointer;
+  border: 2px dashed var(--bs-border-color); border-radius: var(--bs-border-radius-lg);
+}
+.drop.over, .drop:focus-within { border-color: var(--bs-primary); background: var(--bs-tertiary-bg); }
+
+/* Print page: the sheet preview */
+.min-w-0 { min-width: 0; }
+/* Phones: one swipeable row keeps the options and Print button near the top. Auto margins centre a short row
+   and let a long one scroll from its first sheet. */
+.preview { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 1.25rem; padding: 0.5rem; background: var(--bs-tertiary-bg); border-radius: var(--bs-border-radius); }
+.preview > :first-child { margin-left: auto; }
+.preview > :last-child { margin-right: auto; }
+figure.sheet-group { max-width: 100%; flex: none; margin: 0; display: grid; gap: 0.4rem; justify-items: center; }
+figure.sheet-group figcaption { max-width: 100%; text-align: center; color: var(--bs-secondary-color); font-size: 0.9rem; }
+.sides { display: flex; gap: 0.75rem; align-items: flex-start; }
+.sheet { position: relative; background: var(--sheet); width: min(38vw, 9rem); box-shadow: 0 1px 6px var(--sheet-shadow); }
+@media (min-width: 992px) {
+  .preview { flex-wrap: wrap; justify-content: center; overflow-x: visible; }
+  .preview > :first-child, .preview > :last-child { margin-inline: 0; }
+  .sheet { width: min(20vw, 14rem); }
+}
+.sheet .printable, .sheet .page { position: absolute; overflow: hidden; }
+.sheet .page { container-type: size; }
+.sheet .upright { position: absolute; inset: 0; }
+.sheet .turn { position: absolute; left: 50%; top: 50%; width: 100cqh; height: 100cqw; transform: translate(-50%, -50%) rotate(90deg); }
+.sheet .crop, .rot { position: absolute; }
+.rot { inset: 0; container-type: size; }
+.rot img { position: absolute; left: 50%; top: 50%; width: 100cqw; height: 100cqh; transform: translate(-50%, -50%) rotate(var(--rot, 0deg)); }
+.rot.turned img { width: 100cqh; height: 100cqw; }
+.sheet.gray img { filter: grayscale(1); }
+
+/* Scan page: page thumbnails and crop */
+ul.pages {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); align-items: start;
+}
+@media (max-width: 575.98px) {
+  ul.pages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.scan-page { padding: 0.6rem; display: grid; gap: 0.4rem; }
+.scan-page .page-no { margin: 0; color: var(--bs-secondary-color); font-size: 0.9rem; text-align: center; }
+.thumb { position: relative; overflow: hidden; background: var(--sheet); box-shadow: 0 1px 4px var(--sheet-shadow); cursor: grab; touch-action: manipulation; }
+.thumb:not([tabindex]) { cursor: default; } /* view mode: nothing to drag */
+.thumb .crop-mark { position: absolute; outline: 2px solid var(--bs-primary); box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.55); }
+.scan-page .tools { display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: center; }
+.scan-page .tools .btn { min-width: 2.75rem; min-height: 2.75rem; }
+.sortable-ghost { opacity: 0.4; }
+.crop-dialog {
+  width: min(96vw, 60rem); padding: 1rem; color: var(--bs-body-color); background: var(--bs-body-bg);
+  border: var(--bs-border-width) solid var(--bs-border-color); border-radius: var(--bs-border-radius-lg);
+}
+.crop-dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+.crop-stage { height: min(50vh, 32rem); margin-bottom: 0.75rem; }
+.crop-stage img { display: block; max-width: 100%; }
+/* Separate rules: browsers without :user-invalid drop a whole selector list that names it. */
+.form-control[aria-invalid="true"] { border-color: var(--bs-form-invalid-border-color); }
+.form-control:user-invalid { border-color: var(--bs-form-invalid-border-color); }
+.justify-self-start { justify-self: start; }
+/* Same width for every job state, so the badges form one column. */
+.job-state { min-width: 5.75rem; }

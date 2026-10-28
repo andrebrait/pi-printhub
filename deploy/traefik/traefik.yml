@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  le:
+    acme:
+      # install.sh substitutes the placeholder from /etc/traefik/acme-email.
+      email: "@ACME_EMAIL@"
+      storage: /var/lib/traefik/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        # Public resolvers: the LAN DNS override for print.brait.dev would break propagation checks.
+        resolvers:
+          - 1.1.1.1:53
+          - 1.0.0.1:53
+        # The LAN redirects IPv6 DNS to the firewall resolver, which refuses direct authoritative queries,
+        # so wait for the TXT record on the public resolvers above instead.
+        propagation:
+          disableANSChecks: true
+          requireAllRNS: true
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
