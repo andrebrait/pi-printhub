@@ -11,9 +11,9 @@ const docId = encodeURIComponent(params.get("doc") ?? "");
 // closed: show only the labelled values (IPP enums such as reverse-landscape make no sense here).
 const CONTROLS = [
   { key: "media", label: "Paper", labels: {}, format: mediaLabel, keep: isLoadableMedia },
-  { key: "print-quality", label: "Quality", closed: true, labels: { 3: "Draft", 4: "Normal", 5: "Best" } },
+  { key: "print-quality", advanced: true, label: "Quality", closed: true, labels: { 3: "Draft", 4: "Normal", 5: "Best" } },
   { key: "print-color-mode", label: "Color", labels: { color: "Color", monochrome: "Grayscale" } },
-  { key: "orientation-requested", label: "Orientation", closed: true, labels: { 3: "Portrait", 4: "Landscape" } },
+  { key: "orientation-requested", advanced: true, label: "Orientation", closed: true, labels: { 3: "Portrait", 4: "Landscape" } },
   {
     key: "sides",
     label: "Sides",
@@ -25,6 +25,7 @@ const CONTROLS = [
   },
   {
     key: "print-scaling",
+    advanced: true,
     label: "Scaling",
     labels: { auto: "Auto", "auto-fit": "Shrink to fit", fit: "Fit to page", fill: "Fill page", none: "Actual size" },
   },
@@ -68,8 +69,8 @@ function buildPages() {
 }
 
 function buildControls() {
-  const host = $("controls");
   for (const c of CONTROLS) {
+    const host = $(c.advanced ? "advanced-controls" : "controls");
     let values = printer.supported[c.key] ?? [];
     if (c.key === "print-scaling" && !values.length) values = SCALING_ALL;
     if (c.closed) values = values.filter((v) => v in c.labels);
@@ -159,12 +160,15 @@ function sheetEl(pageNo, gray) {
 }
 
 function render() {
+  $("layout-summary").textContent = ["print-quality", "orientation-requested", "print-scaling"]
+    .map((key) => controls[key]?.selectedOptions[0]?.textContent).filter(Boolean).join(" · ");
   const rangeText = $("page-ranges").value.trim();
   const selected = rangeText ? parsePageRanges(rangeText, pages.length) : pages.map((_, i) => i + 1);
   show($("range-error"), selected ? "" : `Use page numbers like 1-3,5 between 1 and ${pages.length}`);
   $("page-ranges").setAttribute("aria-invalid", String(!selected));
   const copies = $("copies");
   const copiesOk = copies.checkValidity();
+  copies.setAttribute("aria-invalid", String(!copiesOk));
   show($("copies-error"), copiesOk ? "" : "Copies must be a whole number from 1 to 99");
   $("print").disabled = !selected || !copiesOk || !pages.length;
   if (!selected) return;
@@ -173,7 +177,8 @@ function render() {
   const gray = /monochrome|bi-level/.test(value("print-color-mode"));
   const preview = $("preview");
   preview.replaceChildren();
-  sheetsFor(selected, sides).forEach(({ front, back }, i) => {
+  const sheets = sheetsFor(selected, sides);
+  sheets.forEach(({ front, back }, i) => {
     const group = document.createElement("figure");
     group.className = "sheet-group";
     const row = document.createElement("div");
@@ -183,8 +188,8 @@ function render() {
     const cap = document.createElement("figcaption");
     const flip = sides.endsWith("short-edge") ? "short" : "long";
     cap.textContent = sides.startsWith("two-sided")
-      ? `Sheet ${i + 1}: front and back, flip on ${flip} edge`
-      : `Sheet ${i + 1}: page ${front}`;
+      ? `Sheet ${i + 1} of ${sheets.length}: front and back, flip on ${flip} edge`
+      : `Sheet ${i + 1} of ${sheets.length}: page ${front}`;
     group.append(row, cap);
     preview.append(group);
   });

@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jobs – Print Hub</title>
+  <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="/css/app.css">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -12,7 +13,10 @@
 <body>
 <header id="shell"></header>
 <main class="container-lg pb-4">
-  <h1 class="h3 mb-3">Jobs</h1>
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h1 class="h3 mb-0">Jobs</h1>
+    <button id="jobs-retry" class="btn btn-outline-secondary" type="button">Refresh</button>
+  </div>
   <div id="jobs-error" class="alert alert-danger d-flex align-items-center gap-2" role="alert" hidden></div>
   <p id="jobs-loading" class="text-body-secondary">Loading jobs…</p>
 
@@ -27,7 +31,6 @@
     <ul id="recent-jobs" class="list-group"></ul>
     <p id="no-recent" class="text-body-secondary" hidden>No finished jobs yet.</p>
   </section>
-  <button id="jobs-retry" class="btn btn-outline-secondary mt-3" type="button">Refresh</button>
 </main>
 <script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script type="module" src="/js/shell.js"></script>

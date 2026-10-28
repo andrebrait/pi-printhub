@@ -5,16 +5,15 @@ import { apiFetch, errorMessage } from "./api.js";
 
 const LEVEL_TEXT = { info: "Info", warning: "Warning", error: "Error" };
 const PILL_CLASS = {
-  ok: "text-bg-success",
-  busy: "text-bg-primary",
-  warning: "text-bg-warning",
-  error: "text-bg-danger",
-  unknown: "text-bg-secondary",
+  ok: "text-success-emphasis bg-success-subtle border border-success-subtle",
+  busy: "text-primary-emphasis bg-primary-subtle border border-primary-subtle",
+  warning: "text-warning-emphasis bg-warning-subtle border border-warning-subtle",
+  error: "text-danger-emphasis bg-danger-subtle border border-danger-subtle",
+  unknown: "text-secondary-emphasis bg-secondary-subtle border border-secondary-subtle",
 };
 const ITEM_CLASS = { info: "", warning: "list-group-item-warning", error: "list-group-item-danger" };
 const PAGES = [
   ["/", "Home"],
-  ["/print.html", "Print"],
   ["/scan.html", "Scan"],
   ["/jobs.html", "Jobs"],
 ];
@@ -51,9 +50,9 @@ export function eventItem(e, document) {
   item.className = `list-group-item list-group-item-action ${ITEM_CLASS[e.level] ?? ""}${e.read ? "" : " fw-semibold"}`;
   item.dataset.id = String(e.id);
   const head = document.createElement("div");
-  head.className = "d-flex justify-content-between gap-2";
+  head.className = "d-flex flex-wrap justify-content-between gap-1";
   const level = document.createElement("span");
-  level.className = "small text-uppercase";
+  level.className = "small text-uppercase text-nowrap";
   level.textContent = `${LEVEL_TEXT[e.level] ?? e.level}${e.read ? "" : " · new"}`;
   const at = document.createElement("small");
   at.className = "text-body-secondary text-nowrap";
@@ -86,22 +85,24 @@ let toastHost;
 /** A short-lived message in the corner, optionally linking somewhere. */
 export function showToast(message, { href, level = "info" } = {}) {
   if (!toastHost) {
-    toastHost = el("div", "toast-container position-fixed bottom-0 end-0 p-3");
+    toastHost = el("div", "toast-container position-fixed bottom-0 end-0 p-3 shell-toasts");
     toastHost.setAttribute("aria-live", "polite");
     document.body.append(toastHost);
   }
   while (toastHost.children.length >= MAX_TOASTS) toastHost.firstElementChild.remove();
-  const toast = el("div", `toast align-items-center border-0 ${level === "error" ? "text-bg-danger" : level === "warning" ? "text-bg-warning" : "text-bg-dark"}`);
+  // Info toasts use Bootstrap's own toast surface, which follows the theme (text-bg-dark vanished on a dark page).
+  const tone = { error: "text-bg-danger border-0", warning: "text-bg-warning border-0" }[level] ?? "";
+  const toast = el("div", `toast align-items-center ${tone}`);
   toast.setAttribute("role", level === "error" ? "alert" : "status");
   const row = el("div", "d-flex");
   const body = el("div", "toast-body");
   body.append(el("span", null, message));
   if (href) {
-    const link = el("a", "ms-2 link-light fw-semibold", "View");
+    const link = el("a", `ms-2 fw-semibold ${level === "error" ? "link-light" : level === "warning" ? "link-dark" : ""}`, href.startsWith("/jobs.html") ? "View in Jobs" : "Open document");
     link.href = href;
     body.append(link);
   }
-  const close = el("button", `btn-close ${level === "warning" ? "" : "btn-close-white"} me-2 m-auto`);
+  const close = el("button", `btn-close ${level === "error" ? "btn-close-white" : ""} me-2 m-auto`);
   close.type = "button";
   close.setAttribute("data-bs-dismiss", "toast");
   close.setAttribute("aria-label", "Close");
@@ -120,12 +121,12 @@ function buildBar(host) {
   brand.href = "/";
 
   // Status and the bell stay visible when the links collapse on phones.
-  const tools = el("div", "shell-tools d-flex align-items-center gap-2 order-md-last");
-  const pill = el("a", "badge rounded-pill text-bg-secondary text-decoration-none text-truncate status-pill", "Checking printer…");
+  const tools = el("div", "shell-tools d-flex align-items-center gap-2 order-1 order-md-last");
+  const pill = el("a", "badge rounded text-bg-secondary text-decoration-none status-pill", "Checking printer…");
   pill.href = "/jobs.html";
   pill.id = "printer-status";
   // The live region wraps the link, so the pill stays a link for assistive technology.
-  const live = el("span", "d-inline-flex min-w-0");
+  const live = el("span", "printer-live d-inline-flex min-w-0 order-2 order-md-last");
   live.setAttribute("role", "status");
   live.append(pill);
   const bell = el("button", "btn btn-outline-secondary position-relative bell");
@@ -145,9 +146,9 @@ function buildBar(host) {
   toggler.setAttribute("aria-expanded", "false");
   toggler.setAttribute("aria-label", "Menu");
   toggler.append(el("span", "navbar-toggler-icon"));
-  tools.append(live, bell, toggler);
+  tools.append(bell, toggler);
 
-  const collapse = el("div", "collapse navbar-collapse");
+  const collapse = el("div", "collapse navbar-collapse order-3 order-md-0");
   collapse.id = "main-nav";
   const links = el("ul", "navbar-nav me-auto");
   const here = location.pathname === "/index.html" ? "/" : location.pathname;
@@ -170,7 +171,7 @@ function buildBar(host) {
   links.append(logoutItem);
   collapse.append(links);
 
-  wrap.append(brand, tools, collapse);
+  wrap.append(brand, live, tools, collapse);
   nav.append(wrap);
   host.replaceChildren(nav);
   return { pill, bell, count };
@@ -229,8 +230,8 @@ function init(host) {
       status = { printer: null, error: e.message, unread: null, latest_event: latestSeen };
     }
     const pill = statusPill(status);
-    bar.pill.className = `badge rounded-pill ${PILL_CLASS[pill.level]} text-decoration-none text-truncate status-pill`;
-    bar.pill.textContent = pill.text;
+    bar.pill.className = `badge rounded ${PILL_CLASS[pill.level]} text-decoration-none status-pill`;
+    bar.pill.textContent = `Printer: ${pill.text}`;
     bar.pill.title = status.error ? `${pill.text}: ${status.error}` : `Printer: ${pill.text}`;
     bar.pill.setAttribute("aria-label", bar.pill.title);
     if (status.unread != null) setCount(status.unread);
@@ -256,7 +257,8 @@ function init(host) {
       const page = await res.json();
       const items = page.events.map((e) => {
         const item = eventItem(e, document);
-        if (!e.read) item.addEventListener("click", () => markRead({ ids: [e.id] }));
+        // keepalive: the item is a link, so the page may unload before the request finishes.
+        if (!e.read) item.addEventListener("click", () => markRead({ ids: [e.id] }, { keepalive: true }).catch(() => {}));
         return item;
       });
       if (more) center.list.append(...items);
@@ -271,8 +273,8 @@ function init(host) {
     }
   }
 
-  async function markRead(body) {
-    const res = await apiFetch("/api/notifications/read", { method: "POST", body });
+  async function markRead(body, opts = {}) {
+    const res = await apiFetch("/api/notifications/read", { method: "POST", body, ...opts });
     if (!res.ok) throw new Error(await errorMessage(res));
   }
 
@@ -293,17 +295,8 @@ function init(host) {
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && poll());
 }
 
-/** Bootstrap's dark mode follows the system setting. */
-export function followColorScheme() {
-  const dark = matchMedia("(prefers-color-scheme: dark)");
-  const apply = () => document.documentElement.setAttribute("data-bs-theme", dark.matches ? "dark" : "light");
-  apply();
-  dark.addEventListener("change", apply);
-}
-
 // Under node --test there is no page: only the helpers above are used.
 if (typeof document !== "undefined") {
-  followColorScheme();
   const host = document.getElementById("shell");
   if (host) init(host);
 }

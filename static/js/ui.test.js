@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isLoadableMedia, mediaLabel } from "./layout.js";
+import { snapCrop } from "./crop.js";
 import { fakeDocument } from "./fake-dom.test-util.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
@@ -178,4 +179,66 @@ test("email waits for page edits still saving, and is not sent when one fails", 
       assert.match(document.getElementById("email-status").textContent, /not sent/i);
     }
   }
+});
+
+
+test("print separates advanced options without changing supported values or defaults", () => {
+  const document = fakeDocument();
+  const create = document.createElement;
+  document.createElement = (tag) => {
+    const el = create(tag);
+    if (tag === "select") el.add = (option) => el.append(option);
+    return el;
+  };
+  const hosts = new Map();
+  document.getElementById = (id) => {
+    if (!hosts.has(id)) hosts.set(id, create("div"));
+    return hosts.get(id);
+  };
+  const build = new Function("document", "location", "mediaLabel", "isLoadableMedia", "Option",
+    `${source("print.js").replace(/main\(\);\s*$/, "")}
+      return (p) => { printer = p; doc = { kind: "print" }; buildControls(); return controls; };`)(
+      document, { search: "" }, mediaLabel, isLoadableMedia,
+      class { constructor(text, value) { this.textContent = text; this.value = value; } },
+    );
+  const supported = {
+    media: ["iso_a4_210x297mm"], "print-quality": ["3", "4", "5"], "print-color-mode": ["color", "monochrome"],
+    "orientation-requested": ["3", "4"], sides: ["one-sided", "two-sided-long-edge"], "print-scaling": ["fit", "none"],
+  };
+  const defaults = {
+    media: "iso_a4_210x297mm", "print-quality": "5", "print-color-mode": "monochrome",
+    "orientation-requested": "4", sides: "two-sided-long-edge", "print-scaling": "none",
+  };
+  const controls = build({ supported, defaults });
+  const labels = (id) => hosts.get(id).children.map((field) => field.children[0].textContent);
+  assert.deepEqual(labels("controls"), ["Paper", "Color", "Sides"]);
+  assert.deepEqual(labels("advanced-controls"), ["Quality", "Orientation", "Scaling"]);
+  for (const [key, value] of Object.entries(defaults)) {
+    assert.equal(controls[key].value, value);
+    assert.deepEqual(controls[key].children.map((option) => option.value), supported[key]);
+  }
+});
+
+
+test("keyboard cropping moves and resizes within the image on its existing MCU grid", () => {
+  const document = dom();
+  let data = { x: 0, y: 0, width: 640, height: 480 };
+  const cropper = { getData: () => ({ ...data }), setData: (next) => { data = { ...data, ...next }; } };
+  const setCrop = new Function("document", "location", "Sortable", "snapCrop",
+    `${source("scan.js").replace(/main\(\);\s*$/, "")}
+      return (instance) => { cropper = instance; cropping = { page_info: { width: 640, height: 480, mcu: [16, 16] } }; };`)(
+      document, { search: "" }, { create: () => ({ option() {} }) }, snapCrop,
+    );
+  setCrop(cropper);
+  const keydown = document.getElementById("crop-stage").listeners.keydown;
+  assert.equal(typeof keydown, "function");
+  const press = (key, shiftKey = false) => keydown({ key, shiftKey, preventDefault() {} });
+  press("ArrowLeft", true);
+  press("ArrowUp", true);
+  assert.deepEqual(data, { x: 0, y: 0, width: 624, height: 464 });
+  press("ArrowRight"); press("ArrowDown"); press("ArrowRight");
+  assert.deepEqual(data, { x: 16, y: 16, width: 624, height: 464 });
+  press("ArrowLeft"); press("ArrowRight", true);
+  assert.deepEqual(data, { x: 0, y: 16, width: 640, height: 464 });
+  assert.match(document.getElementById("crop-status").textContent, /640 by 464.*left 0.*top 16/);
 });

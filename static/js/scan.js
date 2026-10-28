@@ -277,6 +277,7 @@ async function openCrop(id) {
   const img = $("crop-image");
   // rotated=1 serves the page in the frame page_info and crops use; rotation in the URL keeps caches apart.
   img.src = `${docUrl()}/pages/${encodeURIComponent(page.id)}?size=full&rotated=1&rotation=${page.rotation}`;
+  $("crop-status").textContent = "";
   $("crop-dialog").showModal();
   const c = page.crop;
   cropper = new Cropper(img, {
@@ -313,6 +314,25 @@ $("crop-apply").addEventListener("click", () => {
   editPage(id, () => ({ crop }));
 });
 $("aspect").addEventListener("change", () => cropper?.setAspectRatio(cropAspect()));
+$("crop-stage").addEventListener("keydown", (e) => {
+  const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!delta || !cropper || e.altKey || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  const { width, height, mcu: [mx, my] } = cropping.page_info;
+  const data = cropper.getData(true);
+  if (e.shiftKey) {
+    data.width = Math.min(width - data.x, Math.max(1, data.width + delta[0] * mx));
+    data.height = Math.min(height - data.y, Math.max(1, data.height + delta[1] * my));
+  } else {
+    data.x = Math.max(0, Math.min(width - data.width, data.x + delta[0] * mx));
+    data.y = Math.max(0, Math.min(height - data.height, data.y + delta[1] * my));
+  }
+  cropper.setData(data);
+  const c = snapped();
+  cropper.setData({ x: c.x, y: c.y, width: c.w, height: c.h });
+  $("crop-status").textContent = `Crop: ${c.w} by ${c.h} pixels, left ${c.x}, top ${c.y}.`;
+});
+
 
 $("scan-flatbed").addEventListener("click", () => scan("flatbed"));
 $("scan-adf").addEventListener("click", () => scan("adf"));

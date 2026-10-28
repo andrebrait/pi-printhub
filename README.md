@@ -44,6 +44,8 @@ Before a release, work through [`docs/hardware-checklist.md`](docs/hardware-chec
 
 Every page has a top bar with the printer's status (ready, printing, or its problems such as low ink or a paper jam) and a bell for notifications. The Jobs page lists every job on the queue, including jobs sent from phones and laptops, and cancels any of them. A background watcher in printhub records finished, failed and held jobs, printer problems, and failed scans or conversions in `data_dir/events.jsonl` (newest 500); the read state is shared by every device. The installer sets `JobPrivateValues none` in CUPS's default policy so the Jobs page can show job names and senders; anyone who can query the shared printer on the LAN can see them too.
 
+Print shows Paper, Color, Sides, Copies and Pages; Layout and quality holds the other options. The crop dialog also works from the keyboard: arrow keys move the crop, Shift + arrow keys resize it.
+
 ## Document safety
 
 Cleanup skips documents used by conversions, scans, exports, downloads, email or print submission. Cross-process locks live under `data_dir/docs/.locks`; do not remove these files while either the app or retention timer is running. Metadata transactions are atomic and serialized. Interrupted scans recover on startup with completed pages intact and a Retry message.
