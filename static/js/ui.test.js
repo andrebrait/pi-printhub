@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isLoadableMedia, mediaLabel } from "./layout.js";
+import { fakeDocument } from "./fake-dom.test-util.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
 const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [],
@@ -140,4 +141,41 @@ test("printing shows a toast linking to the job and adds nothing under the optio
   assert.deepEqual(toasts, [{ message: "Job 42 sent to the printer", href: "/jobs.html#job-42" }]);
   assert.deepEqual(created, []);
   assert.equal(document.getElementById("print-error").hidden, true);
+});
+
+test("email waits for page edits still saving, and is not sent when one fails", async () => {
+  for (const editOk of [true, false]) {
+    const document = dom();
+    document.createElement = fakeDocument().createElement; // a failed edit redraws the pages
+    const order = [];
+    let release;
+    const fetch = async (url, opts) => {
+      if (opts?.method === "PATCH") {
+        order.push("patch");
+        await new Promise((r) => (release = r));
+        return editOk ? { ok: true, json: async () => ({ id: "x", title: "Scan", pages: [], scanning: false }) } : { ok: false };
+      }
+      if (url.endsWith("/email")) order.push("email");
+      return { ok: true, json: async () => [] };
+    };
+    const env = new Function("document", "location", "apiFetch", "errorMessage", "Sortable", "Option", "Image",
+      `${source("scan.js").replace(/main\(\);\s*$/, "")} return { setDoc: (d) => { doc = d; }, rotate };`)(
+        document, { search: "?doc=x" }, fetch, async () => "Page edit failed", { create: () => ({ option() {} }) }, class {}, class {},
+      );
+    const page = { id: "p1", rotation: 0, crop: null, page_info: { width: 10, height: 20, mcu: 8 } };
+    env.setDoc({ id: "x", title: "Scan", pages: [page], scanning: false });
+    document.getElementById("title").value = "Scan";
+    document.getElementById("to").value = "a@example.com";
+    env.rotate("p1", 90);
+    const sent = document.getElementById("email").listeners.submit({ preventDefault() {}, target: { elements: { format: { value: "pdf" } } } });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(order, ["patch"], "nothing is emailed while the rotation is saving");
+    release();
+    await sent;
+    if (editOk) assert.deepEqual(order, ["patch", "email"]);
+    else {
+      assert.deepEqual(order, ["patch"]);
+      assert.match(document.getElementById("email-status").textContent, /not sent/i);
+    }
+  }
 });

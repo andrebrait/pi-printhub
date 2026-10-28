@@ -12,6 +12,7 @@ class FakeElement {
     this._text = "";
     this.hidden = false;
     this.disabled = false;
+    this.style = { setProperty() {} };
   }
   get textContent() {
     return this._text + this.children.map((c) => (typeof c === "string" ? c : c.textContent)).join("");
@@ -50,6 +51,7 @@ class FakeElement {
     return {
       add: (...names) => (el.className = [...new Set([...el.className.split(" ").filter(Boolean), ...names])].join(" ")),
       contains: (name) => el.className.split(" ").includes(name),
+      toggle: (name, on) => (on ? el.classList.add(name) : (el.className = el.className.split(" ").filter((c) => c !== name).join(" "))),
     };
   }
 }

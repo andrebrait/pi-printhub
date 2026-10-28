@@ -101,6 +101,7 @@ async function poll() {
 }
 
 let saving = Promise.resolve();
+let editFailures = 0; // lets a caller tell whether an edit queued before it failed
 
 /**
  * Queue an edit. `build` gets the document as the previous edit left it (so quick clicks add up) and returns the
@@ -119,6 +120,7 @@ function patch(build) {
       return true;
     })
     .catch((e) => {
+      editFailures++;
       show($("edit-error"), e.message);
       render(doc); // undo what the page shows, e.g. a rejected drag
       return false;
@@ -349,6 +351,10 @@ $("email").addEventListener("submit", async (e) => {
   status.className = "mb-0";
   show(status, "Sending…");
   try {
+    // The export reads the stored pages: edits and a rename still saving go first, and a failed one stops the send.
+    const failures = editFailures;
+    await saveTitle();
+    if (editFailures > failures) throw new Error("Not sent: the latest change could not be saved.");
     const res = await apiFetch(`${docUrl()}/email`, {
       method: "POST",
       body: { to, subject: $("subject").value.trim() || doc.title, format: e.target.elements.format.value },
