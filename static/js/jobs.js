@@ -59,7 +59,7 @@ export function jobItem(job, document, onCancel) {
     side.append(cancel);
   }
   // Every job has a state, not every job has buttons: the state goes last so the badges line up down the list.
-  side.append(el("span", `badge ${STATE_CLASS[job.state] ?? "text-bg-secondary"}`, STATE_TEXT[job.state] ?? job.state));
+  side.append(el("span", `badge job-state ${STATE_CLASS[job.state] ?? "text-bg-secondary"}`, STATE_TEXT[job.state] ?? job.state));
   item.append(side);
   return item;
 }

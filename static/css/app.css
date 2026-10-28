@@ -108,3 +108,5 @@ ul.pages {
 .form-control[aria-invalid="true"] { border-color: var(--bs-form-invalid-border-color); }
 .form-control:user-invalid { border-color: var(--bs-form-invalid-border-color); }
 .justify-self-start { justify-self: start; }
+/* Same width for every job state, so the badges form one column. */
+.job-state { min-width: 5.75rem; }
