@@ -214,9 +214,13 @@ test("print separates advanced options without changing supported values or defa
   assert.deepEqual(labels("controls"), ["Paper", "Color", "Sides"]);
   assert.deepEqual(labels("advanced-controls"), ["Quality", "Orientation", "Scaling"]);
   for (const [key, value] of Object.entries(defaults)) {
+    if (key === "orientation-requested") continue; // Auto, not a printer value; covered below
     assert.equal(controls[key].value, value);
     assert.deepEqual(controls[key].children.map((option) => option.value), supported[key]);
   }
+  // Orientation starts at Auto (CUPS turns each page to fit) whatever the printer's default, then the printer's values.
+  assert.equal(controls["orientation-requested"].value, "auto");
+  assert.deepEqual(controls["orientation-requested"].children.map((option) => option.value), ["auto", "3", "4"]);
 });
 
 
