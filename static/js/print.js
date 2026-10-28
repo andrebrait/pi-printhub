@@ -160,8 +160,10 @@ function sheetEl(pageNo, gray) {
 }
 
 function render() {
-  $("layout-summary").textContent = ["print-quality", "orientation-requested", "print-scaling"]
+  const summary = ["print-quality", "orientation-requested", "print-scaling"]
     .map((key) => controls[key]?.selectedOptions[0]?.textContent).filter(Boolean).join(" · ");
+  // A live region: write only real changes, not on every keystroke in Copies or Pages.
+  if ($("layout-summary").textContent !== summary) $("layout-summary").textContent = summary;
   const rangeText = $("page-ranges").value.trim();
   const selected = rangeText ? parsePageRanges(rangeText, pages.length) : pages.map((_, i) => i + 1);
   show($("range-error"), selected ? "" : `Use page numbers like 1-3,5 between 1 and ${pages.length}`);
@@ -193,6 +195,12 @@ function render() {
     group.append(row, cap);
     preview.append(group);
   });
+  // The preview is a keyboard-scrollable region only while it actually scrolls sideways (phones).
+  const scrolls = preview.scrollWidth > preview.clientWidth;
+  preview.tabIndex = scrolls ? 0 : -1;
+  $("preview-help").hidden = !scrolls;
+  if (scrolls) preview.setAttribute("aria-describedby", "preview-help");
+  else preview.removeAttribute("aria-describedby");
 }
 
 async function print(e) {

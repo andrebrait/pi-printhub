@@ -23,7 +23,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; }
 .navbar .shell-tools { flex: none; min-width: 0; justify-content: flex-end; }
 .status-pill {
   min-width: 0; max-width: 20rem; min-height: 2.75rem; padding: 0.65rem 0.8rem;
-  display: flex; align-items: center; white-space: normal !important; text-align: left;
+  display: flex; align-items: center; white-space: normal; text-align: left;
   line-height: 1.4; overflow-wrap: anywhere;
 }
 @media (max-width: 767.98px) {
@@ -104,10 +104,7 @@ ul.pages {
 .crop-dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .crop-stage { height: min(50vh, 32rem); margin-bottom: 0.75rem; }
 .crop-stage img { display: block; max-width: 100%; }
-.form-control[aria-invalid="true"], .form-control:user-invalid { border-color: var(--bs-form-invalid-border-color); }
+/* Separate rules: browsers without :user-invalid drop a whole selector list that names it. */
+.form-control[aria-invalid="true"] { border-color: var(--bs-form-invalid-border-color); }
+.form-control:user-invalid { border-color: var(--bs-form-invalid-border-color); }
 .justify-self-start { justify-self: start; }
-/* Toasts: at the bottom on phones, where the two-row top bar (status and bell) must stay visible; under the
-   one-row bar on wider screens, clear of the Print and Send buttons. */
-@media (min-width: 768px) {
-  .shell-toasts { top: 4rem; bottom: auto !important; }
-}

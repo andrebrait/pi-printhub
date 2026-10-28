@@ -85,7 +85,8 @@ let toastHost;
 /** A short-lived message in the corner, optionally linking somewhere. */
 export function showToast(message, { href, level = "info" } = {}) {
   if (!toastHost) {
-    toastHost = el("div", "toast-container position-fixed bottom-0 end-0 p-3 shell-toasts");
+    // Bottom left: clear of the status, bell and page actions, which sit top right and in the right column.
+    toastHost = el("div", "toast-container position-fixed bottom-0 start-0 p-3");
     toastHost.setAttribute("aria-live", "polite");
     document.body.append(toastHost);
   }
@@ -232,7 +233,7 @@ function init(host) {
     const pill = statusPill(status);
     bar.pill.className = `badge rounded ${PILL_CLASS[pill.level]} text-decoration-none status-pill`;
     bar.pill.textContent = `Printer: ${pill.text}`;
-    bar.pill.title = status.error ? `${pill.text}: ${status.error}` : `Printer: ${pill.text}`;
+    bar.pill.title = status.error ? `Printer: ${pill.text}: ${status.error}` : `Printer: ${pill.text}`;
     bar.pill.setAttribute("aria-label", bar.pill.title);
     if (status.unread != null) setCount(status.unread);
     if (latestSeen !== null && status.latest_event > latestSeen) await toastNew(latestSeen);

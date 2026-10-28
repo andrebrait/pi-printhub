@@ -316,13 +316,14 @@ $("crop-apply").addEventListener("click", () => {
 $("aspect").addEventListener("change", () => cropper?.setAspectRatio(cropAspect()));
 $("crop-stage").addEventListener("keydown", (e) => {
   const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
-  if (!delta || !cropper || e.altKey || e.ctrlKey || e.metaKey) return;
+  // Before Cropper has built its box, getData() is all zeros and snapping it throws.
+  if (!delta || !cropper?.ready || e.altKey || e.ctrlKey || e.metaKey) return;
   e.preventDefault();
   const { width, height, mcu: [mx, my] } = cropping.page_info;
   const data = cropper.getData(true);
   if (e.shiftKey) {
-    data.width = Math.min(width - data.x, Math.max(1, data.width + delta[0] * mx));
-    data.height = Math.min(height - data.y, Math.max(1, data.height + delta[1] * my));
+    data.width = Math.min(width - data.x, Math.max(mx, data.width + delta[0] * mx));
+    data.height = Math.min(height - data.y, Math.max(my, data.height + delta[1] * my));
   } else {
     data.x = Math.max(0, Math.min(width - data.width, data.x + delta[0] * mx));
     data.y = Math.max(0, Math.min(height - data.height, data.y + delta[1] * my));
@@ -330,7 +331,9 @@ $("crop-stage").addEventListener("keydown", (e) => {
   cropper.setData(data);
   const c = snapped();
   cropper.setData({ x: c.x, y: c.y, width: c.w, height: c.h });
-  $("crop-status").textContent = `Crop: ${c.w} by ${c.h} pixels, left ${c.x}, top ${c.y}.`;
+  // Announce what Cropper kept: a locked shape can ignore part of the change.
+  const kept = snapped();
+  $("crop-status").textContent = `Crop: ${kept.w} by ${kept.h} pixels, left ${kept.x}, top ${kept.y}.`;
 });
 
 

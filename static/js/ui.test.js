@@ -223,7 +223,7 @@ test("print separates advanced options without changing supported values or defa
 test("keyboard cropping moves and resizes within the image on its existing MCU grid", () => {
   const document = dom();
   let data = { x: 0, y: 0, width: 640, height: 480 };
-  const cropper = { getData: () => ({ ...data }), setData: (next) => { data = { ...data, ...next }; } };
+  const cropper = { ready: true, getData: () => ({ ...data }), setData: (next) => { data = { ...data, ...next }; } };
   const setCrop = new Function("document", "location", "Sortable", "snapCrop",
     `${source("scan.js").replace(/main\(\);\s*$/, "")}
       return (instance) => { cropper = instance; cropping = { page_info: { width: 640, height: 480, mcu: [16, 16] } }; };`)(
@@ -241,4 +241,32 @@ test("keyboard cropping moves and resizes within the image on its existing MCU g
   press("ArrowLeft"); press("ArrowRight", true);
   assert.deepEqual(data, { x: 0, y: 16, width: 640, height: 464 });
   assert.match(document.getElementById("crop-status").textContent, /640 by 464.*left 0.*top 16/);
+});
+
+test("keyboard cropping waits for the cropper, keeps at least one block and reports what Cropper applied", () => {
+  const document = dom();
+  let data = { x: 0, y: 0, width: 32, height: 32 };
+  let ready = false;
+  // Like Cropper with a locked ratio: the height follows the width, whatever was asked.
+  const cropper = {
+    get ready() { return ready; },
+    getData: () => ({ ...data }),
+    setData: (next) => { data = { ...data, ...next, height: next.width ?? data.width }; },
+  };
+  const setCrop = new Function("document", "location", "Sortable", "snapCrop",
+    `${source("scan.js").replace(/main\(\);\s*$/, "")}
+      return (instance) => { cropper = instance; cropping = { page_info: { width: 640, height: 480, mcu: [16, 16] } }; };`)(
+      document, { search: "" }, { create: () => ({ option() {} }) }, snapCrop,
+    );
+  setCrop(cropper);
+  const press = (key, shiftKey = false) => document.getElementById("crop-stage").listeners.keydown({ key, shiftKey, preventDefault() {} });
+  press("ArrowRight");
+  assert.deepEqual(data, { x: 0, y: 0, width: 32, height: 32 }, "no change before Cropper is ready");
+  ready = true;
+  press("ArrowLeft", true);
+  press("ArrowLeft", true);
+  press("ArrowLeft", true);
+  assert.equal(data.width, 16, "never smaller than one block");
+  press("ArrowDown", true); // the locked ratio ignores a height-only change
+  assert.match(document.getElementById("crop-status").textContent, /16 by 16/);
 });
