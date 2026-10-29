@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Print Hub">
-  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- The app icons (icon-192.png, icon-512.png, maskable-512.png) are this drawing without the rounded tile, on a
+     square #1f4e79 background; the maskable one scales the drawing to 80%. Re-render them when this file changes. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#1f4e79"/>
   <rect x="20" y="9" width="24" height="16" rx="1.5" fill="#dbe7f3"/>
   <rect x="9" y="22" width="46" height="23" rx="6" fill="#fff"/>
