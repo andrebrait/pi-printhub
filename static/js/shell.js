@@ -134,6 +134,7 @@ function buildBar(host) {
   bell.setAttribute("data-bs-target", "#notifications");
   bell.setAttribute("aria-controls", "notifications");
   bell.dataset.icon = "notifications";
+  bell.setAttribute("aria-label", "Notifications");
   const count = el("span", "position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger");
   count.hidden = true;
   bell.append(count);
