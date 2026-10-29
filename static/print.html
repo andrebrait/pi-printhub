@@ -15,14 +15,14 @@
 <main class="container-lg pb-4">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
     <h1 class="h3 mb-0 text-break">Print <span id="title" class="fw-normal"></span></h1>
-    <a class="btn btn-outline-secondary" href="/#drop">Change file</a>
+    <a class="btn btn-outline-secondary" href="/#drop" data-icon="upload_file">Change file</a>
   </div>
   <p id="load-error" class="alert alert-danger error" role="alert" hidden></p>
 
   <section id="convert" class="card mb-3" hidden>
     <div class="card-body">
       <p id="convert-message" class="error" role="alert"></p>
-      <button id="retry" class="btn btn-outline-primary" type="button">Retry</button>
+      <button id="retry" class="btn btn-outline-primary" type="button" data-icon="refresh">Retry</button>
     </div>
   </section>
 
@@ -56,7 +56,7 @@
             <summary>Layout and quality<span id="layout-summary" class="small text-body-secondary d-block" aria-live="polite"></span></summary>
             <div id="advanced-controls" class="d-grid gap-3 pt-2"></div>
           </details>
-          <button id="print" class="btn btn-primary" type="submit">Print</button>
+          <button id="print" class="btn btn-primary" type="submit" data-icon="print">Print</button>
           <p id="print-error" class="alert alert-danger error mb-0" role="alert" hidden></p>
         </div>
       </form>

@@ -13,9 +13,9 @@ const PILL_CLASS = {
 };
 const ITEM_CLASS = { info: "", warning: "list-group-item-warning", error: "list-group-item-danger" };
 const PAGES = [
-  ["/", "Home"],
-  ["/scan.html", "Scan"],
-  ["/jobs.html", "Jobs"],
+  ["/", "Home", "home"],
+  ["/scan.html", "Scan", "scanner"],
+  ["/jobs.html", "Jobs", "list_alt"],
 ];
 const POLL_MS = 5000;
 const MAX_TOASTS = 3;
@@ -78,8 +78,6 @@ function el(tag, className, text) {
   return node;
 }
 
-const BELL = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 16a2 2 0 0 0 2-2H6a2 2 0 0 0 2 2m.995-14.901a1 1 0 1 0-1.99 0A5 5 0 0 0 3 6c0 1.098-.5 6-2 7h14c-1.5-1-2-5.902-2-7 0-2.42-1.72-4.44-4.005-4.901"/></svg>';
-
 let toastHost;
 
 /** A short-lived message in the corner, optionally linking somewhere. */
@@ -135,7 +133,7 @@ function buildBar(host) {
   bell.setAttribute("data-bs-toggle", "offcanvas");
   bell.setAttribute("data-bs-target", "#notifications");
   bell.setAttribute("aria-controls", "notifications");
-  bell.insertAdjacentHTML("afterbegin", BELL); // static markup, no data
+  bell.dataset.icon = "notifications";
   const count = el("span", "position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger");
   count.hidden = true;
   bell.append(count);
@@ -153,16 +151,18 @@ function buildBar(host) {
   collapse.id = "main-nav";
   const links = el("ul", "navbar-nav me-auto");
   const here = location.pathname === "/index.html" ? "/" : location.pathname;
-  for (const [href, label] of PAGES) {
+  for (const [href, label, icon] of PAGES) {
     const li = el("li", "nav-item");
     const a = el("a", `nav-link${href === here ? " active" : ""}`, label);
     a.href = href;
+    a.dataset.icon = icon;
     if (href === here) a.setAttribute("aria-current", "page");
     li.append(a);
     links.append(li);
   }
   const logout = el("button", "btn btn-link nav-link px-md-2", "Log out");
   logout.type = "button";
+  logout.dataset.icon = "logout";
   logout.addEventListener("click", async () => {
     await apiFetch("/api/logout", { method: "POST" });
     location.href = "/login.html";
@@ -187,6 +187,7 @@ function buildCenter() {
   const title = el("h2", "offcanvas-title h5 me-auto", "Notifications");
   title.id = "notifications-title";
   const markAll = el("button", "btn btn-sm btn-outline-secondary me-2", "Mark all read");
+  markAll.dataset.icon = "done_all";
   markAll.type = "button";
   const close = el("button", "btn-close");
   close.type = "button";

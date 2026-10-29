@@ -49,11 +49,13 @@ export function jobItem(job, document, onCancel) {
   if (job.doc_id) {
     const open = el("a", "btn btn-sm btn-outline-secondary", "Document");
     open.href = `/print.html?doc=${encodeURIComponent(job.doc_id)}`;
+    open.dataset.icon = "description";
     side.append(open);
   }
   if (ACTIVE.has(job.state)) {
     const cancel = el("button", "btn btn-sm btn-outline-danger", "Cancel");
     cancel.type = "button";
+    cancel.dataset.icon = "cancel";
     cancel.setAttribute("aria-label", `Cancel job ${job.id}`);
     cancel.addEventListener("click", () => onCancel(job.id, cancel));
     side.append(cancel);

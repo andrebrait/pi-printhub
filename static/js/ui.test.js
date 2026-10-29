@@ -7,7 +7,7 @@ import { snapCrop } from "./crop.js";
 import { fakeDocument } from "./fake-dom.test-util.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
-const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [],
+const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [], dataset: {},
   addEventListener(type, fn) { this.listeners[type] = fn; },
   add(option) { this.options.push(option); }, replaceChildren() { this.options = []; }, contains: () => false,
 });

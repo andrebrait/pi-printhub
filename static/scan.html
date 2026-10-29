@@ -19,11 +19,11 @@
 
   <div class="row g-3">
     <div class="col-lg-8 min-w-0">
-      <button id="edit-toggle" class="btn btn-outline-primary mb-3" type="button" hidden>Edit or add pages</button>
+      <button id="edit-toggle" class="btn btn-outline-primary mb-3" type="button" data-icon="edit" hidden>Edit or add pages</button>
       <form id="scan-form" class="card mb-3" hidden>
         <div class="card-body d-grid gap-3">
           <p id="scanner-status" class="mb-0" role="status">Looking for the scanner…</p>
-          <button id="scanner-retry" class="btn btn-outline-secondary justify-self-start" type="button" hidden>Retry</button>
+          <button id="scanner-retry" class="btn btn-outline-secondary justify-self-start" type="button" data-icon="refresh" hidden>Retry</button>
           <div id="settings" class="row g-3" hidden>
             <div class="col-sm-4">
               <label class="form-label" for="resolution">Resolution</label>
@@ -43,13 +43,13 @@
             </div>
           </div>
           <div class="d-flex flex-wrap gap-2">
-            <button id="scan-flatbed" class="btn btn-primary" type="button" hidden>Scan from glass</button>
-            <button id="scan-adf" class="btn btn-primary" type="button" hidden>Scan from feeder</button>
+            <button id="scan-flatbed" class="btn btn-primary" type="button" data-icon="scanner" hidden>Scan from glass</button>
+            <button id="scan-adf" class="btn btn-primary" type="button" data-icon="document_scanner" hidden>Scan from feeder</button>
           </div>
           <p id="scan-status" class="mb-0" role="status"></p>
           <div id="scan-failed" class="alert alert-danger d-flex flex-wrap align-items-center gap-2 mb-0" hidden>
             <p id="scan-error" class="error mb-0 me-auto" role="alert"></p>
-            <button id="retry" class="btn btn-sm btn-outline-danger" type="button">Retry</button>
+            <button id="retry" class="btn btn-sm btn-outline-danger" type="button" data-icon="refresh">Retry</button>
           </div>
         </div>
       </form>
@@ -67,9 +67,9 @@
           </div>
           <div id="outputs" class="d-grid gap-3">
             <div class="d-flex flex-wrap gap-2">
-              <a id="download-pdf" class="btn btn-outline-secondary flex-fill">Download PDF</a>
-              <a id="download-jpeg" class="btn btn-outline-secondary flex-fill">Download JPEG</a>
-              <a id="print" class="btn btn-outline-primary flex-fill">Print</a>
+              <a id="download-pdf" class="btn btn-outline-secondary flex-fill" data-icon="picture_as_pdf">Download PDF</a>
+              <a id="download-jpeg" class="btn btn-outline-secondary flex-fill" data-icon="image">Download JPEG</a>
+              <a id="print" class="btn btn-outline-primary flex-fill" data-icon="print">Print</a>
             </div>
             <form id="email" class="d-grid gap-3 border-top pt-3">
               <div>
@@ -92,7 +92,7 @@
                   <label class="form-check-label" for="format-jpeg">JPEG</label>
                 </div>
               </fieldset>
-              <button id="send" class="btn btn-primary" type="submit">Send email</button>
+              <button id="send" class="btn btn-primary" type="submit" data-icon="send">Send email</button>
               <p id="email-status" class="mb-0" role="status"></p>
             </form>
           </div>
@@ -115,8 +115,8 @@
     <div id="crop-stage" class="crop-stage" tabindex="0" role="application" aria-label="Crop rectangle" aria-describedby="crop-help crop-status"><img id="crop-image" alt="Page to crop"></div>
     <p id="crop-status" class="small text-body-secondary" role="status"></p>
     <div class="d-flex gap-2">
-      <button id="crop-apply" class="btn btn-primary" type="button">Apply</button>
-      <button id="crop-cancel" class="btn btn-outline-secondary" type="button">Cancel</button>
+      <button id="crop-apply" class="btn btn-primary" type="button" data-icon="check">Apply</button>
+      <button id="crop-cancel" class="btn btn-outline-secondary" type="button" data-icon="close">Cancel</button>
     </div>
   </dialog>
 </main>
