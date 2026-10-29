@@ -20,6 +20,7 @@ def cfg(tmp_path) -> Config:
         smtp_user="printhub",
         smtp_password="smtp-secret",
         mail_from="printhub@example.com",
+        origin="https://print.example.com",
         data_dir=tmp_path / "data",
     )
 

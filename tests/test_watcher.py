@@ -11,7 +11,7 @@ from printhub.watcher import Watcher
 OURS = "ipp://localhost/printers/OfficeJet"
 
 
-def job(state: int, *, uri=OURS, name="report.pdf", user="andre", host="phone.lan", **extra) -> dict:
+def job(state: int, *, uri=OURS, name="report.pdf", user="user", host="phone.lan", **extra) -> dict:
     return {
         "job-printer-uri": uri, "job-state": state, "job-name": name, "job-originating-user-name": user,
         "job-originating-host-name": host, "time-at-creation": 1793198008, **extra,
@@ -46,7 +46,7 @@ def test_queue_jobs_reads_our_queue_newest_first(cups_):
     jobs = printing.queue_jobs(cups_, "OfficeJet")
     assert [j.id for j in jobs] == [5, 3]
     done = jobs[1]
-    assert (done.name, done.user, done.host, done.state, done.sheets) == ("report.pdf", "andre", "phone.lan", "completed", 2)
+    assert (done.name, done.user, done.host, done.state, done.sheets) == ("report.pdf", "user", "phone.lan", "completed", 2)
     assert done.created == "2026-10-28T14:33:28+00:00" and done.completed == "2026-10-28T14:34:10+00:00"
     assert jobs[0].completed is None
 
@@ -77,7 +77,7 @@ def test_job_transitions_become_events(cups_, watcher, log, state, level, word):
     watcher.tick()  # no change, no second event
     assert events(log) == [(level, "job", f"Job 7 {word}", 7)]
     (event, _), = log.page()
-    assert "report.pdf" in event.detail and "andre@phone.lan" in event.detail
+    assert "report.pdf" in event.detail and "user@phone.lan" in event.detail
 
 
 def test_new_job_finishing_between_ticks_is_reported(cups_, watcher, log):

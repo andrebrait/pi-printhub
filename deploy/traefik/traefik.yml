@@ -22,7 +22,7 @@ certificatesResolvers:
       storage: /var/lib/traefik/acme.json
       dnsChallenge:
         provider: cloudflare
-        # Public resolvers: the LAN DNS override for print.brait.dev would break propagation checks.
+        # Public resolvers: the LAN DNS override for the web app hostname would break propagation checks.
         resolvers:
           - 1.1.1.1:53
           - 1.0.0.1:53

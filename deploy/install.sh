@@ -66,6 +66,31 @@ show_job_details() {
 
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_security() { [[ $1 == starttls || $1 == tls ]]; }
+valid_hostname() { [[ ${#1} -le 253 && $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$ ]]; }
+
+# ask_host: WEB_HOST from the user, lowercased (local -l) because browsers send the Origin host in lowercase.
+ask_host() {
+    local -l host
+    ask host "Web app hostname (for example print.example.com)" "" valid_hostname
+    WEB_HOST=$host
+}
+
+# config_host CONFIG: the host of the config's origin, an empty line when it has none; fails on an unusable origin.
+config_host() {
+    python3 -c 'import sys, tomllib, urllib.parse
+cfg = tomllib.load(open(sys.argv[1], "rb"))
+if "origin" in cfg:
+    o = cfg["origin"]
+    host = isinstance(o, str) and urllib.parse.urlsplit(o).hostname
+    if not host:
+        sys.exit(f"error: origin {o!r} in {sys.argv[1]} is not a URL")
+    print(host)
+else:
+    print()' "$1"
+}
+
+# add_origin CONFIG HOST: the config with origin first, where TOML keeps it at the top level.
+add_origin() { printf 'origin = "https://%s"\n' "$2"; cat "$1"; }
 
 ask() { # ask VAR "prompt" [default] [validator]
     local -n out=$1
@@ -235,10 +260,14 @@ sys.stdout.write(pathlib.Path(sys.argv[1]).read_text().replace(
     "\"@ACME_EMAIL@\"", json.dumps(os.environ["ACME_EMAIL"])))' "$REPO/deploy/traefik/traefik.yml"
 }
 
+# render_dynamic_yml HOST: the router config for the web app's hostname (valid_hostname already passed).
+render_dynamic_yml() { sed "s/@WEB_HOST@/$1/" "$REPO/deploy/traefik/dynamic.yml"; }
+
 install_traefik_config() {
     render_traefik_yml "$(</etc/traefik/acme-email)" >/etc/traefik/traefik.yml
     chmod 0644 /etc/traefik/traefik.yml
-    install -m 0644 "$REPO/deploy/traefik/dynamic.yml" /etc/traefik/
+    render_dynamic_yml "$WEB_HOST" >/etc/traefik/dynamic.yml
+    chmod 0644 /etc/traefik/dynamic.yml
 }
 
 install_app() {
@@ -256,9 +285,21 @@ install_app() {
     chmod -R a+rX /opt/printhub
 }
 
+# write_config: asks for the settings on the first run and sets WEB_HOST from the config on every run.
 write_config() {
     local cfg=/etc/printhub/config.toml pw pw2 hash secret host port security user smtp_pw from content
-    [[ ! -e $cfg ]] || return 0
+    if [[ -e $cfg ]]; then
+        WEB_HOST=$(config_host "$cfg")
+        if [[ -n $WEB_HOST ]]; then
+            valid_hostname "$WEB_HOST" || die "origin in $cfg must be https://<hostname>, got host $WEB_HOST"
+            return 0
+        fi
+        # Configs written before the hostname was asked for have no origin.
+        ask_host
+        add_origin "$cfg" "$WEB_HOST" | write_secret "$cfg" printhub:printhub
+        return 0
+    fi
+    ask_host
     ask_secret pw "Web password"
     ask_secret pw2 "Repeat web password"
     [[ $pw == "$pw2" ]] || die "passwords differ"
@@ -274,11 +315,12 @@ write_config() {
     ask from "Mail From address" "$user"
 
     content=$(PASSWORD_HASH=$hash SESSION_SECRET=$secret SMTP_HOST=$host SMTP_PORT=$port \
-        SMTP_SECURITY=$security SMTP_USER=$user SMTP_PASSWORD=$smtp_pw MAIL_FROM=$from python3 -c '
+        SMTP_SECURITY=$security SMTP_USER=$user SMTP_PASSWORD=$smtp_pw MAIL_FROM=$from WEB_HOST=$WEB_HOST python3 -c '
 import json, os
 for k in ("password_hash", "session_secret", "smtp_host", "smtp_security", "smtp_user", "smtp_password", "mail_from"):
     print(k, "=", json.dumps(os.environ[k.upper()]))
-print("smtp_port =", int(os.environ["SMTP_PORT"]))')
+print("smtp_port =", int(os.environ["SMTP_PORT"]))
+print("origin =", json.dumps("https://" + os.environ["WEB_HOST"]))')
     install -d -m 0750 -o root -g printhub /etc/printhub
     printf '%s\n' "$content" | write_secret "$cfg" printhub:printhub
 }
@@ -286,7 +328,7 @@ print("smtp_port =", int(os.environ["SMTP_PORT"]))')
 write_traefik_env() {
     local env=/etc/traefik/traefik.env email_file=/etc/traefik/acme-email token email content
     if [[ ! -e $env ]]; then
-        ask_secret token "Cloudflare API token (Zone > Zone > Read AND Zone > DNS > Edit, scoped to brait.dev)"
+        ask_secret token "Cloudflare API token (Zone > Zone > Read AND Zone > DNS > Edit, scoped to the zone of $WEB_HOST)"
         printf 'CF_DNS_API_TOKEN=%s\n' "$token" | write_secret "$env" root:root
     else
         # Drop the obsolete TRAEFIK_* setting: static file options must live in traefik.yml.
@@ -314,14 +356,14 @@ print_network_todo() {
     local dev addr mac
     read -r dev addr < <(ip -4 -o route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) { if ($i == "dev") d = $(i + 1); if ($i == "src") s = $(i + 1) } print d, s}') || true
     if [[ -z ${dev:-} || -z ${addr:-} ]]; then
-        echo "Done. No default route found; add the LAN DNS override and DHCP reservation for print.brait.dev yourself."
+        echo "Done. No default route found; add the LAN DNS override and DHCP reservation for $WEB_HOST yourself."
         return 0
     fi
     mac=$(<"/sys/class/net/$dev/address")
     cat <<MSG
 
 Done. Two things remain on your router/DNS:
-  1. LAN DNS override: print.brait.dev -> $addr
+  1. LAN DNS override: $WEB_HOST -> $addr
   2. DHCP reservation: $mac -> $addr
 MSG
 }

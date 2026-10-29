@@ -14,6 +14,7 @@ smtp_security = "starttls"
 smtp_user = "printhub"
 smtp_password = "smtp-secret"
 mail_from = "printhub@example.com"
+origin = "https://print.example.com"
 """
 
 
@@ -32,7 +33,6 @@ retention_days = 7
 min_free_gb = 5.5
 printer_queue = "Office2"
 data_dir = "/srv/printhub"
-origin = "https://print.example.com"
 """,
     )
 
@@ -53,14 +53,13 @@ def test_defaults_applied(tmp_path):
     assert cfg.min_free_gb == 2
     assert cfg.printer_queue == "OfficeJet"
     assert cfg.data_dir == Path("/var/lib/printhub")
-    assert cfg.origin == "https://print.brait.dev"
 
 
-def test_missing_required_key(tmp_path):
-    text = REQUIRED.replace('smtp_host = "mail.example.com"\n', "")
-
-    with pytest.raises(ConfigError, match="smtp_host"):
-        load_config(write(tmp_path, text))
+@pytest.mark.parametrize("line", ['smtp_host = "mail.example.com"\n', 'origin = "https://print.example.com"\n'])
+def test_missing_required_key(tmp_path, line):
+    key = line.split(" ")[0]
+    with pytest.raises(ConfigError, match=key):
+        load_config(write(tmp_path, REQUIRED.replace(line, "")))
 
 
 def test_invalid_smtp_security(tmp_path):

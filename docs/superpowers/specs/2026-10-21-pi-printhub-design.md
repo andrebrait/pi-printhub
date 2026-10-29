@@ -9,7 +9,7 @@ License: AGPL-3.0-only
 Printing over the network from Android, macOS and Windows to an HP OfficeJet Pro 6970 is unreliable. pi-printhub moves the printer off the network and behind a Raspberry Pi connected over USB. The Pi:
 
 1. appears to every client OS as a standard network printer and scanner, and
-2. serves a web application at `https://print.brait.dev` that prints uploaded files and runs a scan, edit, export and email workflow.
+2. serves a web application at `https://print.example.com` that prints uploaded files and runs a scan, edit, export and email workflow.
 
 The web application is the fallback for when a client's print or scan stack misbehaves, and the main tool for scanning.
 
@@ -36,7 +36,7 @@ The web application is the fallback for when a client's print or scan stack misb
 | Host | Raspberry Pi 4, 4 GB RAM, 64 GB microSD |
 | OS | Raspberry Pi OS Lite 64-bit (Debian Trixie base) |
 | Printer | HP OfficeJet Pro 6970, USB, product ID `03f0:0c54` |
-| Domain | `print.brait.dev`, DNS hosted on Cloudflare |
+| Domain | `print.example.com`, DNS hosted on Cloudflare |
 
 HPLIP's `models.dat` lists the 6970 with `plugin=0` (no proprietary plugin), `scan-src=3` (flatbed and document feeder) and `scan-type=7` (HPLIP `hpaio` scanning). Whether the printer also exposes an IPP-over-USB interface (USB class 7, subclass 1, protocol 4) is unknown until it is attached to the Pi. Section 3 handles both cases.
 
@@ -50,12 +50,12 @@ The document feeder is assumed to be single-sided. Verify this on the device; it
 | CUPS + Avahi | One shared queue named `OfficeJet`, advertised over DNS-SD for AirPrint, Mopria and IPP Everywhere clients. |
 | AirSane | Publishes the SANE scanner over eSCL (AirScan) for native scan clients. |
 | `printhub` | The web application: FastAPI under uvicorn, listening only on `127.0.0.1:8000`. |
-| Traefik | Reverse proxy on ports 80 and 443. Port 80 redirects to HTTPS. Obtains and renews the `print.brait.dev` certificate from Let's Encrypt through the Cloudflare DNS-01 challenge. |
+| Traefik | Reverse proxy on ports 80 and 443. Port 80 redirects to HTTPS. Obtains and renews the `print.example.com` certificate from Let's Encrypt through the Cloudflare DNS-01 challenge. |
 | LibreOffice (headless) | Converts Office and text documents to PDF. Invoked by `printhub`, one conversion at a time. |
 
 ### Name resolution
 
-The LAN resolver carries a host override `print.brait.dev → <Pi LAN address>`, and the Pi has a DHCP reservation. No public A record is required; Cloudflare only hosts the transient ACME TXT records. This avoids DNS rebinding protection on the LAN resolver discarding a public record that points at a private address.
+The LAN resolver carries a host override `print.example.com → <Pi LAN address>`, and the Pi has a DHCP reservation. No public A record is required; Cloudflare only hosts the transient ACME TXT records. This avoids DNS rebinding protection on the LAN resolver discarding a public record that points at a private address.
 
 ### Scanner contention
 
@@ -89,7 +89,7 @@ Document lifetimes use Unix `flock`: stable `docs/.locks/<id>.use` and `<id>.met
 - `retention_days`, `min_free_gb`
 - `printer_queue` (default `OfficeJet`)
 
-The SMTP password is stored in plain text in this file; unattended sending requires it. One `CF_DNS_API_TOKEN`, with both Zone → Zone → Read and Zone → DNS → Edit scoped only to `brait.dev`, lives in Traefik's environment file with mode `0600`. Zone Read lets lego resolve the zone ID; DNS Edit permits the DNS-01 TXT records. Never use a global API key.
+The SMTP password is stored in plain text in this file; unattended sending requires it. One `CF_DNS_API_TOKEN`, with both Zone → Zone → Read and Zone → DNS → Edit scoped only to the zone of the web app hostname, lives in Traefik's environment file with mode `0600`. Zone Read lets lego resolve the zone ID; DNS Edit permits the DNS-01 TXT records. Never use a global API key.
 
 ## 5. Printing from the web application
 
@@ -171,7 +171,7 @@ The document title defaults to `Scan YYYY-MM-DD HH-MM` and can be renamed.
 - A single shared password, verified against an argon2 hash.
 - Session cookie: `Secure; HttpOnly; SameSite=Lax`, valid for 30 days.
 - Login attempts are limited to 5 per minute per client address.
-- Every state-changing request must carry `Origin: https://print.brait.dev`; others are rejected.
+- Every state-changing request must carry `Origin: https://print.example.com`; others are rejected.
 - A Web Share Target request without a valid session stores the shared file for 10 minutes under a random token, redirects to login, and then opens the print page with that file.
 
 ## 8. Progressive web application

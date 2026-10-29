@@ -105,6 +105,6 @@
 Precondition: IPP is enabled on the printer (`ipptool -t ipp://localhost:60000/ipp/print get-printer-attributes.test` passes on the Pi) and no job or scan is running.
 
 - [ ] **Step 1:** Copy the branch to `/usr/local/src/pi-printhub` and run `sudo deploy/install.sh`. Expected: services active; `lpoptions -p OfficeJet` shows `printer-make-and-model='HP OfficeJet Pro 6970, driverless, ...'` and `printer-info='HP OfficeJet Pro 6970'`; `printer-error-policy=retry-job`.
-- [ ] **Step 2:** mDNS from the LAN (`dig -p 5353 @10.0.254.2 _ipp._tcp.local PTR`, same for `_uscan._tcp`). Expected: `HP OfficeJet Pro 6970 @ raspberrypi`, `HP OfficeJet Pro 6970 [053F79] (USB)` and one AirSane scanner; no `officejet_pro_6970` hpaio-net scanner.
+- [ ] **Step 2:** mDNS from the LAN (`dig -p 5353 @<pi address> _ipp._tcp.local PTR`, same for `_uscan._tcp`). Expected: `HP OfficeJet Pro 6970 @ raspberrypi`, `HP OfficeJet Pro 6970 [053F79] (USB)` and one AirSane scanner; no `officejet_pro_6970` hpaio-net scanner.
 - [ ] **Step 3:** Replug the printer (owner) and check `journalctl -u printhub-printer` shows a successful run.
 - [ ] **Step 4:** Owner runs the spec's section 7 client checks (Mac AirPrint duplex, phone duplex and cancel, power-cycle mid-job, scans through both entries, web-app scan).

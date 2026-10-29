@@ -247,7 +247,7 @@ def test_share_admission_rejects_before_receiving_and_releases_slot(make_client,
             scope = {"type": "http", "http_version": "1.1", "scheme": "https", "method": "POST",
                      "path": "/share", "query_string": b"",
                      "headers": [(b"content-type", b"multipart/form-data; boundary=test")],
-                     "client": ("127.0.0.1", 1), "server": ("print.brait.dev", 443)}
+                     "client": ("127.0.0.1", 1), "server": ("print.example.com", 443)}
             await app(scope, receive, lambda msg: record(sent, msg))
             return [m["status"] for m in sent if m["type"] == "http.response.start"]
 
@@ -292,7 +292,7 @@ def test_file_delivery_holds_pin_and_releases_on_error(client, store, cfg, fail_
         scope = {"type": "http", "http_version": "1.1", "scheme": "https", "method": "GET",
                  "path": f"/api/docs/{doc.id}/pages/page0", "query_string": b"",
                  "headers": [(b"cookie", f"{COOKIE}={issue_session(cfg)}".encode())],
-                 "client": ("127.0.0.1", 1), "server": ("print.brait.dev", 443)}
+                 "client": ("127.0.0.1", 1), "server": ("print.example.com", 443)}
 
         async def receive():
             return {"type": "http.request", "body": b"", "more_body": False}

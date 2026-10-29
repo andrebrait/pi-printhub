@@ -163,7 +163,7 @@ def test_pending_share_expiry_survives_unlink_failure(tmp_path):
 @pytest.mark.parametrize(
     "method, origin, expected",
     [
-        ("POST", "https://print.brait.dev", True),
+        ("POST", "https://print.example.com", True),
         ("POST", "https://evil.example", False),
         ("POST", None, False),
         ("GET", None, True),

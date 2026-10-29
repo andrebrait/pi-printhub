@@ -20,11 +20,11 @@ class Config:
     smtp_user: str
     smtp_password: str
     mail_from: str
+    origin: str  # the web app's public URL, e.g. "https://print.example.com"
     retention_days: int = 30
     min_free_gb: float = 2
     printer_queue: str = "OfficeJet"
     data_dir: Path = Path("/var/lib/printhub")
-    origin: str = "https://print.brait.dev"
 
 
 def load_config(path: Path | None = None) -> Config:

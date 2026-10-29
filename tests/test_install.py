@@ -284,3 +284,50 @@ def test_job_details_line_is_added_when_the_policy_lacks_it(tmp_path):
     assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "changed"
     assert "<Policy default>\n  JobPrivateValues none\n  JobPrivateAccess default\n" in f.read_text()
     assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "unchanged"
+
+
+def test_hostname_validation():
+    for ok in ("print.example.com", "a.bc", "x-1.example.co.uk", "a.xn--p1ai"):
+        assert sh('valid_hostname "$1"', ok).returncode == 0, ok
+    for bad in ("", "localhost", "-a.example.com", "a..example.com", "print.example.com/x", "a b.com", "a&b.com",
+                "a\\1.com", "Print.example.com", "192.168.1.2", f"{'a' * 64}.com", ("a." * 127) + "com"):
+        assert sh('valid_hostname "$1"', bad).returncode != 0, bad
+
+
+def test_hostname_prompt_lowercases_and_retries_invalid_input():
+    r = sh('ask_host; printf "%s" "$WEB_HOST"', input="not a host\nPrint.Example.COM\n")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.endswith("print.example.com")
+
+
+def test_traefik_router_gets_the_hostname():
+    r = sh('render_dynamic_yml "$1"', "print.example.com")
+    assert r.returncode == 0, r.stderr
+    assert "rule: Host(`print.example.com`)" in r.stdout
+    assert "@WEB_HOST@" not in r.stdout
+
+
+def test_hostname_is_read_back_from_the_config_origin(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('smtp_host = "mail.example.com"\norigin = "https://Print.Example.com:8443/x"\n')
+    assert sh('config_host "$1"', str(cfg)).stdout == "print.example.com\n"
+    cfg.write_text('smtp_host = "mail.example.com"\n')  # written before the hostname was asked for
+    r = sh('config_host "$1"', str(cfg))
+    assert (r.returncode, r.stdout) == (0, "\n")
+    for bad in ('origin = ""', "origin = 5"):
+        cfg.write_text(bad + "\n")
+        r = sh('config_host "$1"', str(cfg))
+        assert r.returncode != 0 and "not a URL" in r.stderr, bad
+
+
+def test_origin_is_added_at_the_top_level_of_an_existing_config(tmp_path):
+    import tomllib
+
+    cfg = tmp_path / "config.toml"
+    # no trailing newline, and a table at the end that would swallow an appended key
+    cfg.write_text('mail_from = "x@example.com"\n[extra]\nkey = 1')
+    r = sh('add_origin "$1" print.example.com', str(cfg))
+    assert r.returncode == 0, r.stderr
+    data = tomllib.loads(r.stdout)
+    assert data["origin"] == "https://print.example.com"
+    assert data["mail_from"] == "x@example.com" and data["extra"] == {"key": 1}
