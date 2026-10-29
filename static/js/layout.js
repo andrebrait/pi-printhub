@@ -52,9 +52,10 @@ export const isLoadableMedia = (name) => !/^custom_(min|max)_/.test(name);
 /**
  * Where the page lands on the sheet.
  * marginsHmm is {top, bottom, left, right} in hundredths of a millimetre (as /api/printer reports);
- * pagePt is [width, height] in points; scaling is a print-scaling value.
+ * pagePt is [width, height] in points; scaling is a print-scaling value. autoRotate: CUPS may turn the page to the
+ * sheet's shape (orientation Auto); an explicit orientation sends pdfAutoRotate=false and keeps the page upright.
  */
-export function sheetLayout({ sheetMm, landscape, marginsHmm, pagePt, scaling }) {
+export function sheetLayout({ sheetMm, landscape, autoRotate = true, marginsHmm, pagePt, scaling }) {
   // shortcut: margins are not rotated with the sheet; printers' margins are near-symmetric
   const sheet = landscape ? { w: sheetMm.h, h: sheetMm.w } : { ...sheetMm };
   const m = (side) => (marginsHmm[side] ?? 0) / 100;
@@ -64,8 +65,8 @@ export function sheetLayout({ sheetMm, landscape, marginsHmm, pagePt, scaling })
     w: sheet.w - m("left") - m("right"),
     h: sheet.h - m("top") - m("bottom"),
   };
-  // CUPS turns a page whose shape does not match the sheet 90 degrees clockwise to fill it.
-  const turned = pagePt[0] !== pagePt[1] && pagePt[0] > pagePt[1] !== sheet.w > sheet.h;
+  // With auto-rotation CUPS turns a page whose shape does not match the sheet 90 degrees clockwise to fill it.
+  const turned = autoRotate && pagePt[0] !== pagePt[1] && pagePt[0] > pagePt[1] !== sheet.w > sheet.h;
   const [pw, ph] = turned ? [pagePt[1], pagePt[0]] : pagePt;
   const nat = { w: pw * PT_MM, h: ph * PT_MM };
   const contain = Math.min(printable.w / nat.w, printable.h / nat.h);

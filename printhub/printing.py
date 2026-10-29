@@ -47,7 +47,7 @@ class PrintOptions:
     media: str
     print_quality: str  # IPP enum as a string: "3" draft, "4" normal, "5" high
     print_color_mode: str
-    orientation_requested: str  # "3" portrait, "4" landscape
+    orientation_requested: str  # "auto" (CUPS turns each page to fit), "3" portrait, "4" landscape
     sides: str
     copies: int = 1
     page_ranges: str | None = None
@@ -161,6 +161,8 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
 def validate(opts: PrintOptions, info: PrinterInfo) -> None:
     for key in OPTION_KEYS:
         value = getattr(opts, key.replace("-", "_"))
+        if key == "orientation-requested" and value == "auto":
+            continue
         allowed = _allowed(key, info)
         if allowed and value not in allowed:
             raise ValueError(f"{key.replace('-', '_')} {value!r} is not supported by the printer")
@@ -182,6 +184,14 @@ def submit(
     options = {
         key: getattr(opts, key.replace("-", "_")) for key in OPTION_KEYS if _allowed(key, info)
     }
+    # CUPS (pdftopdf) turns any page whose shape does not match the sheet, which makes an explicit orientation
+    # print the same sheet as the other. Auto leaves that turning on, as portrait so a queue default cannot turn
+    # pages the other way; Portrait and Landscape switch it off.
+    if "orientation-requested" in options:
+        if opts.orientation_requested == "auto":
+            options["orientation-requested"] = "3"
+        else:
+            options["pdfAutoRotate"] = "false"
     options["copies"] = str(opts.copies)
     if opts.page_ranges is not None:
         options["page-ranges"] = opts.page_ranges

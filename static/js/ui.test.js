@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { isLoadableMedia, mediaLabel } from "./layout.js";
+import { isLoadableMedia, mediaLabel, mediaSizeMm, sheetLayout } from "./layout.js";
 import { snapCrop } from "./crop.js";
 import { fakeDocument } from "./fake-dom.test-util.js";
 
@@ -214,11 +214,30 @@ test("print separates advanced options without changing supported values or defa
   assert.deepEqual(labels("controls"), ["Paper", "Color", "Sides"]);
   assert.deepEqual(labels("advanced-controls"), ["Quality", "Orientation", "Scaling"]);
   for (const [key, value] of Object.entries(defaults)) {
+    if (key === "orientation-requested") continue; // Auto, not a printer value; covered below
     assert.equal(controls[key].value, value);
     assert.deepEqual(controls[key].children.map((option) => option.value), supported[key]);
   }
+  // Orientation starts at Auto (CUPS turns each page to fit) whatever the printer's default, then the printer's values.
+  assert.equal(controls["orientation-requested"].value, "auto");
+  assert.deepEqual(controls["orientation-requested"].children.map((option) => option.value), ["auto", "3", "4"]);
 });
 
+
+test("the preview turns a landscape page on Auto and keeps it upright on Portrait", () => {
+  const document = fakeDocument();
+  const preview = new Function("document", "location", "mediaLabel", "isLoadableMedia", "mediaSizeMm", "sheetLayout", "Image",
+    `${source("print.js").replace(/main\(\);\s*$/, "")}
+      return (orientation) => {
+        printer = { defaults: {}, margins: {} };
+        controls["orientation-requested"] = { value: orientation };
+        pages = [{ pt: [842, 595], url: "p.png" }];
+        return sheetEl(1, false);
+      };`)(document, { search: "" }, mediaLabel, isLoadableMedia, mediaSizeMm, sheetLayout, class {});
+  const frame = (sheet) => sheet.children[0].children[0].children[0].className; // sheet > printable > page > frame
+  assert.equal(frame(preview("auto")), "turn");
+  assert.equal(frame(preview("3")), "upright");
+});
 
 test("keyboard cropping moves and resizes within the image on its existing MCU grid", () => {
   const document = dom();

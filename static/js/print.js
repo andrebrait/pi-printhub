@@ -13,7 +13,7 @@ const CONTROLS = [
   { key: "media", label: "Paper", labels: {}, format: mediaLabel, keep: isLoadableMedia },
   { key: "print-quality", advanced: true, label: "Quality", closed: true, labels: { 3: "Draft", 4: "Normal", 5: "Best" } },
   { key: "print-color-mode", label: "Color", labels: { color: "Color", monochrome: "Grayscale" } },
-  { key: "orientation-requested", advanced: true, label: "Orientation", closed: true, labels: { 3: "Portrait", 4: "Landscape" } },
+  { key: "orientation-requested", advanced: true, label: "Orientation", closed: true, labels: { auto: "Auto (match the page)", 3: "Portrait", 4: "Landscape" } },
   {
     key: "sides",
     label: "Sides",
@@ -35,7 +35,7 @@ const FALLBACK = {
   media: "iso_a4_210x297mm",
   "print-quality": "4",
   "print-color-mode": "color",
-  "orientation-requested": "3",
+  "orientation-requested": "auto",
   sides: "one-sided",
   "print-scaling": "fit",
 };
@@ -74,6 +74,8 @@ function buildControls() {
     let values = printer.supported[c.key] ?? [];
     if (c.key === "print-scaling" && !values.length) values = SCALING_ALL;
     if (c.closed) values = values.filter((v) => v in c.labels);
+    // Auto is CUPS turning each page to the sheet's shape, not a printer value; offered whenever orientation is.
+    if (c.key === "orientation-requested" && values.length) values = ["auto", ...values];
     if (c.keep) values = values.filter(c.keep);
     if (!values.length) {
       controls[c.key] = null;
@@ -83,7 +85,8 @@ function buildControls() {
     select.id = `opt-${c.key}`;
     select.className = "form-select";
     for (const v of values) select.add(new Option(c.format?.(v) ?? c.labels[v] ?? v, v));
-    const preset = c.key === "print-scaling" && doc.kind === "scan" ? "none" : printer.defaults[c.key];
+    // Auto ignores the printer's orientation default: an explicit one would stop CUPS fitting each page's shape.
+    const preset = c.key === "print-scaling" && doc.kind === "scan" ? "none" : c.key === "orientation-requested" ? "auto" : printer.defaults[c.key];
     select.value = values.includes(preset) ? preset : values.includes(FALLBACK[c.key]) ? FALLBACK[c.key] : values[0];
     select.addEventListener("change", render);
     const label = document.createElement("label");
@@ -109,11 +112,13 @@ function sheetEl(pageNo, gray) {
   el.setAttribute("role", "img");
   el.setAttribute("aria-label", pageNo ? `Page ${pageNo}` : "Blank back side");
   const media = mediaSizeMm(value("media")) ?? mediaSizeMm(FALLBACK.media);
-  const landscape = value("orientation-requested") === "4";
+  const orientation = value("orientation-requested");
+  const landscape = orientation === "4";
   const first = pageNo && pages[pageNo - 1];
   const L = sheetLayout({
     sheetMm: media,
     landscape,
+    autoRotate: orientation === "auto",
     marginsHmm: printer.margins,
     pagePt: first ? first.pt : [1, 1],
     scaling: value("print-scaling"),

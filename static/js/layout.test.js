@@ -135,3 +135,18 @@ test("custom size bounds are not offered as paper", () => {
   assert.equal(isLoadableMedia("custom_max_8.5x14in"), false);
   assert.equal(isLoadableMedia("iso_a4_210x297mm"), true);
 });
+
+test("without auto-rotation a landscape page stays upright and shrinks to the portrait sheet's width", () => {
+  // Portrait chosen explicitly: CUPS is told pdfAutoRotate=false.
+  const l = sheetLayout({ sheetMm: A4, landscape: false, autoRotate: false, marginsHmm: {}, pagePt: [842, 595], scaling: "fit" });
+  assert.equal(l.turned, false);
+  near(l.page.w, 210);
+  near(l.page.h, 210 * 595 / 842);
+});
+
+test("without auto-rotation a portrait page stays upright on a landscape sheet", () => {
+  const l = sheetLayout({ sheetMm: A4, landscape: true, autoRotate: false, marginsHmm: {}, pagePt: A4_PT, scaling: "fit" });
+  assert.equal(l.turned, false);
+  near(l.page.h, 210);
+  near(l.page.w, 210 * 210 / 297, 0.2);
+});

@@ -794,3 +794,17 @@ def test_the_running_app_records_events(cfg, fake_cups, monkeypatch):
             time.sleep(0.02)
         assert [e["title"] for e in c.get("/api/notifications").json()["events"]] == ["Job 7 completed"]
     assert not any(t.name == "watcher" and t.is_alive() for t in threading.enumerate())
+
+
+def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(client, store, fake_cups):
+    # CUPS turns a page whose shape does not match the sheet unless told not to, which made Portrait and
+    # Landscape print the same sheet.
+    doc = scan_doc(store, n=1)
+    for orientation in ("auto", "3", "4"):
+        r = client.post(f"/api/docs/{doc.id}/print", json={**PRINT_OPTS, "orientation_requested": orientation})
+        assert r.status_code == 200, r.text
+    auto, portrait, landscape = (options for *_, options in fake_cups.printed)
+    # Auto is portrait with turning left on, so a landscape queue default cannot turn pages the other way
+    assert (auto["orientation-requested"], "pdfAutoRotate" in auto) == ("3", False)
+    assert (portrait["orientation-requested"], portrait["pdfAutoRotate"]) == ("3", "false")
+    assert (landscape["orientation-requested"], landscape["pdfAutoRotate"]) == ("4", "false")
