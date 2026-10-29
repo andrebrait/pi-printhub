@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // shortcut: vendor and icon files stay cache-first until CACHE is bumped by hand, upgrade: version their URLs.
-const CACHE = "printhub-v3";
+const CACHE = "printhub-v4";
 
 const PRECACHE = [
   "/",
@@ -31,6 +31,7 @@ const PRECACHE = [
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/maskable-512.png",
+  "/icons/logo.svg",
 ];
 
 // Vendor and icon files keep their names and rarely change, so they are served from cache first.

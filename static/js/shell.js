@@ -116,8 +116,13 @@ function buildBar(host) {
   const nav = el("nav", "navbar navbar-expand-md bg-body-tertiary border-bottom mb-3");
   nav.setAttribute("aria-label", "Main");
   const wrap = el("div", "container-lg");
-  const brand = el("a", "navbar-brand fw-semibold", "Print Hub");
+  const brand = el("a", "navbar-brand fw-semibold d-flex align-items-center gap-2", "Print Hub");
   brand.href = "/";
+  const logo = el("img");
+  logo.src = "/icons/logo.svg";
+  logo.alt = ""; // the brand text names the link
+  logo.width = logo.height = 28;
+  brand.prepend(logo);
 
   // Status and the bell stay visible when the links collapse on phones.
   const tools = el("div", "shell-tools d-flex align-items-center gap-2 order-1 order-md-last");
