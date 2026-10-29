@@ -24,7 +24,7 @@ from printhub.events import EventLog
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
 
-ORIGIN = "https://print.brait.dev"
+ORIGIN = "https://print.example.com"
 PLENTY = 10**15
 
 
@@ -215,7 +215,7 @@ def asgi_post(app, path: str, headers: dict[str, str]) -> tuple[int, int]:
         "root_path": "",
         "headers": [(k.lower().encode(), v.encode()) for k, v in {"Origin": ORIGIN, **MULTIPART, **headers}.items()],
         "client": ("127.0.0.1", 50000),
-        "server": ("print.brait.dev", 443),
+        "server": ("print.example.com", 443),
     }
     asyncio.run(app(scope, receive, send))
     (status,) = statuses

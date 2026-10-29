@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A Raspberry Pi service that shares a USB HP OfficeJet Pro 6970 as a network printer and scanner, and serves a web application at `https://print.brait.dev` for upload-to-print and scan, edit, export and email.
+**Goal:** A Raspberry Pi service that shares a USB HP OfficeJet Pro 6970 as a network printer and scanner, and serves a web application at `https://print.example.com` for upload-to-print and scan, edit, export and email.
 
 **Architecture:** CUPS, Avahi and AirSane expose the device to native clients. `printhub` is a FastAPI application on `127.0.0.1:8000` behind Traefik. It drives CUPS through `python3-cups`, SANE through the `scanimage` CLI, conversions through `img2pdf`, `heif-dec` and LibreOffice, and lossless page edits through `jpegtran`. State lives in per-document directories under `/var/lib/printhub/docs/`. The front end is plain HTML and ES modules with vendored Cropper.js and SortableJS, without a build step.
 
@@ -15,13 +15,13 @@
 - License: AGPL-3.0-only. Every source file starts with `# SPDX-License-Identifier: AGPL-3.0-only` (or `//` in JS).
 - Runtime dependencies come from Debian Trixie apt packages only. No virtualenv and no pip on the Pi.
 - Python ≥ 3.11 (`tomllib`).
-- Public origin: `https://print.brait.dev`. The app listens only on `127.0.0.1:8000`.
+- Public origin: `https://print.example.com`. The app listens only on `127.0.0.1:8000`.
 - Data root: `/var/lib/printhub` (configurable as `data_dir` for tests). Config file: `/etc/printhub/config.toml`, mode `0600`, path overridable by env `PRINTHUB_CONFIG`.
 - Defaults: `retention_days = 30`, `min_free_gb = 2`, `printer_queue = "OfficeJet"`.
 - Upload limit 100 MB. Email attachment limit 25 MB. LibreOffice timeout 120 s, one conversion at a time.
 - A scanned page is encoded to JPEG exactly once, at quality 90, with JFIF density set to the scan resolution. No later step re-encodes it.
 - Session: cookie `printhub_session`, `Secure; HttpOnly; SameSite=Lax`, max age 30 days. Login limit 5 per minute per client address.
-- State-changing requests (POST, PUT, PATCH, DELETE) require `Origin: https://print.brait.dev`, except `POST /share`, which is protected by the session or the pending-share token (section 7 of the spec).
+- State-changing requests (POST, PUT, PATCH, DELETE) require `Origin: https://print.example.com`, except `POST /share`, which is protected by the session or the pending-share token (section 7 of the spec).
 - Share tokens live 10 minutes.
 - CI runs in a `debian:trixie` container on GitHub Actions.
 
@@ -48,7 +48,7 @@
 
 **Interfaces:**
 - Produces:
-  - `@dataclass(frozen=True) class Config` with fields `password_hash: str`, `session_secret: str`, `smtp_host: str`, `smtp_port: int`, `smtp_security: Literal["starttls", "tls"]`, `smtp_user: str`, `smtp_password: str`, `mail_from: str`, `retention_days: int = 30`, `min_free_gb: float = 2`, `printer_queue: str = "OfficeJet"`, `data_dir: Path = Path("/var/lib/printhub")`, `origin: str = "https://print.brait.dev"`.
+  - `@dataclass(frozen=True) class Config` with fields `password_hash: str`, `session_secret: str`, `smtp_host: str`, `smtp_port: int`, `smtp_security: Literal["starttls", "tls"]`, `smtp_user: str`, `smtp_password: str`, `mail_from: str`, `retention_days: int = 30`, `min_free_gb: float = 2`, `printer_queue: str = "OfficeJet"`, `data_dir: Path = Path("/var/lib/printhub")`, `origin: str = "https://print.example.com"`.
   - `load_config(path: Path | None = None) -> Config`: reads `path`, then env `PRINTHUB_CONFIG`, then `/etc/printhub/config.toml`. Raises `ConfigError` naming the missing or invalid key.
   - Fixture `cfg(tmp_path) -> Config` in `tests/conftest.py`, with `data_dir=tmp_path / "data"`, a known password hash for the password `"secret"`, and SMTP settings pointing at `127.0.0.1:8025`.
 
@@ -328,7 +328,7 @@
   - A session issued now is valid. One issued 31 days ago is not (patch `time.time` through itsdangerous's `get_timestamp`). One with a tampered signature is not.
   - `LoginLimiter`: 5 attempts are allowed, the 6th within 60 s is denied, and an attempt at t+61 s is allowed. Keys are independent.
   - `PendingShares`: `take` within 600 s returns the path. A second `take` returns `None`. A take after 601 s returns `None`, and the file is gone.
-  - `origin_ok`: POST with `https://print.brait.dev` is true; POST with `https://evil.example` or no Origin is false; GET without Origin is true.
+  - `origin_ok`: POST with `https://print.example.com` is true; POST with `https://evil.example` or no Origin is false; GET without Origin is true.
 - [ ] **Step 2:** Run `pytest tests/test_auth.py -v`. Expected: FAIL.
 - [ ] **Step 3:** Implement `printhub/auth.py`.
 - [ ] **Step 4:** Run `pytest tests/test_auth.py -v`. Expected: PASS.
@@ -374,7 +374,7 @@
 | `POST /api/share/{token}/claim` | With a session: turns the pending file into a print doc (same pipeline as upload). Returns `{doc_id}` | 410 when expired or unknown |
 | `GET /` and static files | `StaticFiles(directory="static", html=True)` mounted last. `/` serves `index.html` | |
 
-- [ ] **Step 1: Write the failing tests** with `fastapi.testclient.TestClient`. Pass `base_url="https://print.brait.dev"` and a default `Origin` header. Use a fake CUPS connection object exposing `getPrinterAttributes`, `printFile`, `getJobAttributes`, `cancelJob` and `getJobs`, a `Scanner` with `SCANIMAGE` pointed at a fake script, and an injected `free_bytes`.
+- [ ] **Step 1: Write the failing tests** with `fastapi.testclient.TestClient`. Pass `base_url="https://print.example.com"` and a default `Origin` header. Use a fake CUPS connection object exposing `getPrinterAttributes`, `printFile`, `getJobAttributes`, `cancelJob` and `getJobs`, a `Scanner` with `SCANIMAGE` pointed at a fake script, and an injected `free_bytes`.
   - Auth:
     - `/api/docs` without a cookie returns 401.
     - Login with the wrong password returns 401, and the 6th attempt returns 429.
@@ -522,7 +522,7 @@
   3. Build AirSane from a pinned tag in `/usr/local/src/AirSane` (`cmake && make && make install`). Set `LOCAL_SCANNERS_ONLY=false` in `/etc/default/airsane`, because with ipp-usb the scanner reaches SANE through sane-airscan. Enable `airsaned`.
   4. Download a pinned Traefik v3 `linux_arm64` tarball from GitHub releases, verify its SHA-256 against the release checksums file, and install it to `/usr/local/bin/traefik`. Install `deploy/traefik/*` to `/etc/traefik/`.
   5. Create the system user `printhub` (groups `lp`, `lpadmin`, `scanner`) and the directory `/var/lib/printhub` (0750). Copy `printhub/` and `static/` to `/opt/printhub/`.
-  6. If `/etc/printhub/config.toml` is missing, prompt for the web password (stored hashed via `python3 -c 'from printhub.auth import hash_password…'`) and the SMTP settings, generate `session_secret` with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`, and write the file with mode 0600, owned by `printhub`. If `/etc/traefik/traefik.env` is missing, prompt for one `CF_DNS_API_TOKEN` with BOTH Zone → Zone → Read and Zone → DNS → Edit scoped only to `brait.dev` (never a global API key), and the ACME email, and write it with mode 0600.
+  6. If `/etc/printhub/config.toml` is missing, prompt for the web password (stored hashed via `python3 -c 'from printhub.auth import hash_password…'`) and the SMTP settings, generate `session_secret` with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`, and write the file with mode 0600, owned by `printhub`. If `/etc/traefik/traefik.env` is missing, prompt for one `CF_DNS_API_TOKEN` with BOTH Zone → Zone → Read and Zone → DNS → Edit scoped only to the zone of the web app hostname (never a global API key), and the ACME email, and write it with mode 0600.
   7. Install the systemd units, `daemon-reload`, then `enable --now printhub traefik airsaned printhub-retention.timer`.
   8. Print the LAN DNS override and DHCP reservation the user must add, with the Pi's current address.
 - `printhub.service`:
@@ -533,7 +533,7 @@
   - Entry points: `web` (`:80`, redirecting to `websecure`) and `websecure` (`:443`).
   - `certificatesResolvers.le.acme`: `dnsChallenge.provider: cloudflare`, `storage: /var/lib/traefik/acme.json`.
   - File provider on `/etc/traefik/dynamic.yml`.
-- `dynamic.yml`: router ``Host(`print.brait.dev`)`` on `websecure` with `tls.certResolver: le`, service `http://127.0.0.1:8000`.
+- `dynamic.yml`: router ``Host(`print.example.com`)`` on `websecure` with `tls.certResolver: le`, service `http://127.0.0.1:8000`.
 - `traefik.service`: `EnvironmentFile=/etc/traefik/traefik.env` and `AmbientCapabilities=CAP_NET_BIND_SERVICE`, running as user `traefik`.
 - `printhub-retention.timer`: `OnCalendar=hourly`. The service runs `python3 -m printhub.retention` as `printhub`.
 - `docs/hardware-checklist.md`, with one checkbox each:
@@ -555,6 +555,6 @@
 This task needs the Pi's address, SSH access with `~/.ssh/id_ed25519_rpi`, and the printer attached.
 
 - [ ] **Step 1:** Run `deploy/install.sh` on the Pi. Record which branch ran (ipp-usb or HPLIP) in `docs/hardware-checklist.md`.
-- [ ] **Step 2:** Check that `curl -sI https://print.brait.dev` from the LAN returns `200` with a Let's Encrypt certificate, and that `lpstat -t` shows `OfficeJet` idle and shared.
+- [ ] **Step 2:** Check that `curl -sI https://print.example.com` from the LAN returns `200` with a Let's Encrypt certificate, and that `lpstat -t` shows `OfficeJet` idle and shared.
 - [ ] **Step 3:** Work through `docs/hardware-checklist.md` with the owner. File every failure as a GitHub issue and fix it with a regression test where one is possible.
 - [ ] **Step 4: Commit** the completed checklist: `docs: hardware acceptance results`.

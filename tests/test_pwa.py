@@ -6,14 +6,14 @@ from pathlib import Path
 from printhub.convert import ACCEPTED
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
-ORIGIN = "https://print.brait.dev"
+ORIGIN = "https://print.example.com"
 CACHE = "printhub-v3"
 
 # Loads sw.js into a stub ServiceWorker: in-memory caches, a controllable fetch, and a dump() that
 # prints the cache contents. Config arrives as JSON in the second-to-last argv entry.
 PREAMBLE = """
 const fs = require("fs");
-const origin = "https://print.brait.dev";
+const origin = "https://print.example.com";
 const config = JSON.parse(process.argv.at(-2));
 const handlers = {};
 const fetched = [];

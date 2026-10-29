@@ -5,7 +5,7 @@ import { jobItem } from "./jobs.js";
 import { fakeDocument, textOf, find } from "./fake-dom.test-util.js";
 
 const job = (fields) => ({
-  id: 12, name: "boarding-pass.pdf", user: "andre", host: "iphone.lan", state: "processing", reasons: [],
+  id: 12, name: "boarding-pass.pdf", user: "user", host: "phone.lan", state: "processing", reasons: [],
   reason_labels: [], created: "2026-10-28T10:00:00+00:00", completed: null, sheets: 1, doc_id: null, ...fields,
 });
 
@@ -13,7 +13,7 @@ test("an active job from another device shows what, who, its state and a Cancel 
   const item = jobItem(job({ reason_labels: ["Ink low"] }), fakeDocument(), () => {});
   const text = textOf(item);
   assert.match(text, /boarding-pass\.pdf/);
-  assert.match(text, /andre@iphone\.lan/);
+  assert.match(text, /user@phone\.lan/);
   assert.match(text, /Printing/);
   assert.match(text, /Ink low/);
   assert.equal(item.attributes.id, "job-12");

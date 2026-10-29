@@ -3,12 +3,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { safeNext } from "./api.js";
 
-const origin = "https://print.brait.dev";
+const origin = "https://print.example.com";
 
 test("safeNext keeps same-site paths", () => {
   assert.equal(safeNext("/print.html?doc=x", origin), "/print.html?doc=x");
   assert.equal(safeNext("/a?b=1#c", origin), "/a?b=1#c");
-  assert.equal(safeNext("https://print.brait.dev/x", origin), "/x");
+  assert.equal(safeNext("https://print.example.com/x", origin), "/x");
 });
 
 test("safeNext falls back to / for anything that leaves the site", () => {

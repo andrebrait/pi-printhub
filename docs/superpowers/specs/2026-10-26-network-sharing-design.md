@@ -55,7 +55,7 @@ AirSane ignores `hpaio:/net/*` devices, so it publishes only the USB scanner.
 
 ## 6. Printer-side settings (owner)
 
-In the printer's web interface (`https://10.0.254.0`), after the Pi entries are working:
+In the printer's web interface (`https://<printer address>`), after the Pi entries are working:
 
 - Disable: Bonjour/mDNS, AirPrint, WS-Discovery, WS-Print, WSD Scan, SLP, LLMNR, LPD and port 9100 printing.
 - Keep: network connection, DHCP/DNS, HP Web Services (Instant Ink), and IPP. On the OfficeJet Pro 6970 (firmware MCP2CN2626AR) the IPP switch also turns off IPP-over-USB, which both A and B need. Webscan cannot be turned off. Without Bonjour, the printer's own IPP and eSCL are reachable only by clients that already know its address.

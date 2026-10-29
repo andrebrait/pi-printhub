@@ -2,7 +2,7 @@
 http:
   routers:
     printhub:
-      rule: Host(`print.brait.dev`)
+      rule: Host(`@WEB_HOST@`)
       entryPoints:
         - websecure
       service: printhub

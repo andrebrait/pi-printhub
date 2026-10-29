@@ -2,7 +2,7 @@
 
 A Raspberry Pi print and scan server for a USB HP OfficeJet Pro 6970.
 
-It appears to every client on the LAN as a standard network printer and scanner. It also serves a web app at `https://print.brait.dev` (app listens on `127.0.0.1:8000`) that prints uploaded files and runs a scan, edit, export and email workflow.
+It appears to every client on the LAN as a standard network printer and scanner. It also serves a web app at a hostname you choose, such as `https://print.example.com` (app listens on `127.0.0.1:8000`) that prints uploaded files and runs a scan, edit, export and email workflow.
 
 - Hardware: Raspberry Pi with the HP OfficeJet Pro 6970 attached over USB
 - Design spec: [`docs/superpowers/specs/2026-10-21-pi-printhub-design.md`](docs/superpowers/specs/2026-10-21-pi-printhub-design.md)
@@ -19,7 +19,7 @@ git clone <this repo> && cd pi-printhub
 sudo deploy/install.sh
 ```
 
-The script installs packages, creates the CUPS queue, builds AirSane, installs Traefik, copies the app to `/opt/printhub`, writes `/etc/printhub/config.toml` and `/etc/traefik/traefik.env` (prompting for the web password, SMTP settings and Cloudflare token on first run) and starts the services. The ACME email is stored in `/etc/traefik/acme-email` (root-only, 0600) and substituted into Traefik's static configuration on every run. Without a printer attached, the install finishes and asks to be re-run once one is plugged in; updates reuse the existing queue without requiring the printer to be on.
+The script installs packages, creates the CUPS queue, builds AirSane, installs Traefik, copies the app to `/opt/printhub`, writes `/etc/printhub/config.toml` and `/etc/traefik/traefik.env` (prompting for the web app hostname, web password, SMTP settings and Cloudflare token on first run; an existing config without the hostname gets it added on the next run) and starts the services. The ACME email is stored in `/etc/traefik/acme-email` (root-only, 0600) and substituted into Traefik's static configuration on every run. Without a printer attached, the install finishes and asks to be re-run once one is plugged in; updates reuse the existing queue without requiring the printer to be on.
 
 ### Network sharing
 
@@ -32,8 +32,8 @@ Keep IPP enabled in the printer's own settings: on the OfficeJet Pro 6970 that s
 
 Before the web app is reachable:
 
-1. **Cloudflare token:** create one `CF_DNS_API_TOKEN` with both *Zone → Zone → Read* and *Zone → DNS → Edit*, scoped only to `brait.dev`. Traefik/lego uses it to find the zone and complete Let's Encrypt DNS-01. Do not use a global API key.
-2. **LAN DNS override:** point `print.brait.dev` at the Pi's LAN address in your router or local DNS. The installer prints the address at the end.
+1. **Cloudflare token:** create one `CF_DNS_API_TOKEN` with both *Zone → Zone → Read* and *Zone → DNS → Edit*, scoped only to the zone of your hostname. Traefik/lego uses it to find the zone and complete Let's Encrypt DNS-01. Do not use a global API key.
+2. **LAN DNS override:** point `print.example.com` at the Pi's LAN address in your router or local DNS. The installer prints the address at the end.
 3. **DHCP reservation:** reserve that address for the Pi's MAC address (also printed), so the override stays valid.
 
 Update: `git pull && sudo deploy/install.sh`. It skips steps that are already done, restarts `printhub`, `traefik` and `airsaned` and keeps existing configuration. Logs: `journalctl -u printhub -u traefik -u airsaned`.

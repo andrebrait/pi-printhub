@@ -14,6 +14,7 @@ smtp_security = "starttls"
 smtp_user = "printhub"
 smtp_password = "smtp-secret"
 mail_from = "printhub@example.com"
+origin = "https://print.example.com"
 """
 
 
@@ -32,7 +33,6 @@ retention_days = 7
 min_free_gb = 5.5
 printer_queue = "Office2"
 data_dir = "/srv/printhub"
-origin = "https://print.example.com"
 """,
     )
 
@@ -53,7 +53,6 @@ def test_defaults_applied(tmp_path):
     assert cfg.min_free_gb == 2
     assert cfg.printer_queue == "OfficeJet"
     assert cfg.data_dir == Path("/var/lib/printhub")
-    assert cfg.origin == "https://print.brait.dev"
 
 
 def test_missing_required_key(tmp_path):

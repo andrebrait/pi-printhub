@@ -284,3 +284,25 @@ def test_job_details_line_is_added_when_the_policy_lacks_it(tmp_path):
     assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "changed"
     assert "<Policy default>\n  JobPrivateValues none\n  JobPrivateAccess default\n" in f.read_text()
     assert sh(f"show_job_details {f} && echo changed || echo unchanged").stdout.strip() == "unchanged"
+
+
+def test_hostname_validation():
+    for ok in ("print.example.com", "a.bc", "x-1.example.co.uk"):
+        assert sh('valid_hostname "$1"', ok).returncode == 0, ok
+    for bad in ("", "localhost", "-a.example.com", "a..example.com", "print.example.com/x", "a b.com", "a&b.com", "a\\1.com"):
+        assert sh('valid_hostname "$1"', bad).returncode != 0, bad
+
+
+def test_traefik_router_gets_the_hostname():
+    r = sh('render_dynamic_yml "$1"', "print.example.com")
+    assert r.returncode == 0, r.stderr
+    assert "rule: Host(`print.example.com`)" in r.stdout
+    assert "@WEB_HOST@" not in r.stdout
+
+
+def test_hostname_is_read_back_from_the_config_origin(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('smtp_host = "mail.example.com"\norigin = "https://print.example.com"\n')
+    assert sh('config_host "$1"', str(cfg)).stdout == "print.example.com\n"
+    cfg.write_text('smtp_host = "mail.example.com"\n')  # written before the hostname was asked for
+    assert sh('config_host "$1"', str(cfg)).stdout == "\n"
