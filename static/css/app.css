@@ -10,6 +10,43 @@
 p:empty { display: none; }
 /* Messages often carry paths and URLs without spaces. */
 .error { color: var(--bs-danger-text-emphasis); overflow-wrap: anywhere; }
+
+/* Material Symbols, drawn in the text colour: <button data-icon="print">Print</button>. */
+[data-icon]::before {
+  content: ""; display: inline-block; width: 1.25em; height: 1.25em; vertical-align: -0.3em;
+  margin-inline-end: 0.375em; background-color: currentColor;
+  -webkit-mask: var(--icon, linear-gradient(#0000, #0000)) center / contain no-repeat;
+  mask: var(--icon, linear-gradient(#0000, #0000)) center / contain no-repeat;
+}
+[data-icon]:empty::before, .bell::before { margin-inline-end: 0; }
+/* High contrast forces backgrounds to Canvas, which would erase the mask-drawn icons. */
+@media (forced-colors: active) { [data-icon]::before { forced-color-adjust: none; background-color: ButtonText; } }
+[data-icon="arrow_forward"] { --icon: url(/vendor/material-symbols/arrow_forward.svg); }
+[data-icon="cancel"] { --icon: url(/vendor/material-symbols/cancel.svg); }
+[data-icon="check"] { --icon: url(/vendor/material-symbols/check.svg); }
+[data-icon="close"] { --icon: url(/vendor/material-symbols/close.svg); }
+[data-icon="crop"] { --icon: url(/vendor/material-symbols/crop.svg); }
+[data-icon="delete"] { --icon: url(/vendor/material-symbols/delete.svg); }
+[data-icon="description"] { --icon: url(/vendor/material-symbols/description.svg); }
+[data-icon="document_scanner"] { --icon: url(/vendor/material-symbols/document_scanner.svg); }
+[data-icon="done_all"] { --icon: url(/vendor/material-symbols/done_all.svg); }
+[data-icon="edit"] { --icon: url(/vendor/material-symbols/edit.svg); }
+[data-icon="home"] { --icon: url(/vendor/material-symbols/home.svg); }
+[data-icon="image"] { --icon: url(/vendor/material-symbols/image.svg); }
+[data-icon="list_alt"] { --icon: url(/vendor/material-symbols/list_alt.svg); }
+[data-icon="login"] { --icon: url(/vendor/material-symbols/login.svg); }
+[data-icon="logout"] { --icon: url(/vendor/material-symbols/logout.svg); }
+[data-icon="notifications"] { --icon: url(/vendor/material-symbols/notifications.svg); }
+[data-icon="picture_as_pdf"] { --icon: url(/vendor/material-symbols/picture_as_pdf.svg); }
+[data-icon="print"] { --icon: url(/vendor/material-symbols/print.svg); }
+[data-icon="refresh"] { --icon: url(/vendor/material-symbols/refresh.svg); }
+[data-icon="restart_alt"] { --icon: url(/vendor/material-symbols/restart_alt.svg); }
+[data-icon="rotate_left"] { --icon: url(/vendor/material-symbols/rotate_left.svg); }
+[data-icon="rotate_right"] { --icon: url(/vendor/material-symbols/rotate_right.svg); }
+[data-icon="scanner"] { --icon: url(/vendor/material-symbols/scanner.svg); }
+[data-icon="send"] { --icon: url(/vendor/material-symbols/send.svg); }
+[data-icon="upload_file"] { --icon: url(/vendor/material-symbols/upload_file.svg); }
+
 #convert-message { white-space: pre-line; }
 /* Touch targets on phones. */
 .btn:not(.btn-sm):not(.btn-close):not(.nav-link), .form-control, .form-select { min-height: 2.75rem; }

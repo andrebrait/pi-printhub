@@ -200,10 +200,11 @@ function pageItem(page, i, busy) {
 
   const tools = document.createElement("div");
   tools.className = "tools";
-  const button = (action, text, label, onClick) => {
+  const button = (action, icon, text, label, onClick) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "btn btn-sm btn-outline-secondary";
+    b.dataset.icon = icon;
     b.textContent = text;
     b.setAttribute("aria-label", `${label} page ${n}`);
     b.dataset.focusKey = `${page.id}:${action}`;
@@ -211,11 +212,11 @@ function pageItem(page, i, busy) {
     b.addEventListener("click", onClick);
     tools.append(b);
   };
-  button("left", "↺", "Rotate left", () => rotate(page.id, -90));
-  button("right", "↻", "Rotate right", () => rotate(page.id, 90));
-  button("crop", "Crop", "Crop", () => openCrop(page.id));
-  button("delete", "Delete", "Delete", () => confirm(`Delete page ${n}?`) && patch((d) => ({ pages: d.pages.filter((p) => p.id !== page.id) })));
-  button("reset", "Reset", "Undo rotation and crop on", () => editPage(page.id, () => ({ rotation: 0, crop: null })));
+  button("left", "rotate_left", "", "Rotate left", () => rotate(page.id, -90));
+  button("right", "rotate_right", "", "Rotate right", () => rotate(page.id, 90));
+  button("crop", "crop", "Crop", "Crop", () => openCrop(page.id));
+  button("delete", "delete", "Delete", "Delete", () => confirm(`Delete page ${n}?`) && patch((d) => ({ pages: d.pages.filter((p) => p.id !== page.id) })));
+  button("reset", "restart_alt", "Reset", "Undo rotation and crop on", () => editPage(page.id, () => ({ rotation: 0, crop: null })));
 
   li.append(thumb, caption);
   if (editing) li.append(tools);
@@ -238,6 +239,7 @@ function render(d) {
   $("scan-form").hidden = !editing;
   $("edit-toggle").hidden = !doc.pages.length && editing; // an empty scan has nothing to view yet
   $("edit-toggle").textContent = editing ? "Done" : "Edit or add pages";
+  $("edit-toggle").dataset.icon = editing ? "check" : "edit";
   $("edit-toggle").disabled = busy;
   // Another scan appends to this document.
   const verb = doc.pages.length ? "Add" : "Scan";
