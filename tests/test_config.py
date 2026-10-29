@@ -55,11 +55,11 @@ def test_defaults_applied(tmp_path):
     assert cfg.data_dir == Path("/var/lib/printhub")
 
 
-def test_missing_required_key(tmp_path):
-    text = REQUIRED.replace('smtp_host = "mail.example.com"\n', "")
-
-    with pytest.raises(ConfigError, match="smtp_host"):
-        load_config(write(tmp_path, text))
+@pytest.mark.parametrize("line", ['smtp_host = "mail.example.com"\n', 'origin = "https://print.example.com"\n'])
+def test_missing_required_key(tmp_path, line):
+    key = line.split(" ")[0]
+    with pytest.raises(ConfigError, match=key):
+        load_config(write(tmp_path, REQUIRED.replace(line, "")))
 
 
 def test_invalid_smtp_security(tmp_path):

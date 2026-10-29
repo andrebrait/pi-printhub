@@ -1,3 +1,4 @@
 .superpowers/
 __pycache__/
 .pytest_cache/
+graphify-out/.graphify_build_state.json

@@ -36,7 +36,7 @@ Before the web app is reachable:
 2. **LAN DNS override:** point `print.example.com` at the Pi's LAN address in your router or local DNS. The installer prints the address at the end.
 3. **DHCP reservation:** reserve that address for the Pi's MAC address (also printed), so the override stays valid.
 
-Update: `git pull && sudo deploy/install.sh`. It skips steps that are already done, restarts `printhub`, `traefik` and `airsaned` and keeps existing configuration. Logs: `journalctl -u printhub -u traefik -u airsaned`.
+Update: `git pull && sudo deploy/install.sh`. It skips steps that are already done, restarts `printhub`, `traefik` and `airsaned` and keeps existing configuration (a config from before the hostname setting asks for it once). Logs: `journalctl -u printhub -u traefik -u airsaned`.
 
 Before a release, work through [`docs/hardware-checklist.md`](docs/hardware-checklist.md) on the Pi.
 

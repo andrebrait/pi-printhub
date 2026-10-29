@@ -66,13 +66,31 @@ show_job_details() {
 
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_security() { [[ $1 == starttls || $1 == tls ]]; }
-valid_hostname() { [[ $1 =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]; }
+valid_hostname() { [[ ${#1} -le 253 && $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$ ]]; }
 
-# config_host CONFIG: the host of the web app's origin in an existing config, or an empty line.
+# ask_host: WEB_HOST from the user, lowercased (local -l) because browsers send the Origin host in lowercase.
+ask_host() {
+    local -l host
+    ask host "Web app hostname (for example print.example.com)" "" valid_hostname
+    WEB_HOST=$host
+}
+
+# config_host CONFIG: the host of the config's origin, an empty line when it has none; fails on an unusable origin.
 config_host() {
     python3 -c 'import sys, tomllib, urllib.parse
-print(urllib.parse.urlsplit(tomllib.load(open(sys.argv[1], "rb")).get("origin", "")).hostname or "")' "$1"
+cfg = tomllib.load(open(sys.argv[1], "rb"))
+if "origin" in cfg:
+    o = cfg["origin"]
+    host = isinstance(o, str) and urllib.parse.urlsplit(o).hostname
+    if not host:
+        sys.exit(f"error: origin {o!r} in {sys.argv[1]} is not a URL")
+    print(host)
+else:
+    print()' "$1"
 }
+
+# add_origin CONFIG HOST: the config with origin first, where TOML keeps it at the top level.
+add_origin() { printf 'origin = "https://%s"\n' "$2"; cat "$1"; }
 
 ask() { # ask VAR "prompt" [default] [validator]
     local -n out=$1
@@ -270,16 +288,18 @@ install_app() {
 # write_config: asks for the settings on the first run and sets WEB_HOST from the config on every run.
 write_config() {
     local cfg=/etc/printhub/config.toml pw pw2 hash secret host port security user smtp_pw from content
-    local prompt="Web app hostname (for example print.example.com)"
     if [[ -e $cfg ]]; then
         WEB_HOST=$(config_host "$cfg")
-        [[ -z $WEB_HOST ]] || return 0
+        if [[ -n $WEB_HOST ]]; then
+            valid_hostname "$WEB_HOST" || die "origin in $cfg must be https://<hostname>, got host $WEB_HOST"
+            return 0
+        fi
         # Configs written before the hostname was asked for have no origin.
-        ask WEB_HOST "$prompt" "" valid_hostname
-        { cat "$cfg"; printf 'origin = "https://%s"\n' "$WEB_HOST"; } | write_secret "$cfg" printhub:printhub
+        ask_host
+        add_origin "$cfg" "$WEB_HOST" | write_secret "$cfg" printhub:printhub
         return 0
     fi
-    ask WEB_HOST "$prompt" "" valid_hostname
+    ask_host
     ask_secret pw "Web password"
     ask_secret pw2 "Repeat web password"
     [[ $pw == "$pw2" ]] || die "passwords differ"
