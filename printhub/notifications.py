@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import secrets
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from email.errors import MessageError
 from email.headerregistry import Address
@@ -31,7 +32,7 @@ PARSE_MODES = (None, "HTML", "Markdown", "MarkdownV2")
 BAD_TO = "to must be a list of 1 to 10 single email addresses"
 
 
-def load(data_dir: Path) -> dict:
+def load(data_dir: Path, report: Callable[[str], None] = log.error) -> dict:
     path = Path(data_dir) / FILE
     empty = {"channels": [], "silences": []}
     try:
@@ -39,17 +40,17 @@ def load(data_dir: Path) -> dict:
     except FileNotFoundError:
         return empty
     except (OSError, ValueError) as e:
-        log.error("Notifications file %s cannot be read; no channels or silences are active: %s", path, e)
+        report(f"Notifications file {path} cannot be read; no channels or silences are active: {e}")
         return empty
     if not isinstance(raw, dict) or not isinstance(raw.get("channels", []), list) or not isinstance(raw.get("silences", []), list):
-        log.error("Notifications file %s has the wrong shape; no channels or silences are active", path)
+        report(f"Notifications file {path} has the wrong shape; no channels or silences are active")
         return empty
     channels = []
     for item in raw.get("channels", []):
         try:
             channels.append(validate_channel(item))
         except ValueError as e:
-            log.error("Skipping notification channel %r: %s", item.get("id") if isinstance(item, dict) else None, e)
+            report(f"Skipping notification channel {item.get('id') if isinstance(item, dict) else None!r}: {e}")
     silences = [s for s in raw.get("silences", []) if isinstance(s, dict)]
     return {"channels": channels, "silences": silences}
 

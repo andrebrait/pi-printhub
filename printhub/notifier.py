@@ -38,6 +38,8 @@ class Notifier:
         # (due, channel id, event, failures so far) for sends waiting to be retried.
         self._retries: list[tuple[float, str, Event, int]] = []
         self._lock = threading.Lock()
+        # Problems notifications.load reported on the last tick, so a standing one is logged once, not every tick.
+        self._load_errors: set[str] = set()
         self._last = self._read_cursor()
         if self._last is None:
             # First start: the history was never promised to this channel.
@@ -59,17 +61,21 @@ class Notifier:
             log.exception("could not save the notification cursor")
 
     def tick(self) -> None:
-        state = notifications.load(self.dir)
+        state = self._load()
         active = {c["id"]: c for c in state["channels"] if c["enabled"]}
         for gone in self._queues.keys() - active.keys():
-            self._queues.pop(gone).put(None)
+            self._stop(self._queues.pop(gone))
         with self._lock:
             now = self.clock()
             due = [r for r in self._retries if r[0] <= now]
             self._retries = [r for r in self._retries if r[0] > now]
         for _, channel_id, event, failures in due:
-            if channel_id in active:
+            if channel_id in active and not notifications.silenced(state["silences"], event, self.now()):
                 self._enqueue(active[channel_id], event, failures)
+        if self.events.latest() < self._last:
+            log.warning("The event log is behind the notification cursor (%d); it was probably emptied. Starting over", self._last)
+            self._last = 0
+            self._save_cursor()
         for event in self.events.after(self._last):
             if not notifications.silenced(state["silences"], event, self.now()):
                 for channel in active.values():
@@ -77,6 +83,27 @@ class Notifier:
                         self._enqueue(channel, event, 0)
             self._last = event.id
             self._save_cursor()
+
+    def _load(self) -> dict:
+        seen: set[str] = set()
+
+        def report(message: str) -> None:
+            if message not in self._load_errors:
+                log.error(message)
+            seen.add(message)
+
+        state = notifications.load(self.dir, report)
+        self._load_errors = seen
+        return state
+
+    @staticmethod
+    def _stop(q: queue.Queue) -> None:
+        # A disabled or deleted channel must not get its backlog, however long its worker sits in a send.
+        try:
+            while True:
+                q.get_nowait()
+        except queue.Empty:
+            q.put(None)
 
     def _enqueue(self, channel: dict, event: Event, failures: int) -> None:
         if channel["id"] not in self._queues:
@@ -115,5 +142,5 @@ class Notifier:
 
     def close(self) -> None:
         for q in self._queues.values():
-            q.put(None)
+            self._stop(q)
         self._queues.clear()
