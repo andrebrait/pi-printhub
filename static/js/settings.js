@@ -289,7 +289,7 @@ function channelRow(c) {
   });
   // Its own form, like the scan test email: the result appears under the button.
   const test = el("form");
-  const send = button("Send test", `Send a test to ${c.name}`, "send");
+  const send = button("Send test", `Send test to ${c.name}`, "send");
   send.type = "submit";
   test.append(send);
   const result = el("div", "small text-body-secondary text-break", c.result ?? "Nothing sent yet");

@@ -31,7 +31,7 @@ The fields of Grafana's Telegram contact point:
 | Protect content | Telegram `protect_content`. |
 | Disable link preview | Telegram `link_preview_options.is_disabled`. |
 
-The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/sendMessage`: a bold title line, the detail, and the link. Title and detail are escaped for the chosen parse mode.
+The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/sendMessage`: a title line (bold in the HTML, Markdown and MarkdownV2 modes, plain with parse mode None), the detail, and the link. Title and detail are escaped for the chosen parse mode.
 
 ### 2.3 Webhook
 
