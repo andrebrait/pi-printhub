@@ -17,7 +17,7 @@ There is one user: whoever has the web password.
 | Email | SMTP host, port (1–65535), security (`starttls` or `tls`), user, password, sender (`mail_from`) | app | app |
 | Web password | current, new (at least 8 characters), repeat | app | app |
 | Network sharing | Share the Pi's printer and scanner: the CUPS queue `printer-is-shared` and CUPS DNS-SD sharing, plus AirSane | CUPS, AirSane | root |
-| Network sharing | Expose the printer directly (the "(USB)" entries): ipp-usb `interface = all` or `loopback` | ipp-usb | root |
+| Network sharing | Expose the printer directly (the "(USB)" entries): a firewall (nftables) rule blocks other devices now; ipp-usb's `interface = all` or `loopback` follows at its next restart | nftables, ipp-usb | root |
 
 Not managed by the page: `origin`, `data_dir`, `printer_queue` and CUPS job-detail visibility. They stay installer-time.
 

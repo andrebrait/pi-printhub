@@ -95,7 +95,13 @@ _ipp_usb_ports() {
 # the printer's USB interface claimed until it is power-cycled.
 _set_firewall() {
     local rule=""
-    [[ $1 == true ]] || rule="table inet printhub { chain input { type filter hook input priority filter; policy accept; iifname != \"lo\" ct state new tcp dport $(_ipp_usb_ports) drop } }"
+    # nft wants a newline or ';' before each closing brace.
+    [[ $1 == true ]] || rule="table inet printhub {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname != \"lo\" ct state new tcp dport $(_ipp_usb_ports) drop
+  }
+}"
     must nft -f - <<<"table inet printhub {}
 delete table inet printhub
 $rule"
@@ -193,7 +199,11 @@ current_share() {
     out=$(lpoptions -p "${PRINTER_QUEUE:-OfficeJet}" 2>/dev/null | sed "s/'[^']*'//g") || out=""
     [[ $out =~ (^|[[:space:]])printer-is-shared=true([[:space:]]|$) ]] && echo true || echo false
 }
-current_expose() { nft list table inet printhub 2>/dev/null | grep -q drop && echo false || echo true; }
+current_expose() {
+    local rules
+    rules=$(nft list table inet printhub 2>/dev/null) || rules=""
+    [[ $rules == *drop* ]] && echo false || echo true
+}
 
 # apply_request: read the request and apply it. Every step is checked explicitly: set -e is off inside the
 # `if` that run_apply puts this in.

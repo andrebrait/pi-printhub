@@ -2,8 +2,11 @@
 import json
 import os
 import pwd
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).parent.parent / "deploy" / "apply-settings.sh"
 REQUEST = {"share": False, "expose_usb": True, "at": "2026-10-29T10:00:00+00:00"}
@@ -181,6 +184,17 @@ def test_the_blocked_ports_are_ipp_usbs_configured_range(tmp_path):
         box.conf.write_text(f"[http]\n{ports}  interface = all\n")
         assert box.run("apply_expose false").returncode == 0
         assert f"tcp dport {want} drop" in box.nft_script.read_text(), ports
+
+
+@pytest.mark.skipif(shutil.which("nft") is None, reason="needs nft to check the syntax")
+def test_the_generated_scripts_are_valid_nft(tmp_path):
+    for expose in ("true", "false"):
+        (tmp_path / expose).mkdir()
+        box = Box(tmp_path / expose)
+        assert box.run(f"apply_expose {expose}").returncode == 0
+        # -c checks without loading; the fake nft saved exactly what the script sent.
+        r = subprocess.run(["nft", "-c", "-f", "-"], input=box.nft_script.read_text(), capture_output=True, text=True)
+        assert r.returncode == 0, (expose, r.stderr)
 
 
 def test_current_expose_reads_the_firewall(tmp_path):
