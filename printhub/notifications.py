@@ -18,6 +18,16 @@ log = logging.getLogger(__name__)
 
 FILE = "notifications.json"
 KINDS: tuple[str, ...] = ("job", "scan", "printer", "conversion", "settings")
+PLACEHOLDERS = ("title", "detail", "link", "time")
+DEFAULT_HEADER = "🖨\ufe0f Print Hub"
+DEFAULT_SUBJECT_PREFIX = "[Print Hub]"
+DEFAULT_TEMPLATES = {
+    "job": "🧾 {title}\n{detail}\n{link}",
+    "scan": "📄 {title}\n{detail}\n{link}",
+    "printer": "🔔 {title}\n{detail}\n{link}",
+    "conversion": "🔄 {title}\n{detail}\n{link}",
+    "settings": "⚙\ufe0f {title}\n{detail}\n{link}",
+}
 SILENCE_HOURS = (1, 8, 24, 168)
 SECRETS = {"email": "smtp_password", "telegram": "bot_token", "webhook": "header_value"}
 TYPES = tuple(SECRETS)
@@ -177,8 +187,8 @@ def _blank(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
-def _text(data: dict, field: str, lo: int, hi: int, strip: bool = False) -> str:
-    value = data.get(field)
+def _text(data: dict, field: str, lo: int, hi: int, strip: bool = False, default=None) -> str:
+    value = data.get(field, default)
     if strip and isinstance(value, str):
         value = value.strip()
     if not isinstance(value, str) or not lo <= len(value) <= hi:
@@ -207,11 +217,28 @@ def _choice(data: dict, field: str, options: tuple, default=None):
     return value
 
 
+def _templates(data: dict) -> dict[str, str]:
+    given = data.get("templates", {})
+    if not isinstance(given, dict) or any(k not in KINDS for k in given):
+        raise ValueError(f"templates must be an object with text for event kinds from {list(KINDS)}")
+    for kind, text in given.items():
+        if not isinstance(text, str) or not 1 <= len(text) <= 1000:
+            raise ValueError(f"templates must give each kind text of 1 to 1000 characters ({kind})")
+    return DEFAULT_TEMPLATES | given
+
+
 def _kinds(data: dict) -> list[str]:
     kinds = data.get("kinds")
     if not isinstance(kinds, list) or any(k not in KINDS for k in kinds):
         raise ValueError(f"kinds must be a list of event kinds from {list(KINDS)}")
     return [k for k in KINDS if k in kinds]
+
+
+def _subject_prefix(data: dict) -> str:
+    prefix = _text(data, "subject_prefix", 0, 100, default=DEFAULT_SUBJECT_PREFIX)
+    if re.search(r"[\r\n]", prefix):
+        raise ValueError("subject_prefix must be one line")
+    return prefix
 
 
 def _email(data: dict) -> dict:
@@ -222,7 +249,7 @@ def _email(data: dict) -> dict:
         addresses = [Address(addr_spec=a).addr_spec for a in to]
     except (TypeError, ValueError, MessageError):
         raise ValueError(BAD_TO) from None
-    out = {"to": addresses, "use_scan_server": _flag(data, "use_scan_server")}
+    out = {"to": addresses, "use_scan_server": _flag(data, "use_scan_server"), "subject_prefix": _subject_prefix(data), "templates": _templates(data)}
     if not out["use_scan_server"]:
         try:
             mail_from = sender(data.get("mail_from"))
@@ -257,6 +284,8 @@ def _telegram(data: dict) -> dict:
         "disable_notification": _flag(data, "disable_notification"),
         "protect_content": _flag(data, "protect_content"),
         "disable_web_page_preview": _flag(data, "disable_web_page_preview"),
+        "header": _text(data, "header", 0, 200, default=DEFAULT_HEADER),
+        "templates": _templates(data),
     }
 
 

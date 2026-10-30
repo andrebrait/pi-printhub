@@ -11,7 +11,7 @@ from test_mail import Recorder, client_tls, server_tls, smtp_server, tls_files  
 
 from printhub import senders
 from printhub.events import Event
-from printhub.notifications import validate_channel
+from printhub.notifications import DEFAULT_HEADER, DEFAULT_TEMPLATES, KINDS, validate_channel
 from printhub.senders import SendError, send
 from printhub.senders import test_event as make_test_event
 
@@ -84,6 +84,11 @@ def telegram(**kw):
     )
 
 
+def bare_telegram(**kw):
+    """Header and templates that add nothing, so a test sees the escaped values alone."""
+    return telegram(header="", templates={k: "{title}\n{detail}\n{link}" for k in KINDS}, **kw)
+
+
 def webhook(url, **kw):
     return channel("webhook", **dict(url=url, header_name="", header_value="") | kw)
 
@@ -109,7 +114,7 @@ def test_telegram_request_shape(http_server, monkeypatch, cfg):
     assert headers["Content-Type"] == "application/json"
     assert body == {
         "chat_id": "-100123",
-        "text": "<b>Job failed</b>\nPaper jam\nhttps://print.example.com/print.html?doc=d1",
+        "text": f"{DEFAULT_HEADER}\n{DEFAULT_TEMPLATES['job'].format(title='Job failed', detail='Paper jam', link='https://print.example.com/print.html?doc=d1')}",
         "message_thread_id": 42,
         "parse_mode": "HTML",
         "disable_notification": True,
@@ -126,26 +131,97 @@ def test_telegram_plain_omits_thread_and_parse_mode(http_server, monkeypatch, cf
 
     body = seen[0][2]
     assert "parse_mode" not in body and "message_thread_id" not in body
-    assert body["text"] == "Job failed\nhttps://print.example.com/jobs.html"
+    assert body["text"] == f"{DEFAULT_HEADER}\n{DEFAULT_TEMPLATES['job'].format(title='Job failed', detail='', link='https://print.example.com/jobs.html')}".replace("\n\n", "\n")
     assert body["link_preview_options"] == {"is_disabled": True}
 
 
 @pytest.mark.parametrize(
     "mode, expected",
     [
-        ("HTML", "<b>a&lt;b &amp; *c_ [d]</b>\nx &lt;y&gt;\nhttps://print.example.com/"),
-        ("Markdown", "*a<b & \\*c\\_ \\[d]*\nx <y>\nhttps://print.example.com/"),
-        ("MarkdownV2", "*a<b & \\*c\\_ \\[d\\]*\nx <y\\>\nhttps://print\\.example\\.com/"),
+        ("HTML", "a&lt;b &amp; *c_ [d]\nx &lt;y&gt;\nhttps://print.example.com/"),
+        ("Markdown", "a<b & \\*c\\_ \\[d]\nx <y>\nhttps://print.example.com/"),
+        ("MarkdownV2", "a<b & \\*c\\_ \\[d\\]\nx <y\\>\nhttps://print\\.example\\.com/"),
         (None, "a<b & *c_ [d]\nx <y>\nhttps://print.example.com/"),
     ],
 )
-def test_telegram_escapes_per_parse_mode(http_server, monkeypatch, cfg, mode, expected):
+def test_telegram_escapes_values_per_parse_mode(http_server, monkeypatch, cfg, mode, expected):
     url, seen = http_server(ok)
     monkeypatch.setattr(senders, "TELEGRAM_API", url)
 
-    send(telegram(parse_mode=mode), event(kind="settings", title="a<b & *c_ [d]", detail="x <y>"), cfg)
+    send(bare_telegram(parse_mode=mode), event(kind="settings", title="a<b & *c_ [d]", detail="x <y>"), cfg)
 
     assert seen[0][2]["text"] == expected
+
+
+def test_telegram_markdown_v2_keeps_the_owners_markup_and_escapes_the_values(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+    channel = telegram(parse_mode="MarkdownV2", header="*Printer*", templates={"job": "_{title}_\n{link}"})
+
+    send(channel, event(title="a_b*c.pdf", doc_id="d1"), cfg)
+
+    assert seen[0][2]["text"] == "*Printer*\n_a\\_b\\*c\\.pdf_\nhttps://print\\.example\\.com/print\\.html?doc\\=d1"
+
+
+def test_telegram_html_template_markup_is_kept_and_values_escaped(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(parse_mode="HTML", header="", templates={"job": "<b>{title}</b>"}), event(title="<x> & y"), cfg)
+
+    assert seen[0][2]["text"] == "<b>&lt;x&gt; &amp; y</b>"
+
+
+def test_telegram_without_a_parse_mode_leaves_values_and_other_braces_as_typed(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(parse_mode=None, header="", templates={"job": "{other} {title} {{detail}}"}), event(title="<a_b>"), cfg)
+
+    assert seen[0][2]["text"] == "{other} <a_b> {Paper jam}"
+
+
+def test_empty_and_blank_lines_are_dropped_and_an_empty_header_has_no_line(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+    template = "{title}\n{detail}\n  {detail}  \n   \n{link}"
+
+    send(telegram(header="", templates={"job": template}), event(detail=""), cfg)
+    send(telegram(header="Head", templates={"job": template}), event(detail=""), cfg)
+
+    assert [s[2]["text"] for s in seen] == [
+        "Job failed\nhttps://print.example.com/jobs.html",
+        "Head\nJob failed\nhttps://print.example.com/jobs.html",
+    ]
+
+
+def test_each_kind_uses_its_own_template(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+    channel = telegram(header="", templates={"job": "J {title}", "printer": "P {title}"})
+
+    send(channel, event(kind="job"), cfg)
+    send(channel, event(kind="printer"), cfg)
+
+    assert [s[2]["text"] for s in seen] == ["J Job failed", "P Job failed"]
+
+
+@pytest.fixture
+def utc_plus_2(monkeypatch):
+    monkeypatch.setenv("TZ", "XYZ-2")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_time_is_the_events_local_minute(http_server, monkeypatch, cfg, utc_plus_2):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(header="", templates={"job": "{time}"}), event(at="2026-10-30T10:00:42+00:00"), cfg)
+
+    assert seen[0][2]["text"] == "2026-10-30 12:00"
 
 
 def test_telegram_error_reports_description_without_token(http_server, monkeypatch, cfg):
@@ -240,28 +316,28 @@ def test_telegram_markdown_v2_escapes_every_special_character(http_server, monke
     monkeypatch.setattr(senders, "TELEGRAM_API", url)
     specials = "_*[]()~`>#+-=|{}.!\\"
 
-    send(telegram(parse_mode="MarkdownV2"), event(title=specials, detail=specials), cfg)
+    send(bare_telegram(parse_mode="MarkdownV2"), event(title=specials, detail=specials), cfg)
 
     escaped = "".join("\\" + c for c in specials)
-    assert seen[0][2]["text"].split("\n")[:2] == [f"*{escaped}*", escaped]
+    assert seen[0][2]["text"].split("\n")[:2] == [escaped, escaped]
 
 
 def test_telegram_markdown_escapes_only_underscore_star_bracket_backtick_backslash(http_server, monkeypatch, cfg):
     url, seen = http_server(ok)
     monkeypatch.setattr(senders, "TELEGRAM_API", url)
 
-    send(telegram(parse_mode="Markdown"), event(title="_*[`]\\.-", detail=""), cfg)
+    send(bare_telegram(parse_mode="Markdown"), event(title="_*[`]\\.-", detail=""), cfg)
 
-    assert seen[0][2]["text"].split("\n")[0] == "*\\_\\*\\[\\`]\\\\.-*"
+    assert seen[0][2]["text"].split("\n")[0] == "\\_\\*\\[\\`]\\\\.-"
 
 
 def test_telegram_html_escapes_only_what_the_markup_needs(http_server, monkeypatch, cfg):
     url, seen = http_server(ok)
     monkeypatch.setattr(senders, "TELEGRAM_API", url)
 
-    send(telegram(parse_mode="HTML"), event(title="say \"hi\" it's <b>", detail=""), cfg)
+    send(bare_telegram(parse_mode="HTML"), event(title="say \"hi\" it's <b>", detail=""), cfg)
 
-    assert seen[0][2]["text"].split("\n")[0] == "<b>say \"hi\" it's &lt;b&gt;</b>"
+    assert seen[0][2]["text"].split("\n")[0] == "say \"hi\" it's &lt;b&gt;"
 
 
 @pytest.mark.parametrize("status", [200, 500])
@@ -298,9 +374,31 @@ def test_email_body_and_subject(tls_mail, cfg):
     assert env.rcpt_tos == ["a@example.com"]
     msg = message_from_bytes(env.content, policy=policy.default)
     assert str(msg["Subject"]) == "[Print Hub] Job failed"
-    assert msg.get_content().replace("\r\n", "\n").strip() == (
-        "Paper jam\n\n2026-10-30T10:00:00+00:00\nhttps://print.example.com/print.html?doc=d1"
+    assert msg.get_content().replace("\r\n", "\n").strip() == DEFAULT_TEMPLATES["job"].format(
+        title="Job\nfailed", detail="Paper jam", link="https://print.example.com/print.html?doc=d1"
     )
+
+
+def sent_message(tls_mail, cfg, channel, ev=None):
+    rec, port = tls_mail
+    send(channel, ev or event(), replace(cfg, smtp_port=port, smtp_user=""))
+    return message_from_bytes(rec.envelopes[-1].content, policy=policy.default)
+
+
+@pytest.mark.parametrize("prefix, subject", [("[Ops]", "[Ops] Job failed"), ("  [Ops]  ", "[Ops] Job failed"), ("", "Job failed"), ("  ", "Job failed")])
+def test_email_subject_prefix_is_stripped_and_optional(tls_mail, cfg, prefix, subject):
+    msg = sent_message(tls_mail, cfg, email(subject_prefix=prefix))
+
+    assert str(msg["Subject"]) == subject
+
+
+def test_email_body_comes_from_the_kinds_template_unescaped(tls_mail, cfg):
+    channel = email(templates={"printer": "{title} <{detail}> at {time}\n{link}"})
+
+    msg = sent_message(tls_mail, cfg, channel, event(kind="printer", title="a&b", detail="c<d"))
+
+    body = msg.get_content().replace("\r\n", "\n").strip()
+    assert body.startswith("a&b <c<d> at ") and body.endswith("\nhttps://print.example.com/")
 
 
 def test_email_uses_scan_server_or_its_own(tls_mail, cfg):

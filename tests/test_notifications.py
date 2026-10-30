@@ -8,6 +8,9 @@ import pytest
 
 from printhub.events import Event
 from printhub.notifications import (
+    DEFAULT_HEADER,
+    DEFAULT_SUBJECT_PREFIX,
+    DEFAULT_TEMPLATES,
     KINDS,
     StoreError,
     active_silences,
@@ -269,3 +272,59 @@ def test_strict_load_refuses_a_file_that_did_not_load_cleanly(tmp_path, content)
         load_strict(tmp_path)
     assert str(e.value).endswith(str(path))
     assert "123:abc" not in str(e.value)
+
+
+MESSAGE_FIELDS = [(telegram, "header", DEFAULT_HEADER), (email, "subject_prefix", DEFAULT_SUBJECT_PREFIX)]
+
+
+@pytest.mark.parametrize("make, field, default", MESSAGE_FIELDS)
+def test_a_stored_channel_without_message_fields_loads_with_the_defaults(tmp_path, make, field, default):
+    (tmp_path / "notifications.json").write_text(json.dumps({"channels": [make()], "silences": []}))
+
+    (channel,) = load(tmp_path)["channels"]
+
+    assert (channel[field], channel["templates"]) == (default, DEFAULT_TEMPLATES)
+    assert public(channel)["templates"] == DEFAULT_TEMPLATES and public(channel)[field] == default
+
+
+@pytest.mark.parametrize("make, field, default", MESSAGE_FIELDS)
+def test_missing_kinds_are_filled_from_the_defaults_and_the_rest_kept(make, field, default):
+    channel = validate_channel(make(templates={"job": "{title}"}, **{field: ""}))
+
+    assert channel[field] == ""
+    assert channel["templates"] == DEFAULT_TEMPLATES | {"job": "{title}"}
+
+
+@pytest.mark.parametrize(
+    "field, data",
+    [
+        ("templates", telegram(templates={"bogus": "x"})),
+        ("templates", telegram(templates={"job": "x" * 1001})),
+        ("templates", telegram(templates={"job": ""})),
+        ("templates", telegram(templates={"job": 5})),
+        ("templates", email(templates=["x"])),
+        ("templates", email(templates={"scan": "x" * 1001})),
+        ("header", telegram(header="x" * 201)),
+        ("header", telegram(header=None)),
+        ("subject_prefix", email(subject_prefix="x" * 101)),
+        ("subject_prefix", email(subject_prefix="a\nBcc: x@example.com")),
+        ("subject_prefix", email(subject_prefix="a\rb")),
+    ],
+)
+def test_bad_message_fields_name_the_field(field, data):
+    with pytest.raises(ValueError, match=f"^{field}"):
+        validate_channel(data)
+
+
+def test_webhook_has_no_message_fields():
+    channel = validate_channel(webhook(header="x", templates={"job": "x"}))
+
+    assert "header" not in channel and "templates" not in channel
+
+
+def test_edit_may_leave_out_the_message_fields():
+    stored = validate_channel(telegram(header="Mine", templates={"job": "{title}"}))
+
+    merged = merge_edit(stored, {"name": "Renamed"})
+
+    assert (merged["header"], merged["templates"]["job"]) == ("Mine", "{title}")

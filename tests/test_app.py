@@ -25,6 +25,7 @@ from printhub.documents import Crop, DocStore, Page, PrintRecord
 from printhub.events import EventLog
 from printhub.mail import MailError
 from printhub.middleware import MAX_BODY
+from printhub.notifications import DEFAULT_HEADER, DEFAULT_SUBJECT_PREFIX, DEFAULT_TEMPLATES
 from printhub.scanning import Scanner
 from printhub.senders import SendError
 from printhub.settings import apply_overlay, write_json
@@ -1196,3 +1197,20 @@ def test_a_notifications_file_that_did_not_load_cleanly_is_never_overwritten(cli
     error = r.json()["error"]
     assert error.startswith("notifications.json has a problem (") and error.endswith(f"fix or remove it before saving: {path}")
     assert path.read_text() == content
+
+
+def test_notify_defaults_are_served_to_a_session_only(client, make_client):
+    assert client.get("/api/notify/defaults").json() == {
+        "header": DEFAULT_HEADER,
+        "subject_prefix": DEFAULT_SUBJECT_PREFIX,
+        "templates": DEFAULT_TEMPLATES,
+    }
+    assert make_client(login=False).get("/api/notify/defaults").status_code == 401
+
+
+def test_message_fields_round_trip_through_the_api(client):
+    created = add_channel(client, {**CHAT, "header": "*Printer*", "templates": {"job": "{title}"}})
+
+    assert created["header"] == "*Printer*"
+    assert created["templates"] == DEFAULT_TEMPLATES | {"job": "{title}"}
+    assert client.post("/api/notify/channels", json={**CHAT, "templates": {"bogus": "x"}}).status_code == 400

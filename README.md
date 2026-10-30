@@ -84,6 +84,8 @@ The settings page's Notifications card sends the Print Hub's events to any numbe
 
 Each channel takes any of five event types: **Print jobs**, **Scans**, **Printer status**, **File conversions** and **Settings changes**. All are on for a new channel.
 
+Email and Telegram channels also have **Advanced options** in the channel form: a Telegram **header** (first line of every message) or an email **subject prefix**, and one message template per event type. A template may use `{title}`, `{detail}`, `{link}` and `{time}`; empty lines are dropped. Your text is sent as typed in the chosen Telegram parse mode (so `<b>{title}</b>` in HTML mode gives a bold title), while the values behind the placeholders are escaped for it. **Reset to defaults** restores the built-in text.
+
 To silence an alert from the bell, choose **Silence** on it and pick "this alert" (same title) or "all" of its type, for 1 hour, 8 hours, 1 day or 1 week. A silence stops messages on every channel; the bell still records the event. The settings page lists active silences, and **Unsilence** ends one early.
 
 Secrets (bot token, SMTP password, webhook header value) are stored in `/var/lib/printhub/notifications.json`, mode 0600, and are never shown again; leave a secret field blank on save to keep it. A failed send is retried after 1, 5 and 15 minutes, then dropped. Retries are kept in memory, so a restart drops them.

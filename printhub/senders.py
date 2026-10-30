@@ -6,6 +6,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from urllib.parse import quote
@@ -13,6 +14,7 @@ from urllib.parse import quote
 from printhub import mail
 from printhub.config import Config
 from printhub.events import Event
+from printhub.notifications import PLACEHOLDERS
 
 TELEGRAM_API = "https://api.telegram.org"
 TIMEOUT = 10
@@ -63,28 +65,44 @@ def _email(channel: dict, event: Event, cfg: Config) -> None:
             cfg,
             **{k: channel[k] for k in ("smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from")},
         )
-    body = "\n\n".join(p for p in (event.detail, f"{event.at}\n{_link(event, cfg)}") if p)
+    subject = " ".join(p for p in (channel["subject_prefix"].strip(), event.title) if p)
+    body = render(channel["templates"][event.kind], event, _link(event, cfg), str)
     try:
-        mail.send(cfg, channel["to"], "[Print Hub] " + event.title, [], body=body)
+        mail.send(cfg, channel["to"], subject, [], body=body)
     except (mail.MailError, mail.InvalidRecipient) as e:
         raise SendError(str(e)) from e
 
 
-def _telegram_text(mode: str | None, event: Event, link: str) -> str:
+def render(template: str, event: Event, link: str, escape: Callable[[str], str], escape_link: Callable[[str], str] | None = None) -> str:
+    """Fills the placeholders (nothing else in the template is touched) and drops the lines left empty."""
+    values = {
+        "title": escape(event.title),
+        "detail": escape(event.detail),
+        "link": (escape_link or escape)(link),
+        "time": escape(datetime.fromisoformat(event.at).astimezone().strftime("%Y-%m-%d %H:%M")),
+    }
+    text = re.sub(r"\{(%s)\}" % "|".join(PLACEHOLDERS), lambda m: values[m[1]], template)
+    return "\n".join(line for line in text.split("\n") if line.strip())
+
+
+def _telegram_text(channel: dict, event: Event, link: str) -> str:
+    mode = channel["parse_mode"]
     if mode == "HTML":
-        esc, bold = (lambda s: html.escape(s, quote=False)), "<b>{}</b>".format
+        escape = escape_link = lambda s: html.escape(s, quote=False)
     elif mode in _ESCAPE:
-        esc, bold = (lambda s: re.sub(f"([{_ESCAPE[mode]}])", r"\\\1", s)), "*{}*".format
+        escape = lambda s: re.sub(f"([{_ESCAPE[mode]}])", r"\\\1", s)
+        escape_link = escape if mode == "MarkdownV2" else str
     else:
-        esc, bold = str, str
-    return "\n".join([bold(esc(event.title)), *([esc(event.detail)] if event.detail else []), esc(link)])
+        escape = escape_link = str
+    body = render(channel["templates"][event.kind], event, link, escape, escape_link)
+    return f"{channel['header']}\n{body}" if channel["header"] else body
 
 
 def _telegram(channel: dict, event: Event, cfg: Config) -> None:
     mode = channel["parse_mode"]
     payload = {
         "chat_id": channel["chat_id"],
-        "text": _telegram_text(mode, event, _link(event, cfg)),
+        "text": _telegram_text(channel, event, _link(event, cfg)),
         "disable_notification": channel["disable_notification"],
         "protect_content": channel["protect_content"],
         "link_preview_options": {"is_disabled": channel["disable_web_page_preview"]},

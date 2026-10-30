@@ -351,6 +351,8 @@ test("another scan waits for queued page edits and does not start when one fails
 const SETTINGS = { retention_days: 30, min_free_gb: 2, smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls",
   smtp_user: "me", mail_from: "hub@example", smtp_password_set: true };
 const reply = (body, ok = true) => ({ ok, json: async () => body });
+const DEFAULTS = { header: "🖨️ Print Hub", subject_prefix: "[Print Hub]",
+  templates: Object.fromEntries(Object.keys(KIND_LABELS).map((k) => [k, `${k}: {title}\n{detail}\n{link}`])) };
 
 // A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
 // notify = { channels, silences, confirm } seeds what the notification API lists and answers the delete prompt; like the server it
@@ -373,6 +375,7 @@ function settingsEnv(systems, failing = [], notify = {}) {
     const tested = url.match(/^\/api\/notify\/channels\/([^/]+)\/test$/);
     // Like the server, a test records its outcome as the channel's last result.
     if (tested) channels.find((c) => c.id === tested[1]).result = failing.includes(url) ? "Failed: Rejected" : "Delivered just now";
+    if (url === "/api/notify/defaults") return reply(DEFAULTS);
     if (failing.includes(url)) return reply(null, false);
     if (url === "/api/notify/channels" && method === "POST") {
       const { bot_token, ...rest } = opts.body;
@@ -602,6 +605,7 @@ test("adding a Telegram channel sends its fields, and the token never comes back
     name: "Phone", type: "telegram", enabled: true, kinds: ["job", "scan", "printer", "conversion"],
     bot_token: "123:abc", chat_id: "-1001", message_thread_id: 7, parse_mode: "HTML",
     disable_notification: false, protect_content: true, disable_web_page_preview: false,
+    header: DEFAULTS.header, templates: DEFAULTS.templates,
   });
   assert.equal(document.getElementById("channel-form").hidden, true);
   const list = textOf(document.getElementById("channels"));
@@ -620,6 +624,7 @@ test("an email channel uses the scan email server or its own, and sends only wha
   await submit(document.getElementById("channel-form"));
   assert.deepEqual(posts(calls)[0].body, {
     name: "Mail", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com", "b@example.com"], use_scan_server: true,
+    subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
   });
   document.getElementById("channel-add").listeners.click();
   document.getElementById("channel-name").value = "Own";
@@ -633,6 +638,7 @@ test("an email channel uses the scan email server or its own, and sends only wha
   assert.deepEqual(posts(calls)[1].body, {
     name: "Own", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com"], use_scan_server: false,
     smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls", smtp_user: "", smtp_password: "", mail_from: "Hub <hub@example.com>",
+    subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
   });
 });
 
@@ -657,6 +663,74 @@ test("editing a channel keeps its saved secret unless a new one is typed", async
   field(document, "bot_token").value = "456:def";
   await submit(document.getElementById("channel-form"));
   assert.equal(puts()[1].body.bot_token, "456:def");
+});
+
+const advanced = (document) => document.getElementById("channel-advanced");
+const option = (document, id) => find(advanced(document), (e) => e.id === id);
+const chooseType = (document, type) => {
+  document.getElementById("channel-type").value = type;
+  document.getElementById("channel-type").listeners.change();
+};
+
+test("a new Telegram channel's Advanced options start from the server defaults; an edited template is saved; Reset refills", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  chooseType(document, "telegram");
+  const text = textOf(advanced(document));
+  for (const part of ["Advanced options", "Header", ...Object.values(KIND_LABELS), "Reset to defaults", "Placeholders: {title}, {detail}, {link}, {time}", "parse mode"]) {
+    assert.ok(text.includes(part), part);
+  }
+  assert.ok(!find(advanced(document), (e) => e.tagName === "DETAILS").open, "closed by default");
+  assert.equal(option(document, "ch-header").value, DEFAULTS.header);
+  for (const k of KINDS) assert.equal(option(document, `ch-template-${k}`).value, DEFAULTS.templates[k]);
+  assert.equal(option(document, "ch-template-job").rows, 3);
+  document.getElementById("channel-name").value = "Phone";
+  field(document, "bot_token").value = "123:abc";
+  field(document, "chat_id").value = "-1001";
+  option(document, "ch-template-job").value = "<b>{title}</b>";
+  await submit(document.getElementById("channel-form"));
+  const { header, templates } = posts(calls)[0].body;
+  assert.equal(header, DEFAULTS.header);
+  assert.deepEqual(templates, { ...DEFAULTS.templates, job: "<b>{title}</b>" });
+
+  document.getElementById("channel-add").listeners.click();
+  chooseType(document, "telegram");
+  option(document, "ch-header").value = "mine";
+  option(document, "ch-template-scan").value = "x";
+  buttonIn(advanced(document), "Reset to defaults").listeners.click();
+  assert.equal(option(document, "ch-header").value, DEFAULTS.header);
+  assert.equal(option(document, "ch-template-scan").value, DEFAULTS.templates.scan);
+});
+
+test("an email channel has a subject prefix and no parse mode sentence; a webhook has no Advanced options", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  const text = textOf(advanced(document));
+  assert.ok(text.includes("Subject prefix") && text.includes("Placeholders: {title}, {detail}, {link}, {time}"));
+  assert.equal(text.includes("parse mode"), false);
+  assert.equal(option(document, "ch-subject_prefix").value, DEFAULTS.subject_prefix);
+  chooseType(document, "webhook");
+  assert.equal(advanced(document).children.length, 0);
+  document.getElementById("channel-name").value = "Hook";
+  field(document, "url").value = "https://ntfy.example.com/hub";
+  await submit(document.getElementById("channel-form"));
+  const body = posts(calls)[0].body;
+  assert.equal("header" in body || "templates" in body || "subject_prefix" in body, false);
+});
+
+test("editing a channel shows its own header and templates", async () => {
+  const mine = { ...PHONE, header: "*Printer*", templates: { ...DEFAULTS.templates, job: "_{title}_" } };
+  const { document, calls, main } = settingsEnv([applied], [], { channels: [mine] });
+  await main();
+  buttonIn(document.getElementById("channels"), "Edit").listeners.click();
+  assert.equal(option(document, "ch-header").value, "*Printer*");
+  assert.equal(option(document, "ch-template-job").value, "_{title}_");
+  await submit(document.getElementById("channel-form"));
+  const put = calls.find((c) => c.method === "PUT");
+  assert.equal(put.body.header, "*Printer*");
+  assert.equal(put.body.templates.job, "_{title}_");
 });
 
 test("a refused channel save stays open with the reason", async () => {

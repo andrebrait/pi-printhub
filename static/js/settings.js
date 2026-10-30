@@ -40,9 +40,16 @@ const CHANNEL_FIELDS = {
     { key: "header_value", label: "Header value (optional)", type: "secret", placeholder: "Bearer …" },
   ],
 };
+// The message option each type with templates has, besides the per-kind templates.
+const MESSAGE_HEAD = {
+  telegram: { key: "header", label: "Header", max: 200, help: "Your text is sent as typed in the chosen parse mode; the values of the placeholders are escaped. " },
+  email: { key: "subject_prefix", label: "Subject prefix", max: 100, help: "" },
+};
 let editing = null; // the saved channel the form edits; null while it adds one
 let inputs = {}; // the open form's field inputs by key
 let kindBoxes = {};
+let defaults = null; // what GET /api/notify/defaults gave: the message options of a new channel
+let message = null; // the open form's message option inputs: { key, input, areas: { kind: textarea } }; null when the type has none
 
 const $ = (id) => document.getElementById(id);
 
@@ -192,9 +199,51 @@ function renderFields(channel) {
   const built = fields.map((f) => fieldBox(f, channel));
   inputs = Object.fromEntries(fields.map((f, i) => [f.key, built[i].input]));
   $("channel-fields").replaceChildren(...built.map((b) => b.box));
+  renderAdvanced(channel);
   const hideOwn = () => fields.forEach((f, i) => { if (f.own) built[i].box.hidden = inputs.use_scan_server.checked; });
   inputs.use_scan_server?.addEventListener("change", hideOwn);
   hideOwn();
+}
+
+/** The collapsed "Advanced options": the header or subject prefix and one template per event kind. */
+function renderAdvanced(channel) {
+  const head = MESSAGE_HEAD[$("channel-type").value];
+  if (!head || !defaults) {
+    message = null;
+    return $("channel-advanced").replaceChildren();
+  }
+  const input = el("input", "form-control");
+  input.type = "text";
+  input.id = `ch-${head.key}`;
+  input.maxLength = head.max;
+  input.autocomplete = "off";
+  const label = el("label", "form-label", head.label);
+  label.htmlFor = input.id;
+  const first = el("div", "mb-3");
+  first.append(label, input);
+  const areas = {};
+  const boxes = KINDS.map((k) => {
+    const area = areas[k] = el("textarea", "form-control font-monospace");
+    area.id = `ch-template-${k}`;
+    area.rows = 3;
+    const areaLabel = el("label", "form-label", KIND_LABELS[k]);
+    areaLabel.htmlFor = area.id;
+    const box = el("div", "mb-3");
+    box.append(areaLabel, area);
+    return box;
+  });
+  const fillFrom = (source) => {
+    input.value = source[head.key] ?? defaults[head.key];
+    for (const k of KINDS) areas[k].value = source.templates?.[k] ?? defaults.templates[k];
+  };
+  const reset = button("Reset to defaults", "Reset to defaults", "refresh");
+  reset.addEventListener("click", () => fillFrom(defaults));
+  const help = el("p", "form-text", `Placeholders: {title}, {detail}, {link}, {time}. ${head.help}Empty lines are dropped.`);
+  const details = el("details", "mb-3");
+  details.append(el("summary", "mb-2", "Advanced options"), first, ...boxes, help, reset);
+  $("channel-advanced").replaceChildren(details);
+  message = { key: head.key, input, areas };
+  fillFrom(channel ?? defaults);
 }
 
 function openChannel(channel = null) {
@@ -244,6 +293,10 @@ function channelBody() {
     else if (f.type === "number") body[f.key] = value === "" ? null : Number(value);
     else if (f.type === "select") body[f.key] = value || null;
     else body[f.key] = value.trim();
+  }
+  if (message) {
+    body[message.key] = message.input.value;
+    body.templates = Object.fromEntries(KINDS.map((k) => [k, message.areas[k].value]));
   }
   return body;
 }
@@ -406,7 +459,7 @@ function main() {
   });
   document.addEventListener("silences-changed", loadSilences); // silenced from the bell
 
-  return Promise.all([get("/api/settings").then(fill), get("/api/settings/system").then((system) => follow(system)), loadChannels(), loadSilences()]).catch((e) => {
+  return Promise.all([get("/api/settings").then(fill), get("/api/settings/system").then((system) => follow(system)), get("/api/notify/defaults").then((d) => { defaults = d; }), loadChannels(), loadSilences()]).catch((e) => {
     $("load-error").textContent = `Could not load settings: ${e.message}`;
     $("load-error").hidden = false;
   });

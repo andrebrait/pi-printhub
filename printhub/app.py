@@ -845,6 +845,14 @@ def create_app(
         except notification_store.StoreError as e:
             raise ApiError(409, str(e)) from None
 
+    @api.get("/notify/defaults")
+    def get_notify_defaults():
+        return {
+            "header": notification_store.DEFAULT_HEADER,
+            "subject_prefix": notification_store.DEFAULT_SUBJECT_PREFIX,
+            "templates": notification_store.DEFAULT_TEMPLATES,
+        }
+
     @api.get("/notify/channels")
     def get_channels():
         return [
