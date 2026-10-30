@@ -48,6 +48,7 @@ from printhub.mail import (
     send,
 )
 from printhub.middleware import MAX_BODY, MAX_UPLOAD, Guard
+from printhub.notifier import Notifier
 from printhub.printing import PrintOptions
 from printhub.retention import DiskFull, busy_policy, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
@@ -270,6 +271,7 @@ def create_app(
         if watch:
             watcher = Watcher(cups_conn_factory, cfg.printer_queue, events)
             threading.Thread(target=watcher.run, args=(stop, WATCH_INTERVAL), name="watcher", daemon=True).start()
+            threading.Thread(target=app.state.notifier.run, args=(stop,), name="notifier", daemon=True).start()
         try:
             yield
         finally:
@@ -277,6 +279,7 @@ def create_app(
 
     app = FastAPI(openapi_url=None, lifespan=lifespan)
     app.state.cfg = cfg
+    app.state.notifier = Notifier(events, cfg.data_dir, lambda: app.state.cfg)
     app.add_middleware(Guard, current=lambda: app.state.cfg, admit_share=admit_share, release_share=share_lock.release)
 
     def using_document(fn=None, *, exclusive=False):

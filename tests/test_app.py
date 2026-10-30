@@ -797,7 +797,10 @@ def test_the_running_app_records_events(cfg, fake_cups, monkeypatch):
                 break
             time.sleep(0.02)
         assert [e["title"] for e in c.get("/api/notifications").json()["events"]] == ["Job 7 completed"]
+        notifier = next(t for t in threading.enumerate() if t.name == "notifier")
     assert not any(t.name == "watcher" and t.is_alive() for t in threading.enumerate())
+    notifier.join(1)
+    assert not notifier.is_alive()
 
 
 def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(client, store, fake_cups):
