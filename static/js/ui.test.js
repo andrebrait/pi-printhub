@@ -346,3 +346,90 @@ test("another scan waits for queued page edits and does not start when one fails
     }
   }
 });
+
+const SETTINGS = { retention_days: 30, min_free_gb: 2, smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls",
+  smtp_user: "me", mail_from: "hub@example", smtp_password_set: true };
+const reply = (body, ok = true) => ({ ok, json: async () => body });
+
+// A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
+function settingsEnv(systems) {
+  const document = dom();
+  const calls = [];
+  const timers = [];
+  const apiFetch = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method ?? "GET", body: opts.body });
+    if (url === "/api/settings/system" && opts.method !== "PUT") return reply(systems.length > 1 ? systems.shift() : systems[0]);
+    if (url === "/api/settings/system") return reply(pending); // 202: the request is written, not applied
+    return reply(SETTINGS);
+  };
+  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout",
+    `${source("settings.js").replace(/main\(\);\s*$/, "")} return { main };`)(
+    document, apiFetch, async () => "Rejected", (fn) => timers.push(fn));
+  const tick = async () => { // let pending promises settle, then fire the timers that were waiting
+    await new Promise((r) => setImmediate(r));
+    timers.splice(0).forEach((fn) => fn());
+    await new Promise((r) => setImmediate(r));
+  };
+  return { document, calls, main, tick };
+}
+const applied = { requested: { share: true, expose_usb: true }, status: { state: "applied", share: true, expose_usb: true, error: null }, pending: false };
+const pending = { requested: { share: false, expose_usb: true }, status: null, pending: true };
+
+test("settings fills the form without the stored password and keeps it when the field is left blank", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  assert.equal(document.getElementById("retention_days").value, 30);
+  assert.equal(document.getElementById("smtp_host").value, "smtp.example");
+  assert.equal(document.getElementById("smtp_password").value, "");
+  assert.match(document.getElementById("smtp_password").placeholder, /saved/i);
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  const put = calls.find((c) => c.method === "PUT" && c.url === "/api/settings");
+  assert.equal(put.body.smtp_port, 587); // a number: the server rejects "587"
+  assert.equal(put.body.smtp_host, "smtp.example");
+  assert.equal("smtp_password" in put.body, false);
+  document.getElementById("smtp_password").value = "hunter22";
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  assert.equal(calls.filter((c) => c.method === "PUT").at(-1).body.smtp_password, "hunter22");
+});
+
+test("a sharing change shows Applying until the status catches up, then the applied state", async () => {
+  const { document, main, tick } = settingsEnv([applied, pending, { ...applied, requested: pending.requested }]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  document.getElementById("share").checked = false;
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  assert.match(msg.textContent, /Applying/);
+  await tick();
+  assert.match(msg.textContent, /Applying/);
+  await tick();
+  await saved;
+  assert.match(msg.textContent, /Applied/);
+  assert.equal(document.getElementById("system-save").disabled, false);
+});
+
+test("a sharing change that never applies says so after 30 seconds", async () => {
+  const { document, main, tick } = settingsEnv([applied, pending]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  for (let i = 0; i < 14; i++) await tick();
+  assert.match(msg.textContent, /Applying/, "still waiting before 30 seconds");
+  await tick();
+  await saved;
+  assert.match(msg.textContent, /Not applied yet: is printhub-apply\.path running\? Re-run the installer\./);
+});
+
+test("a failed apply restores the switches to what is in force", async () => {
+  const failed = { requested: { share: false, expose_usb: false },
+    status: { state: "failed", share: true, expose_usb: false, error: "cupsctl failed" }, pending: false };
+  const { document, main, tick } = settingsEnv([applied, failed]);
+  await main();
+  document.getElementById("share").checked = false;
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  await tick();
+  await saved;
+  assert.equal(document.getElementById("share").checked, true);
+  assert.equal(document.getElementById("expose_usb").checked, false);
+  assert.match(document.getElementById("system-msg").textContent, /cupsctl failed/);
+});

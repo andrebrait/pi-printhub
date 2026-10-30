@@ -44,6 +44,7 @@ p:empty { display: none; }
 [data-icon="rotate_left"] { --icon: url(/vendor/material-symbols/rotate_left.svg); }
 [data-icon="rotate_right"] { --icon: url(/vendor/material-symbols/rotate_right.svg); }
 [data-icon="scanner"] { --icon: url(/vendor/material-symbols/scanner.svg); }
+[data-icon="settings"] { --icon: url(/vendor/material-symbols/settings.svg); }
 [data-icon="send"] { --icon: url(/vendor/material-symbols/send.svg); }
 [data-icon="upload_file"] { --icon: url(/vendor/material-symbols/upload_file.svg); }
 

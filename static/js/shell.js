@@ -16,6 +16,7 @@ const PAGES = [
   ["/", "Home", "home"],
   ["/scan.html", "Scan", "scanner"],
   ["/jobs.html", "Jobs", "list_alt"],
+  ["/settings.html", "Settings", "settings"],
 ];
 const POLL_MS = 5000;
 const MAX_TOASTS = 3;
@@ -133,6 +134,10 @@ function buildBar(host) {
   const live = el("span", "printer-live d-inline-flex min-w-0 order-2 order-md-last");
   live.setAttribute("role", "status");
   live.append(pill);
+  const cog = el("a", "btn btn-outline-secondary");
+  cog.href = "/settings.html";
+  cog.dataset.icon = "settings";
+  cog.setAttribute("aria-label", "Settings");
   const bell = el("button", "btn btn-outline-secondary position-relative bell");
   bell.type = "button";
   bell.setAttribute("data-bs-toggle", "offcanvas");
@@ -151,7 +156,7 @@ function buildBar(host) {
   toggler.setAttribute("aria-expanded", "false");
   toggler.setAttribute("aria-label", "Menu");
   toggler.append(el("span", "navbar-toggler-icon"));
-  tools.append(bell, toggler);
+  tools.append(cog, bell, toggler);
 
   const collapse = el("div", "collapse navbar-collapse order-3 order-md-0");
   collapse.id = "main-nav";
