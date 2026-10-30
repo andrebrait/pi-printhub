@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import asyncio
 import io
+import json
+import stat
 import tempfile
 import threading
 import time
@@ -849,6 +851,60 @@ def test_settings_rejects_bad_values(client):
     assert client.put("/api/settings", json={"smtp_host": 5}).status_code == 400
     assert client.put("/api/settings", json={"password_hash": "x"}).status_code == 400
     assert client.get("/api/settings").json() == before
+
+
+def test_system_defaults_to_shared_and_exposed(client):
+    body = client.get("/api/settings/system").json()
+
+    assert body == {"requested": {"share": True, "expose_usb": True}, "status": None, "pending": False}
+
+
+def test_system_request_is_written_and_pending_until_applied(client, cfg):
+    r = client.put("/api/settings/system", json={"share": False, "expose_usb": True})
+
+    assert r.status_code == 202
+    path = cfg.data_dir / "system-request.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    request = json.loads(path.read_text())
+    assert (request["share"], request["expose_usb"]) == (False, True)
+    assert r.json()["pending"] is True
+
+    status = {
+        "state": "applied", "share": False, "expose_usb": True, "error": None,
+        "at": "2026-10-30T10:00:01+00:00", "request_at": request["at"],
+    }
+    (cfg.data_dir / "system-status.json").write_text(json.dumps(status))
+
+    body = client.get("/api/settings/system").json()
+    assert (body["pending"], body["status"]) == (False, status)
+
+
+def test_system_request_rejects_non_booleans(client, cfg):
+    assert client.put("/api/settings/system", json={"share": "no", "expose_usb": True}).status_code == 400
+    assert client.put("/api/settings/system", json={"share": True, "expose_usb": True, "extra": 1}).status_code == 400
+    assert not (cfg.data_dir / "system-request.json").exists()
+
+
+@pytest.mark.parametrize("request_text", ["{not json", '{"share": "no", "expose_usb": true, "at": "x"}'])
+def test_system_malformed_files_read_as_absent(client, cfg, request_text):
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.data_dir / "system-request.json").write_text(request_text)
+    (cfg.data_dir / "system-status.json").write_text("[1, 2]")
+
+    r = client.get("/api/settings/system")
+
+    assert r.status_code == 200
+    assert r.json() == {"requested": {"share": True, "expose_usb": True}, "status": None, "pending": False}
+
+
+def test_system_switches_log_one_event_per_change(client):
+    client.put("/api/settings/system", json={"share": False, "expose_usb": True})
+    client.put("/api/settings/system", json={"share": False, "expose_usb": True})
+    client.put("/api/settings/system", json={"share": False, "expose_usb": False})
+
+    titles = [e["title"] for e in client.get("/api/notifications").json()["events"]]
+    assert titles[:2] == ["Direct printer exposure turned off", "Sharing turned off"]
+
 
 
 def test_password_change_logs_out_other_sessions(cfg, fake_cups, space):

@@ -20,7 +20,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
 from starlette.background import BackgroundTask
 
 from printhub import convert, edits, printing, scanning
@@ -51,7 +51,7 @@ from printhub.middleware import MAX_BODY, MAX_UPLOAD, Guard
 from printhub.printing import PrintOptions
 from printhub.retention import DiskFull, busy_policy, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
-from printhub.settings import save as save_settings
+from printhub.settings import read_system, request_system, save as save_settings
 from printhub.watcher import Watcher
 
 THUMB_PX = 400
@@ -97,6 +97,12 @@ class PasswordChange(BaseModel):
 class SendTestEmail(BaseModel):
     model_config = ConfigDict(extra="forbid")
     to: StrictStr
+
+
+class SystemSwitches(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    share: StrictBool
+    expose_usb: StrictBool
 
 
 class PageEdit(BaseModel):
@@ -791,6 +797,23 @@ def create_app(
             raise ApiError(400, f"Invalid recipient: {e}") from None
         except MailError as e:
             raise ApiError(502, str(e)) from None
+
+    @api.get("/settings/system")
+    def get_system():
+        return read_system(cfg.data_dir)
+
+    @api.put("/settings/system", status_code=202)
+    def put_system(body: SystemSwitches):
+        with settings_lock:
+            before = read_system(cfg.data_dir)["requested"]
+            request_system(cfg.data_dir, body.share, body.expose_usb)
+            if before["share"] != body.share:
+                title = "Sharing turned on" if body.share else "Sharing turned off"
+                notify("info", "settings", title)
+            if before["expose_usb"] != body.expose_usb:
+                title = "Direct printer exposure turned on" if body.expose_usb else "Direct printer exposure turned off"
+                notify("info", "settings", title)
+            return read_system(cfg.data_dir)
 
     app.include_router(api)
     app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")

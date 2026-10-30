@@ -4,6 +4,7 @@ import logging
 import os
 import tempfile
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from printhub.config import Config, ConfigError, validate
@@ -59,16 +60,16 @@ def save(cfg: Config, changes: dict) -> Config:
     new = replace(cfg, **changes)
     validate(new)
     path = cfg.data_dir / "settings.json"
-    write_json(path, {**_read_overlay(path), **changes})
+    write_json(path, {**(_read_json_object(path) or {}), **changes})
     return new
 
 
-def _read_overlay(path: Path) -> dict:
+def _read_json_object(path: Path) -> dict | None:
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def write_json(path: Path, data: dict) -> None:
@@ -84,3 +85,29 @@ def write_json(path: Path, data: dict) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+SYSTEM_REQUEST = "system-request.json"
+SYSTEM_STATUS = "system-status.json"
+SYSTEM_SWITCHES = ("share", "expose_usb")
+
+
+def request_system(data_dir: Path, share: bool, expose_usb: bool) -> dict:
+    request = {"share": share, "expose_usb": expose_usb, "at": datetime.now(timezone.utc).isoformat()}
+    write_json(data_dir / SYSTEM_REQUEST, request)
+    return request
+
+
+def read_system(data_dir: Path) -> dict:
+    # A malformed file counts as absent, so a bad write never breaks the page.
+    status = _read_json_object(data_dir / SYSTEM_STATUS)
+    request = _read_json_object(data_dir / SYSTEM_REQUEST)
+    if request is None or not (
+        all(isinstance(request.get(k), bool) for k in SYSTEM_SWITCHES) and isinstance(request.get("at"), str)
+    ):
+        return {"requested": dict.fromkeys(SYSTEM_SWITCHES, True), "status": status, "pending": False}
+    return {
+        "requested": {k: request[k] for k in SYSTEM_SWITCHES},
+        "status": status,
+        "pending": status is None or status.get("request_at") != request["at"],
+    }
