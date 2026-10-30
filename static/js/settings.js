@@ -74,15 +74,20 @@ let watch = 0;
 async function follow(system, saved = false) {
   const mine = ++watch;
   let announce = saved;
+  let lastError = "";
   // shortcut: the 30 s is counted in poll intervals, so slow requests stretch it, upgrade: use Date.now() if that matters.
   for (let waited = 0; show(system, announce); waited += POLL_MS) {
-    if (waited >= GIVE_UP_MS) return note("system", "Not applied yet: is printhub-apply.path running? Re-run the installer.", "warning");
+    if (waited >= GIVE_UP_MS) {
+      const why = lastError && ` The last status check failed: ${lastError}`;
+      return note("system", `Not applied yet: is printhub-apply.path running? Re-run the installer.${why}`, "warning");
+    }
     announce = true; // a request that was waiting ends in a result worth stating
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     try {
       system = await get("/api/settings/system");
+      lastError = "";
     } catch (err) {
-      return note("system", err.message);
+      lastError = err.message; // the web app may be restarting under this very request: keep waiting
     }
     if (mine !== watch) return; // a newer save took over
   }

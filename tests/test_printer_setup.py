@@ -158,6 +158,20 @@ def test_first_install_without_printhub_units_succeeds(tmp_path):
     assert "systemctl try-restart printhub airsaned" in log
 
 
+def test_printhub_and_airsane_restart_only_when_the_scanner_files_change(tmp_path):
+    # A re-share runs apply_printer with the same device; the web app that asked for it must not be restarted.
+    first, log = apply(tmp_path, IPPTOOL_OK)
+    assert first.returncode == 0, first.stderr
+    assert log.count("systemctl try-restart printhub airsaned") == 1
+    for stale in (tmp_path / "sane" / "airscan.conf", tmp_path / "dropin" / "scanner.conf", None):
+        (tmp_path / "log").unlink()
+        if stale:
+            stale.write_text("stale\n")
+        again, log = apply(tmp_path, IPPTOOL_OK, attached=False, state=False)
+        assert again.returncode == 0, again.stderr
+        assert log.count("systemctl try-restart") == (1 if stale else 0), stale
+
+
 def test_serial_is_sanitized_like_ipp_usb_does(tmp_path):
     state, sysfs = tmp_path / "state", tmp_path / "sysfs"
     state_file(state, "04b8-1234-AB-12-3-EPSON-XP.state", 60002)

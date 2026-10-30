@@ -438,15 +438,28 @@ test("a failed apply restores the switches to what is in force", async () => {
   assert.match(document.getElementById("system-msg").textContent, /cupsctl failed/);
 });
 
-test("a failed status poll replaces Applying with an error that is announced as an alert", async () => {
-  const { document, main, tick } = settingsEnv([applied, new Error("down")]);
+test("a failed status poll does not end the wait", async () => {
+  const { document, main, tick } = settingsEnv([applied, new Error("down"), { ...applied, requested: pending.requested }]);
   await main();
   const msg = document.getElementById("system-msg");
   const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
   await new Promise((r) => setImmediate(r));
-  assert.equal(msg.attributes.role, "status");
+  await tick(); // the poll fails
+  assert.match(msg.textContent, /Applying/);
+  await tick(); // the next one succeeds
+  await saved;
+  assert.match(msg.textContent, /Applied/);
+});
+
+test("status polls that keep failing end with the not-applied message and the last error", async () => {
+  const { document, main, tick } = settingsEnv([applied, new Error("down")]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  for (let i = 0; i < 14; i++) await tick();
+  assert.match(msg.textContent, /Applying/, "still waiting before 30 seconds");
   await tick();
   await saved;
-  assert.equal(msg.textContent, "Rejected");
-  assert.equal(msg.attributes.role, "alert");
+  assert.match(msg.textContent, /Not applied yet: is printhub-apply\.path running\?/);
+  assert.match(msg.textContent, /Rejected/);
 });
