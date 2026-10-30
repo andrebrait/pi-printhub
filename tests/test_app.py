@@ -40,6 +40,10 @@ class FakeCups:
         self.active = set()
         self.state, self.reasons = 3, ["none"]
         self.jobs = {}  # job id -> attributes, as getJobs(which_jobs="all") returns them
+        self.device_uri = "hp:/usb/OfficeJet?serial=1"
+
+    def getPrinters(self, requested_attributes=None):
+        return {"OfficeJet": {"device-uri": self.device_uri}}
 
     def getPrinterAttributes(self, queue, requested_attributes=None):
         return {
