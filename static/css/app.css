@@ -27,6 +27,7 @@ p:empty { display: none; }
 [data-icon="brightness_auto"] { --icon: url(/vendor/material-symbols/brightness_auto.svg); }
 [data-icon="cancel"] { --icon: url(/vendor/material-symbols/cancel.svg); }
 [data-icon="check"] { --icon: url(/vendor/material-symbols/check.svg); }
+[data-icon="check_circle"] { --icon: url(/vendor/material-symbols/check_circle.svg); }
 [data-icon="close"] { --icon: url(/vendor/material-symbols/close.svg); }
 [data-icon="crop"] { --icon: url(/vendor/material-symbols/crop.svg); }
 [data-icon="dark_mode"] { --icon: url(/vendor/material-symbols/dark_mode.svg); }
@@ -35,10 +36,12 @@ p:empty { display: none; }
 [data-icon="document_scanner"] { --icon: url(/vendor/material-symbols/document_scanner.svg); }
 [data-icon="done_all"] { --icon: url(/vendor/material-symbols/done_all.svg); }
 [data-icon="edit"] { --icon: url(/vendor/material-symbols/edit.svg); }
+[data-icon="error"] { --icon: url(/vendor/material-symbols/error.svg); }
 [data-icon="github"] { --icon: url(/vendor/simple-icons/github.svg); }
 [data-icon="home"] { --icon: url(/vendor/material-symbols/home.svg); }
 [data-icon="image"] { --icon: url(/vendor/material-symbols/image.svg); }
 [data-icon="light_mode"] { --icon: url(/vendor/material-symbols/light_mode.svg); }
+[data-icon="link_off"] { --icon: url(/vendor/material-symbols/link_off.svg); }
 [data-icon="list_alt"] { --icon: url(/vendor/material-symbols/list_alt.svg); }
 [data-icon="login"] { --icon: url(/vendor/material-symbols/login.svg); }
 [data-icon="logout"] { --icon: url(/vendor/material-symbols/logout.svg); }
@@ -53,6 +56,7 @@ p:empty { display: none; }
 [data-icon="settings"] { --icon: url(/vendor/material-symbols/settings.svg); }
 [data-icon="send"] { --icon: url(/vendor/material-symbols/send.svg); }
 [data-icon="upload_file"] { --icon: url(/vendor/material-symbols/upload_file.svg); }
+[data-icon="warning"] { --icon: url(/vendor/material-symbols/warning.svg); }
 
 #convert-message { white-space: pre-line; }
 /* Touch targets on phones. */
@@ -63,17 +67,30 @@ a.btn, summary.btn { display: inline-flex; align-items: center; justify-content:
 /* Top bar */
 .navbar .navbar-brand { flex: none; }
 .navbar > .container-lg { column-gap: 0.5rem; }
-/* Keep the complete printer problem visible, on its own row on phones. */
 .navbar .shell-tools { flex: none; min-width: 0; justify-content: flex-end; }
-.status-pill {
-  min-width: 0; max-width: 20rem; min-height: 2.75rem; padding: 0.65rem 0.8rem;
-  display: flex; align-items: center; white-space: normal; text-align: left;
-  line-height: 1.4; overflow-wrap: anywhere;
+/* Printer widget: name, one bar per supply, status icon. Every bar has a 1 px border, so yellow on white and black on dark stay visible. */
+.printer-widget {
+  display: inline-flex; align-items: center; gap: 0.6rem; min-height: 2.75rem; padding: 0 0.65rem;
+  color: var(--bs-body-color); text-decoration: none;
+  border: 1px solid var(--bs-border-color); border-radius: var(--bs-border-radius);
+  -webkit-touch-callout: none; user-select: none; touch-action: manipulation;
 }
-@media (max-width: 767.98px) {
-  .printer-live { width: 100%; margin-top: 0.5rem; }
-  .status-pill { width: 100%; max-width: none; }
+.printer-widget:hover { background: var(--bs-tertiary-bg); }
+.printer-name { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.supply-bars { display: inline-flex; align-items: flex-end; gap: 0.25rem; }
+.printer-icon::before { margin-inline-end: 0; }
+.supply-bar {
+  display: flex; align-items: flex-end; overflow: hidden; box-sizing: border-box;
+  border: 1px solid var(--bs-secondary-color); background: var(--bs-body-bg);
+  width: 0.55rem; height: 1.6rem; border-radius: 2px;
 }
+.supply-bar.low { border-color: var(--bs-danger); }
+.supply-bar::after { content: ""; width: 100%; height: var(--level, 100%); background: var(--color, var(--bs-secondary-color)); }
+/* An unknown level is a hatched, full bar. */
+.supply-bar.unknown::after {
+  background: repeating-linear-gradient(45deg, var(--bs-secondary-color) 0 2px, transparent 2px 4px);
+}
+@media (forced-colors: active) { .supply-bar::after { forced-color-adjust: none; } }
 .btn-sm, .navbar-toggler { min-height: 2.75rem; }
 .btn-close { min-width: 1.5rem; min-height: 1.5rem; }
 [data-bs-theme="dark"] .btn-outline-secondary {
