@@ -463,3 +463,31 @@ test("status polls that keep failing end with the not-applied message and the la
   assert.match(msg.textContent, /Not applied yet: is printhub-apply\.path running\?/);
   assert.match(msg.textContent, /Rejected/);
 });
+
+test("changing the SMTP server without typing the password again says so inline and sends nothing", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  const sent = () => calls.filter((c) => c.method === "PUT" && c.url === "/api/settings");
+  for (const [field, value] of [["smtp_host", "smtp.other"], ["smtp_port", "465"], ["smtp_user", "you"], ["smtp_security", "tls"]]) {
+    document.getElementById(field).value = value;
+    await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+    assert.equal(sent().length, 0, field);
+    assert.equal(document.getElementById("email-msg").textContent, "Enter the SMTP password again to change the server settings");
+    assert.equal(document.getElementById("email-save").disabled, false);
+    document.getElementById(field).value = SETTINGS[field];
+  }
+  document.getElementById("smtp_host").value = "smtp.other";
+  document.getElementById("smtp_password").value = "hunter22";
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].body.smtp_host, "smtp.other");
+});
+
+test("changing only the sender needs no SMTP password", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("mail_from").value = "other@example";
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  assert.equal(calls.filter((c) => c.method === "PUT" && c.url === "/api/settings").length, 1);
+  assert.match(document.getElementById("email-msg").textContent, /Saved/);
+});

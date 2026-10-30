@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import logging
 import os
+import shutil
 import tomllib
 from dataclasses import MISSING, dataclass, fields
+from email.errors import MessageError
+from email.headerregistry import Address
 from pathlib import Path
 from typing import Literal
-
-log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -36,6 +36,15 @@ def validate(cfg: Config) -> None:
     _check(cfg.smtp_port, "smtp_port", int, 1, 65535)
     if cfg.smtp_security not in ("starttls", "tls"):
         raise ConfigError(f'smtp_security must be "starttls" or "tls", got {cfg.smtp_security!r}')
+    try:  # the way mail.py checks a recipient; it also refuses CR and LF, which would inject headers
+        Address(addr_spec=cfg.mail_from)
+    except (TypeError, ValueError, MessageError):
+        raise ConfigError(f"mail_from must be a single email address, got {cfg.mail_from!r}") from None
+    # Skipped while the directory is missing (first start: it is created on the first save).
+    if cfg.data_dir.exists():
+        total = shutil.disk_usage(cfg.data_dir).total / 1024**3
+        if cfg.min_free_gb >= total:
+            raise ConfigError(f"min_free_gb must be below the {total:.3g} GB of the data disk, got {cfg.min_free_gb!r}")
 
 
 def _check(value, key: str, kinds: type | tuple[type, ...], lo, hi) -> None:

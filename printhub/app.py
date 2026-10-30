@@ -133,6 +133,7 @@ class MarkRead(BaseModel):
 
 
 EMAIL_KEYS = {"smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from"}
+SMTP_SERVER_KEYS = {"smtp_host", "smtp_port", "smtp_security", "smtp_user"}
 
 
 def public_settings(cfg: Config) -> dict:
@@ -769,13 +770,19 @@ def create_app(
         with settings_lock:
             old = app.state.cfg
             changes = {k: v for k, v in sent.items() if getattr(old, k) != v}
+            if changes.keys() & SMTP_SERVER_KEYS and "smtp_password" not in sent:
+                # Else a changed host would send the stored password to wherever it points.
+                raise ApiError(400, "Enter the SMTP password again to change the server settings")
             if changes:
                 app.state.cfg = save_settings(old, changes)
                 notify("info", "settings", describe_changes(old, changes))
             return public_settings(app.state.cfg)
 
     @api.post("/settings/password", status_code=204)
-    def change_password(body: PasswordChange, response: Response):
+    def change_password(body: PasswordChange, request: Request, response: Response):
+        # The same limit as login: the session alone must not allow guessing the current password.
+        if not limiter.allow(request.client.host, time.monotonic()):
+            raise ApiError(429, "Too many attempts; wait a minute")
         with settings_lock:
             old = app.state.cfg
             if not verify_password(old.password_hash, body.current):

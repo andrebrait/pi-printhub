@@ -6,6 +6,8 @@ const GIVE_UP_MS = 30000;
 const STORAGE = ["retention_days", "min_free_gb"];
 const EMAIL = ["smtp_host", "smtp_port", "smtp_security", "smtp_user", "mail_from"];
 const NUMBERS = new Set(["retention_days", "min_free_gb", "smtp_port"]); // the server rejects "587" for 587
+const SMTP_SERVER = ["smtp_host", "smtp_port", "smtp_user", "smtp_security"]; // changing these needs the password typed again
+let loaded = {}; // the settings as last loaded or saved
 
 const $ = (id) => document.getElementById(id);
 
@@ -42,6 +44,7 @@ function wire(card, save) {
 }
 
 function fill(settings) {
+  loaded = settings;
   for (const key of [...STORAGE, ...EMAIL]) $(key).value = settings[key];
   $("smtp_password").value = ""; // never sent back; blank on save keeps the stored one
   $("smtp_password").placeholder = settings.smtp_password_set ? "Saved. Leave blank to keep it" : "";
@@ -98,6 +101,8 @@ function main() {
   wire("email", () => {
     const body = values(EMAIL);
     if ($("smtp_password").value) body.smtp_password = $("smtp_password").value;
+    // The server checks this too; saying it here spares the round trip.
+    else if (SMTP_SERVER.some((k) => body[k] !== loaded[k])) throw new Error("Enter the SMTP password again to change the server settings");
     return saveSettings("email", body);
   });
   $("test-email").addEventListener("click", async () => {

@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from printhub.config import ConfigError, load_config
-from printhub.settings import save
+from printhub.settings import read_system, save
 
 TOML = """\
 password_hash = "$argon2id$hash"
@@ -80,11 +80,25 @@ def test_unknown_or_invalid_overlay_key_is_skipped_with_a_warning(toml, tmp_path
     assert "colour" in caplog.text
 
 
-def test_corrupt_settings_file_falls_back_to_config_toml(toml, tmp_path, caplog):
-    write_overlay(tmp_path, "{")
+@pytest.mark.parametrize("text", ["{", "[1]"])
+def test_corrupt_settings_file_falls_back_to_config_toml_and_is_logged_as_an_error(toml, tmp_path, caplog, text):
+    # The fallback restores the old password and session secret, which the owner must be able to see in the log.
+    write_overlay(tmp_path, text)
 
     with caplog.at_level(logging.WARNING):
         cfg = load_config(toml)
 
     assert cfg.retention_days == 30
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert any(r.levelno == logging.ERROR and "settings.json" in r.getMessage() for r in caplog.records)
+
+
+def test_a_status_for_an_older_request_is_still_pending(tmp_path):
+    request = {"share": False, "expose_usb": True, "at": "2026-10-30T10:00:02+00:00"}
+    (tmp_path / "system-request.json").write_text(json.dumps(request))
+    status = {"state": "applied", "share": True, "expose_usb": True, "error": None,
+              "at": "2026-10-30T10:00:01+00:00", "request_at": "2026-10-30T10:00:01+00:00"}
+    (tmp_path / "system-status.json").write_text(json.dumps(status))
+    assert read_system(tmp_path)["pending"] is True
+
+    (tmp_path / "system-status.json").write_text(json.dumps({**status, "request_at": request["at"]}))
+    assert read_system(tmp_path)["pending"] is False

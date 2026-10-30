@@ -837,11 +837,30 @@ def test_saving_retention_applies_without_restart_and_logs_an_event(client):
 
 
 def test_blank_smtp_password_keeps_the_stored_one(client, cfg):
-    r = client.put("/api/settings", json={"smtp_host": "smtp.example.com", "smtp_password": ""})
+    r = client.put("/api/settings", json={"mail_from": "hub@example.com", "smtp_password": ""})
 
     assert r.status_code == 200
     saved = apply_overlay(cfg)
-    assert (saved.smtp_host, saved.smtp_password) == ("smtp.example.com", "smtp-secret")
+    assert (saved.mail_from, saved.smtp_password) == ("hub@example.com", "smtp-secret")
+
+
+def test_changing_the_smtp_server_needs_the_password_again(client, cfg):
+    message = {"error": "Enter the SMTP password again to change the server settings"}
+    for change in ({"smtp_host": "smtp.example.com"}, {"smtp_port": 465}, {"smtp_user": "other"}, {"smtp_security": "tls"}):
+        for password in ({}, {"smtp_password": ""}):
+            r = client.put("/api/settings", json={**change, **password})
+            assert (r.status_code, r.json()) == (400, message), change
+    assert not (cfg.data_dir / "settings.json").exists()
+    ok = client.put("/api/settings", json={"smtp_host": "smtp.example.com", "smtp_password": "new-secret"})
+    assert ok.status_code == 200
+    assert (apply_overlay(cfg).smtp_host, apply_overlay(cfg).smtp_password) == ("smtp.example.com", "new-secret")
+
+
+def test_saving_unchanged_server_fields_or_other_settings_needs_no_password(client):
+    # The page sends every email field on each save.
+    same = {"smtp_host": "127.0.0.1", "smtp_port": 8025, "smtp_security": "starttls", "smtp_user": "printhub"}
+    assert client.put("/api/settings", json={**same, "mail_from": "hub@example.com"}).status_code == 200
+    assert client.put("/api/settings", json={"retention_days": 14}).status_code == 200
 
 
 def test_settings_rejects_bad_values(client):
@@ -925,7 +944,7 @@ def test_password_change_logs_out_other_sessions(cfg, fake_cups, space):
     fresh = TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}, follow_redirects=False)
     assert fresh.post("/api/login", json={"password": "secret"}).status_code == 401
     assert fresh.post("/api/login", json={"password": "a-new-password"}).status_code == 204
-    assert "password" in latest_event_title(a).lower()
+    assert latest_event_title(a) == "Web password changed"  # never the password itself
 
 
 def test_password_change_needs_the_current_password(client):
@@ -933,6 +952,16 @@ def test_password_change_needs_the_current_password(client):
     short = client.post("/api/settings/password", json={"current": "secret", "new": "short"})
 
     assert (wrong.status_code, short.status_code) == (403, 400)
+
+
+def test_password_change_is_rate_limited_like_login(make_client, cfg):
+    client = make_client(login=False)  # no login, so the limiter has seen nothing yet
+    cookie = {"Cookie": f"{COOKIE}={issue_session(cfg)}"}
+    for _ in range(5):
+        wrong = client.post("/api/settings/password", json={"current": "nope", "new": "a-new-password"}, headers=cookie)
+        assert wrong.status_code == 403
+    right = client.post("/api/settings/password", json={"current": "secret", "new": "a-new-password"}, headers=cookie)
+    assert (right.status_code, right.json()) == (429, {"error": "Too many attempts; wait a minute"})
 
 
 def test_test_email_reports_smtp_errors(client, monkeypatch):

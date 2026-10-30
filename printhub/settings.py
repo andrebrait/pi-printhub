@@ -34,10 +34,11 @@ def apply_overlay(cfg: Config) -> Config:
     except FileNotFoundError:
         return cfg
     except (OSError, ValueError) as e:
-        log.warning("ignoring %s: %s", path, e)
+        # Not a warning: the fallback brings back the old web password and session secret.
+        log.error("ignoring %s: %s", path, e)
         return cfg
     if not isinstance(overlay, dict):
-        log.warning("ignoring %s: not a JSON object", path)
+        log.error("ignoring %s: not a JSON object", path)
         return cfg
     for key, value in overlay.items():
         if key not in APP_KEYS:
