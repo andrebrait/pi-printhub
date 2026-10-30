@@ -22,18 +22,20 @@ class Box:
         self.uri.write_text("device for OfficeJet: ipp://printer.local/ipp/print\n")
         self.shared = tmp / "shared"
         self.shared.write_text("true")
-        # The description repeats the flag: only the real token may count.
+        # The description repeats the flag: only the real token, after the quoted values, may count.
         (self.bin / "lpoptions").write_text(
-            f"#!/bin/sh\necho \"copies=1 printer-info='is printer-is-shared=true' printer-is-shared=$(cat {self.shared})\"\n"
+            "#!/bin/sh\necho \"copies=1 printer-info='Shared printer-is-shared=true here' "
+            f'printer-is-shared=$(cat {self.shared})"\n'
         )
         (self.bin / "lpoptions").chmod(0o755)
-        for name in ("systemctl", "lpadmin", "cupsctl", "lpstat"):
+        for name in ("systemctl", "lpadmin", "cupsctl", "lpstat", "sleep"):
             exe = self.bin / name
             exe.write_text(
                 f'#!/bin/sh\necho "{name} $*" >>{self.log}\n'
                 f'[ "$1" = -v ] && cat {self.uri}\n'
                 '[ "$1" = cat ] && [ "$ABSENT" = "$2" ] && exit 1\n'
-                f'[ "$FAIL" = {name} ] && exit 1\nexit 0\n'
+                '[ "$1" = show ] && echo "$ACTIVE_SINCE"\n'
+                f'[ "$FAIL" = {name} ] && exit 1\n[ "$FAIL" = "{name} $1" ] && exit 1\nexit 0\n'
             )
             exe.chmod(0o755)
 
@@ -56,7 +58,7 @@ class Box:
     def calls(self) -> list[str]:
         """The mutating commands run; the lookups (lpstat, systemctl cat) are not what tests assert on."""
         lines = self.log.read_text().splitlines() if self.log.exists() else []
-        return [c for c in lines if not c.startswith(("lpstat", "systemctl cat"))]
+        return [c for c in lines if not c.startswith(("lpstat", "systemctl cat", "systemctl show", "systemctl is-active"))]
 
 
 def test_request_defaults_to_shared_and_exposed(tmp_path):
@@ -85,6 +87,7 @@ def test_request_refuses_unsafe_files(tmp_path):
         "extra key": (lambda: box.request({**REQUEST, "extra": 1}), {}),
         "not JSON": (lambda: box.request("{"), {}),
         "wrong owner": (lambda: box.request(), {"OWNER": stranger}),
+        "int bool": (lambda: box.request({**REQUEST, "share": 1}), {}),
     }
     for name, (setup, env) in cases.items():
         if path.is_dir():
@@ -115,6 +118,41 @@ def test_expose_toggles_the_interface_and_restarts_only_on_change(tmp_path):
     assert len(box.calls()) == 2
 
 
+def test_interface_line_with_a_trailing_comment_is_read_and_rewritten(tmp_path):
+    # The first is the line Debian's ipp-usb package ships.
+    lines = ("  interface = all # all | loopback", "  interface = all\t# c", "  interface = all#c")
+    for n, line in enumerate(lines):
+        (tmp_path / str(n)).mkdir()
+        box = Box(tmp_path / str(n))
+        box.conf.write_text(f"[http]\n{line}\n")
+        assert box.run("current_expose").stdout == "true\n", line
+        assert box.run("apply_expose true").returncode == 0 and box.calls() == [], line
+        assert box.run("apply_expose false").returncode == 0
+        assert box.conf.read_text() == f"[http]\n{line.replace('all', 'loopback', 1)}\n", line
+        assert box.run("current_expose").stdout == "false\n", line
+        assert box.calls() == ["systemctl try-restart ipp-usb"], line
+
+
+def uptime_us() -> int:
+    return int(float(Path("/proc/uptime").read_text().split()[0]) * 1_000_000)
+
+
+def test_ipp_usb_is_not_restarted_within_30s_of_starting(tmp_path):
+    box = Box(tmp_path)
+    assert box.run("apply_expose false", ACTIVE_SINCE=str(uptime_us() - 5_500_000)).returncode == 0
+    calls = box.calls()
+    assert len(calls) == 2 and calls[0] in ("sleep 24", "sleep 25") and calls[1] == "systemctl try-restart ipp-usb"
+
+
+def test_a_long_running_or_unchanged_ipp_usb_is_restarted_without_waiting(tmp_path):
+    box = Box(tmp_path)
+    assert box.run("apply_expose false", ACTIVE_SINCE=str(uptime_us() - 3_600_000_000)).returncode == 0
+    assert box.calls() == ["systemctl try-restart ipp-usb"]
+    # Nothing to restart, so nothing to wait for either.
+    assert box.run("apply_expose false", ACTIVE_SINCE=str(uptime_us() - 1_000_000)).returncode == 0
+    assert box.calls() == ["systemctl try-restart ipp-usb"]
+
+
 def test_unsharing_unannounces_and_stops_airsane(tmp_path):
     box = Box(tmp_path)
     for kind in ("airprint", "generic"):
@@ -124,6 +162,7 @@ def test_unsharing_unannounces_and_stops_airsane(tmp_path):
         "lpadmin -p OfficeJet -o printer-is-shared=false",
         "cupsctl --no-share-printers",
         "systemctl disable --now airsaned",
+        "systemctl reset-failed airsaned",  # AirSane segfaults on SIGTERM, which leaves the unit failed
     ]
     assert list(box.avahi.iterdir()) == []
 
@@ -167,6 +206,18 @@ def test_interface_prefixed_with_all_does_not_count_as_exposed(tmp_path):
     box = Box(tmp_path)
     box.conf.write_text("[http]\n  interface = allxyz\n")
     assert box.run("current_expose").stdout == "false\n"
+
+
+def test_quoted_text_in_the_printer_options_does_not_count_as_shared(tmp_path):
+    box = Box(tmp_path)
+    box.shared.write_text("false")
+    assert box.run("current_share").stdout == "false\n"
+    box.shared.write_text("true")
+    assert box.run("current_share").stdout == "true\n"
+
+
+def test_a_failing_reset_failed_does_not_fail_unsharing(tmp_path):
+    assert Box(tmp_path).run("apply_share false", FAIL="systemctl reset-failed").returncode == 0
 
 
 def test_applied_status_is_private_and_matches_the_request(tmp_path):
@@ -215,9 +266,30 @@ def test_no_ipp_usb_conf_means_nothing_to_expose(tmp_path):
 
 
 def test_no_queue_leaves_cups_alone_but_follows_airsane(tmp_path):
-    for want, verb in (("true", "enable"), ("false", "disable")):
+    for want, verbs in (("true", ["enable --now"]), ("false", ["disable --now", "reset-failed"])):
         (tmp_path / want).mkdir()
         box = Box(tmp_path / want)
         r = box.run(f"apply_share {want}", FAIL="lpstat")
         assert r.returncode == 0, r.stderr
-        assert box.calls() == [f"systemctl {verb} --now airsaned"]
+        assert box.calls() == [f"systemctl {verb} airsaned" for verb in verbs]
+
+
+def test_a_request_that_changes_during_the_apply_is_applied_too(tmp_path):
+    # The web app writes a newer request (sharing on) while lpadmin runs, for the first REWRITES calls.
+    for rewrites, passes, applied_at in ((1, 2, "t1"), (99, 3, "t2")):  # the app keeps writing: stop after 3 passes
+        (tmp_path / str(rewrites)).mkdir()
+        box = Box(tmp_path / str(rewrites))
+        count = tmp_path / str(rewrites) / "count"
+        lpadmin = box.bin / "lpadmin"
+        lpadmin.write_text(
+            f'#!/bin/sh\necho "lpadmin $*" >>{box.log}\n'
+            f"n=$(($(cat {count} 2>/dev/null || echo 0) + 1)); echo $n >{count}\n"
+            f'[ $n -le "$REWRITES" ] && printf \'{{"share": true, "expose_usb": true, "at": "t%s"}}\' $n >{box.data}/system-request.json\n'
+            "exit 0\n"
+        )
+        box.request()
+        r = box.run("run_apply", REWRITES=str(rewrites))
+        assert r.returncode == 0, r.stderr
+        status = json.loads((box.data / "system-status.json").read_text())
+        assert (status["state"], status["share"], status["request_at"]) == ("applied", True, applied_at)
+        assert len([c for c in box.calls() if c.startswith("lpadmin")]) == passes

@@ -87,6 +87,25 @@ def test_install_exposes_usb_by_default(tmp_path):
     assert ipp_usb_step(tmp_path, None, "loopback") == "all"
 
 
+def test_ipp_usb_is_restarted_exactly_once_and_only_when_the_conf_changes(tmp_path):
+    conf, data = tmp_path / "ipp-usb.conf", tmp_path / "data"
+    conf.write_text("[network]\n  interface = loopback # all | loopback\n")
+    data.mkdir()
+    stubs = 'apt-get() { :; }; install() { :; }; udevadm() { :; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    for restarts in (1, 0):  # the second run finds the conf already as wanted
+        r = sh(f"{stubs}; setup_ipp_usb '' 0", DATA_DIR=str(data), IPP_USB_CONF=str(conf))
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.count("SYSTEMCTL try-restart ipp-usb") == restarts
+
+
+def test_apply_settings_is_installed_executable_for_root(tmp_path):
+    target = tmp_path / "apply-settings.sh"
+    r = sh('install() { printf "%s\\n" "$@"; }; install_apply_settings', APPLY_SETTINGS=str(target))
+    args = r.stdout.split()
+    assert args[args.index("-m") + 1] == "0755" and args[args.index("-o") + 1] == "root"
+    assert args[-2].endswith("/deploy/apply-settings.sh") and args[-1] == str(target)
+
+
 def test_airsane_ignores_hpaio_network_devices(tmp_path):
     f = tmp_path / "ignore.conf"
     f.write_text("escl:.*\n")

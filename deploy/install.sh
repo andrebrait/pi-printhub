@@ -159,7 +159,8 @@ install_apply_settings() {
 # The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printhub-printer.service
 # runs printer-setup.sh now and, through the udev rule, on every plug. ipp-usb also publishes the device natively.
 # setup_ipp_usb QUEUE_URI ATTACHED: the existing queue's device line (empty without a queue), and 1 when an
-# IPP-over-USB printer is attached. Detected before the restarts below, which briefly hide its USB interfaces.
+# IPP-over-USB printer is attached. Detected before the ipp-usb restart and udev trigger, which briefly hide its USB
+# interfaces. apply_expose restarts ipp-usb when the conf changed; nothing else here needs it restarted.
 setup_ipp_usb() {
     local expose
     apt-get install -y ipp-usb
@@ -170,7 +171,6 @@ setup_ipp_usb() {
     install -D -m 0644 "$REPO/deploy/udev/70-printhub-printer.rules" /etc/udev/rules.d/70-printhub-printer.rules
     systemctl daemon-reload
     udevadm control --reload
-    systemctl try-restart ipp-usb
     # ipp-usb is started by udev on plug; the printer may have been plugged in before ipp-usb was installed.
     udevadm trigger --action=add --subsystem-match=usb
     if ((!$2)); then

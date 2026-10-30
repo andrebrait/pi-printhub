@@ -72,6 +72,19 @@ read_request() {
 # must CMD...: run CMD; on failure say which command, so the status error is never empty.
 must() { "$@" || { echo "$1 failed (exit $?)" >&2; return 1; }; }
 
+# _ipp_usb_settle: ipp-usb restarted soon after it started (another toggle, a replug) can leave the printer's USB
+# interface claimed, so wait until it has been up IPP_USB_MIN_UPTIME seconds. /proc/uptime has centiseconds,
+# ActiveEnterTimestampMonotonic microseconds.
+_ipp_usb_settle() {
+    local since up remaining
+    systemctl is-active --quiet ipp-usb || return 0
+    since=$(systemctl show ipp-usb -p ActiveEnterTimestampMonotonic --value) || return 0
+    [[ $since =~ ^[0-9]+$ ]] || return 0
+    read -r up _ </proc/uptime
+    remaining=$((${IPP_USB_MIN_UPTIME:-30} - (10#${up/./} * 10000 - since) / 1000000))
+    if ((remaining > 0)); then sleep "$remaining"; fi
+}
+
 # apply_expose true|false: ipp-usb serves the printer's own IPP and eSCL on the LAN (all) or only to the Pi (loopback).
 apply_expose() {
     local conf=${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf} want=loopback before after
@@ -80,13 +93,21 @@ apply_expose() {
     [[ -e $conf ]] || return 0
     grep -q '^[[:space:]]*interface[[:space:]]*=' "$conf" || { echo "no interface line in $conf" >&2; return 1; }
     before=$(<"$conf") || return 1
-    must sed -i "s/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)[^[:space:]]*/\1$want/" "$conf" || return 1
+    must sed -i "s/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)[^[:space:]#]*/\1$want/" "$conf" || return 1
     after=$(<"$conf") || return 1
-    [[ $before == "$after" ]] || must systemctl try-restart ipp-usb
+    if [[ $before != "$after" ]]; then
+        _ipp_usb_settle
+        must systemctl try-restart ipp-usb
+    fi
 }
 
 # airsane enable|disable: AirSane's unit follows the sharing switch; absent before install.sh has built it.
-airsane() { systemctl cat airsaned >/dev/null 2>&1 || return 0; must systemctl "$1" --now airsaned; }
+airsane() {
+    systemctl cat airsaned >/dev/null 2>&1 || return 0
+    must systemctl "$1" --now airsaned || return 1
+    # AirSane segfaults on SIGTERM, which leaves the stopped unit marked failed.
+    if [[ $1 == disable ]]; then systemctl reset-failed airsaned || true; fi
+}
 
 # apply_share true|false: the CUPS queue's sharing, its Bonjour announcements and AirSane (the network scanner).
 # Without a queue (no printer set up yet) there is nothing for CUPS to share, and lpadmin would create one.
@@ -154,7 +175,7 @@ current_share() {
     [[ $out =~ (^|[[:space:]])printer-is-shared=true([[:space:]]|$) ]] && echo true || echo false
 }
 current_expose() {
-    grep -q '^[[:space:]]*interface[[:space:]]*=[[:space:]]*all[[:space:]]*$' "${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf}" 2>/dev/null &&
+    grep -Eq '^[[:space:]]*interface[[:space:]]*=[[:space:]]*all([[:space:]#]|$)' "${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf}" 2>/dev/null &&
         echo true || echo false
 }
 
@@ -166,8 +187,10 @@ apply_request() {
     apply_share "$REQ_SHARE"
 }
 
+# run_apply: up to three passes, because the web app can write a newer request while one is being applied and the
+# path unit may not start the service again for it. The status carries the last request applied.
 run_apply() {
-    local errf error
+    local errf error share expose at
     REQ_AT=""
     if ! errf=$(mktemp); then
         _load_request 2>/dev/null || true
@@ -176,17 +199,22 @@ run_apply() {
     fi
     # shellcheck disable=SC2064 # errf is local and gone when the trap fires, so expand it now
     trap "rm -f '$errf'" EXIT
-    if apply_request 2>"$errf"; then
-        write_status applied "$REQ_SHARE" "$REQ_EXPOSE" "" "$REQ_AT"
-        rm -f "$errf"
-    else
-        error=$(<"$errf")
-        rm -f "$errf"
-        # A failure after _load_request knows the request's timestamp; one before it has none to copy.
-        echo "${error:0:500}" >&2 # the installer's own run shows why
-        write_status failed "$(current_share)" "$(current_expose)" "${error:0:500}" "$REQ_AT"
-        return 1
-    fi
+    for _ in 1 2 3; do
+        REQ_AT=""
+        if ! apply_request 2>"$errf"; then
+            error=$(<"$errf")
+            rm -f "$errf"
+            # A failure after _load_request knows the request's timestamp; one before it has none to copy.
+            echo "${error:0:500}" >&2 # the installer's own run shows why
+            write_status failed "$(current_share)" "$(current_expose)" "${error:0:500}" "$REQ_AT"
+            return 1
+        fi
+        share=$REQ_SHARE expose=$REQ_EXPOSE at=$REQ_AT
+        # An unreadable request counts as changed: the next pass fails on it and says why.
+        if _load_request 2>/dev/null && [[ $REQ_AT == "$at" ]]; then break; fi
+    done
+    write_status applied "$share" "$expose" "" "$at"
+    rm -f "$errf"
 }
 
 # Sourcing the file (for tests and printer-setup.sh) must not change anything.
