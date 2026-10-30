@@ -9,4 +9,5 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/printhub/apply-settings.sh
-TimeoutStartSec=120
+# Sharing again can start printhub-printer.service, which waits up to 3 minutes for the printer to answer IPP.
+TimeoutStartSec=240

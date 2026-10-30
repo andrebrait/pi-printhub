@@ -133,12 +133,28 @@ def test_refused_ipp_changes_nothing(tmp_path):
     assert not (tmp_path / "dropin").exists()
 
 
-def test_waits_for_ipp_usb_then_gives_up(tmp_path):
+def test_waits_for_ipp_usb_for_three_minutes_then_gives_up(tmp_path):
     r, log = apply(tmp_path, IPPTOOL_OK, state=False)
     assert r.returncode != 0
-    assert log.count("sleep 1") == 30
+    assert log.count("sleep 1") == 180
     assert "lpadmin" not in log
     assert not (tmp_path / "sane" / "airscan.conf").exists()
+
+
+def test_the_number_of_tries_can_be_overridden(tmp_path):
+    r, log = apply(tmp_path, "ipptool() { return 1; }", env={"IPP_WAIT_TRIES": "5"})
+    assert r.returncode != 0
+    assert log.count("sleep 1") == 5
+
+
+def test_a_power_cycled_printer_that_answers_after_a_minute_and_a_half_is_set_up(tmp_path):
+    # Switching a printer off and on takes about this long to bring IPP back up; the setup used to give up after 30 s.
+    tries = tmp_path / "tries"
+    late = f'ipptool() {{ echo x >>{tries}; [[ $(wc -l <{tries}) -ge 90 ]] && {IPPTOOL_OK.split("{ ", 1)[1].rsplit("; }", 1)[0]}; }}'
+    r, log = apply(tmp_path, late)
+    assert r.returncode == 0, r.stderr
+    assert log.count("sleep 1") == 89
+    assert "lpadmin -p OfficeJet" in log
 
 
 def test_waits_until_the_printer_answers_ipp(tmp_path):
