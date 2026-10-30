@@ -166,6 +166,27 @@ export function showToast(message, { href, level = "info" } = {}) {
   bootstrap.Toast.getOrCreateInstance(toast, { delay: 6000 }).show();
 }
 
+const THEMES = { auto: ["brightness_auto", "Auto", "light"], light: ["light_mode", "Light", "dark"], dark: ["dark_mode", "Dark", "auto"] };
+
+/** The header button that shows the theme choice (Auto, Light, Dark) and cycles to the next on click. */
+export function themeButton(document, theme) {
+  const button = document.createElement("button");
+  button.className = "btn btn-outline-secondary";
+  button.type = "button";
+  const show = () => {
+    const [icon, name] = THEMES[theme.get()];
+    button.dataset.icon = icon;
+    button.setAttribute("aria-label", `Theme: ${name}`);
+    button.setAttribute("title", `Theme: ${name}`);
+  };
+  button.addEventListener("click", () => {
+    theme.set(THEMES[theme.get()][2]);
+    show();
+  });
+  show();
+  return button;
+}
+
 function buildBar(host) {
   const nav = el("nav", "navbar navbar-expand-md bg-body-tertiary border-bottom mb-3");
   nav.setAttribute("aria-label", "Main");
@@ -209,7 +230,7 @@ function buildBar(host) {
   toggler.setAttribute("aria-expanded", "false");
   toggler.setAttribute("aria-label", "Menu");
   toggler.append(el("span", "navbar-toggler-icon"));
-  tools.append(cog, bell, toggler);
+  tools.append(themeButton(document, window.printhubTheme), cog, bell, toggler);
 
   const collapse = el("div", "collapse navbar-collapse order-3 order-md-0");
   collapse.id = "main-nav";

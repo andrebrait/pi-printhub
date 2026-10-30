@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import test from "node:test";
 import assert from "node:assert/strict";
-import { eventItem, mountFooter, silence, statusPill, when } from "./shell.js";
+import { eventItem, mountFooter, silence, statusPill, themeButton, when } from "./shell.js";
 import { fakeDocument, textOf, find, findAll } from "./fake-dom.test-util.js";
 
 const printer = (state, problems = []) => ({ printer: { state, problems }, error: null });
@@ -125,4 +125,20 @@ test("every page gets one GitHub footer link, even without the header host", () 
   assert.equal(link.attributes.rel, "noopener");
   assert.equal(link.dataset.icon, "github");
   assert.equal(textOf(footers[0]), "Print Hub is open source on GitHub");
+});
+
+test("the theme button shows the current choice and a click cycles Auto, Light, Dark", () => {
+  let choice = "auto";
+  const set = [];
+  const theme = { get: () => choice, set: (next) => (set.push(next), (choice = next)) };
+  const button = themeButton(fakeDocument(), theme);
+  const seen = () => [button.dataset.icon, button.attributes["aria-label"], button.attributes.title];
+  assert.deepEqual(seen(), ["brightness_auto", "Theme: Auto", "Theme: Auto"]);
+  button.listeners.click();
+  assert.deepEqual(seen(), ["light_mode", "Theme: Light", "Theme: Light"]);
+  button.listeners.click();
+  assert.deepEqual(seen(), ["dark_mode", "Theme: Dark", "Theme: Dark"]);
+  button.listeners.click();
+  assert.deepEqual(seen(), ["brightness_auto", "Theme: Auto", "Theme: Auto"]);
+  assert.deepEqual(set, ["light", "dark", "auto"]);
 });

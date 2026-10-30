@@ -7,7 +7,7 @@ from printhub.convert import ACCEPTED
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 ORIGIN = "https://print.example.com"
-CACHE = "printhub-v6"
+CACHE = "printhub-v7"
 
 # Loads sw.js into a stub ServiceWorker: in-memory caches, a controllable fetch, and a dump() that
 # prints the cache contents. Config arrives as JSON in the second-to-last argv entry.

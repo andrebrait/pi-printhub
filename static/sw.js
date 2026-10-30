@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // shortcut: vendor and icon files stay cache-first until CACHE is bumped by hand, upgrade: version their URLs.
-const CACHE = "printhub-v6";
+const CACHE = "printhub-v7";
 
 const PRECACHE = [
   "/",
@@ -27,8 +27,8 @@ const PRECACHE = [
   "/vendor/cropper/cropper.min.css",
   "/vendor/cropper/cropper.min.js",
   "/vendor/sortable/Sortable.min.js",
-  ...["arrow_forward", "cancel", "check", "close", "crop", "delete", "description", "document_scanner", "done_all", "edit",
-    "home", "image", "list_alt", "login", "logout", "notifications", "picture_as_pdf", "print", "refresh", "restart_alt",
+  ...["arrow_forward", "brightness_auto", "cancel", "check", "close", "crop", "dark_mode", "delete", "description", "document_scanner",
+    "done_all", "edit", "home", "image", "light_mode", "list_alt", "login", "logout", "notifications", "picture_as_pdf", "print", "refresh", "restart_alt",
     "rotate_left", "rotate_right", "scanner", "send", "settings", "upload_file"].map((name) => `/vendor/material-symbols/${name}.svg`),
   "/vendor/simple-icons/github.svg",
   "/icons/icon-192.png",
