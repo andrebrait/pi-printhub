@@ -43,6 +43,11 @@ class Watcher:
         # None until the first tick: a failure already on disk then is a baseline, so restarts do not re-announce it.
         self.sharing_reported: set[str] | None = None
 
+    @property
+    def usb_answering(self) -> bool | None:
+        """None while the USB check has not run (no ipp-usb queue, or no tick yet); False once the printer stayed silent past USB_SILENT_FOR."""
+        return None if self.usb_probed_at is None else not self.usb_reported
+
     def tick(self) -> None:
         self._check_sharing()
         try:

@@ -8,6 +8,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import cups
 import pytest
@@ -16,6 +17,7 @@ from PIL import Image
 
 # Fixtures and helpers from earlier tasks; pytest registers imported fixtures.
 from test_mail import Recorder, server_tls, smtp_server, tls_files  # noqa: F401
+from test_printing import HP_INK
 from test_scanning import fake_scanimage, make_png
 
 from printhub import convert
@@ -42,6 +44,7 @@ class FakeCups:
         self.state, self.reasons = 3, ["none"]
         self.jobs = {}  # job id -> attributes, as getJobs(which_jobs="all") returns them
         self.device_uri = "hp:/usb/OfficeJet?serial=1"
+        self.extra = {}  # attributes a test adds to or overrides in the printer's answer
 
     def getPrinterAttributes(self, queue, requested_attributes=None):
         return {
@@ -49,11 +52,15 @@ class FakeCups:
             "printer-state": self.state,
             "printer-state-reasons": self.reasons,
             "printer-is-accepting-jobs": True,
+            "printer-info": "HP OfficeJet Pro 6970",
+            "printer-make-and-model": "HP OfficeJet Pro 6970, driverless, cups-filters 1.28.17",
+            **HP_INK,
             "media-supported": ["iso_a4_210x297mm"],
             "print-quality-supported": [3, 4, 5],
             "print-color-mode-supported": ["color", "monochrome"],
             "orientation-requested-supported": [3, 4],
             "sides-supported": ["one-sided", "two-sided-long-edge"],
+            **self.extra,
         }
 
     def printFile(self, queue, path, title, options):
@@ -484,6 +491,8 @@ def test_printer_info_and_cups_down(client, make_client):
     info = client.get("/api/printer").json()
     assert info["state"] == "idle"
     assert info["supported"]["sides"] == ["one-sided", "two-sided-long-edge"]
+    # the supplies and identity belong to /api/status; this response keeps its shape
+    assert set(info) == {"state", "state_reasons", "accepting", "supported", "defaults", "margins"}
 
     def down():
         raise RuntimeError("failed to connect to server")
@@ -702,6 +711,42 @@ def test_status_reports_printer_and_unread(client, make_client, fake_cups, cfg):
     s = make_client(cups_conn_factory=down).get("/api/status")
     assert s.status_code == 200
     assert s.json()["printer"] is None and s.json()["error"] == "CUPS unavailable"
+
+
+REAL_SUPPLIES = [
+    {"name": "Magenta ink", "type": "ink-cartridge", "color": "#FF00FF", "level": 60, "low": False},
+    {"name": "Cyan ink", "type": "ink-cartridge", "color": "#00FFFF", "level": 20, "low": True},
+    {"name": "Yellow ink", "type": "ink-cartridge", "color": "#FFFF00", "level": 60, "low": False},
+    {"name": "Black ink", "type": "ink-cartridge", "color": "#000000", "level": 30, "low": False},
+]
+
+
+def test_status_lists_the_printer_with_its_supplies(client, fake_cups):
+    fake_cups.state, fake_cups.reasons = 4, ["media-jam-error", "job-printing"]
+    fake_cups.extra["printer-supply-info-uri"] = "http://192.168.1.50/"
+    s = client.get("/api/status").json()
+    assert s["printers"] == [{
+        "name": "HP OfficeJet Pro 6970", "model": "HP OfficeJet Pro 6970", "state": "processing",
+        "problems": [{"label": "Paper jam", "level": "error"}], "supplies": REAL_SUPPLIES,
+        "web_page": "http://192.168.1.50/", "usb_answering": None,
+    }]
+    assert s["printer"]["state"] == "processing"  # the older key stays
+
+
+def test_status_printer_is_unreachable_without_supplies_when_cups_is_down(make_client):
+    def down():
+        raise RuntimeError("cupsd is not running")
+
+    s = make_client(cups_conn_factory=down).get("/api/status").json()
+    assert s["printers"] == [{
+        "name": "OfficeJet", "model": "", "state": "unreachable", "problems": [], "supplies": [],
+        "web_page": "", "usb_answering": None,
+    }]
+
+
+def test_status_reports_whether_the_usb_printer_answers(client):
+    client.app.state.watcher = SimpleNamespace(usb_answering=False)
+    assert client.get("/api/status").json()["printers"][0]["usb_answering"] is False
 
 
 def test_jobs_lists_external_jobs_and_links_web_app_jobs(client, store, fake_cups):

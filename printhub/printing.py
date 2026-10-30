@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import re
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import repeat
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import cups
 
@@ -33,6 +35,15 @@ PAGE_RANGES = re.compile(r"\d+(-\d+)?(,\d+(-\d+)?)*")
 
 
 @dataclass
+class Supply:
+    name: str  # "Magenta ink"
+    type: str  # marker-type: "ink-cartridge", "toner", "opc", "waste-toner"
+    color: str  # "#RRGGBB", or "" when the printer reports none
+    level: int | None  # percent of the full level; None when the printer does not know
+    low: bool
+
+
+@dataclass
 class PrinterInfo:
     state: Literal["idle", "processing", "stopped"]
     state_reasons: list[str]
@@ -43,6 +54,11 @@ class PrinterInfo:
     margins: dict[str, int]
     # the CUPS device URI ("" when CUPS does not report one); not part of the API response
     device_uri: str = ""
+    name: str = ""
+    model: str = ""
+    # a page about the printer a browser can open ("" when unknown)
+    web_page: str = ""
+    supplies: list[Supply] = field(default_factory=list)
 
 
 @dataclass
@@ -153,6 +169,51 @@ def _list(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
+COLOR = re.compile(r"(#[0-9a-fA-F]{6})(#[0-9a-fA-F]{6})*")  # a multi-colour marker lists several; the first is shown
+LOW_BELOW_PERCENT = 15  # when the printer gives no low level
+LOOPBACK = ("localhost", "127.0.0.1", "::1")
+
+
+def _marker(attrs: dict, key: str, absent=None):
+    """marker-<key> as a list; an absent attribute is `absent` repeated forever (none when absent is None)."""
+    value = attrs.get(f"marker-{key}")
+    if value is None or value == []:
+        return [] if absent is None else repeat(absent)
+    return _list(value)
+
+
+def supplies(attrs: dict) -> list[Supply]:
+    """The consumables in CUPS printer attributes. Needs marker-names and -levels; the shortest array sets the count.
+
+    A negative level is unknown (IPP: -1 unavailable, -2 unknown, -3 some remaining)."""
+    rows = zip(
+        _marker(attrs, "names"), _marker(attrs, "levels"), _marker(attrs, "colors", ""), _marker(attrs, "types", ""),
+        _marker(attrs, "low-levels", 0), _marker(attrs, "high-levels", 100),
+    )
+    out = []
+    for name, level, color, kind, low_at, high in rows:
+        known = isinstance(level, int) and level >= 0
+        percent = min(100, round(level * 100 / (high if high > 0 else 100))) if known else None
+        low = known and (level <= low_at if low_at > 0 else percent < LOW_BELOW_PERCENT)
+        match = COLOR.fullmatch(str(color))
+        name = str(name)
+        out.append(Supply(name[:1].upper() + name[1:], str(kind), match[1] if match else "", percent, low))
+    return out
+
+
+def _web_page(attrs: dict) -> str:
+    """A page about the printer: the first http(s) URL that is not the Pi's own loopback (it would not open elsewhere)."""
+    for key in ("printer-supply-info-uri", "printer-more-info"):
+        url = str(attrs.get(key) or "")
+        try:
+            parts = urlsplit(url)
+            if parts.scheme in ("http", "https") and parts.hostname and parts.hostname not in LOOPBACK:
+                return url
+        except ValueError:
+            pass
+    return ""
+
+
 def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
     attrs = conn.getPrinterAttributes(
         queue,
@@ -161,6 +222,11 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
             "device-uri",
             "printer-state-reasons",
             "printer-is-accepting-jobs",
+            "printer-info",
+            "printer-make-and-model",
+            "printer-more-info",
+            "printer-supply-info-uri",
+            *(f"marker-{k}" for k in ("names", "colors", "levels", "low-levels", "high-levels", "types")),
             *(f"{k}-supported" for k in OPTION_KEYS),
             *(f"{k}-default" for k in OPTION_KEYS),
             *(f"media-{s}-margin-supported" for s in MARGIN_SIDES),
@@ -186,6 +252,10 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
         },
         margins=margins,
         device_uri=str(attrs.get("device-uri", "")),
+        name=str(attrs.get("printer-info") or queue),
+        model=str(attrs.get("printer-make-and-model", "")).split(",")[0].strip(),
+        web_page=_web_page(attrs),
+        supplies=supplies(attrs),
     )
 
 

@@ -320,6 +320,28 @@ def test_the_120_second_threshold_is_measured_on_the_clock(usb, log):
     assert [t for _, _, t, _ in events(log)] == ["Printer not answering over USB"]
 
 
+def test_usb_answering_follows_the_silence_threshold(usb):
+    watcher, answers, clock, _ = usb
+    assert watcher.usb_answering is None  # nothing probed yet
+    watcher.tick()
+    assert watcher.usb_answering is True
+    answers["up"] = False
+    advance(watcher, clock, 120)  # 105 s of confirmed silence
+    assert watcher.usb_answering is True  # silent, but not for 120 s yet
+    advance(watcher, clock, 15)
+    assert watcher.usb_answering is False
+    answers["up"] = True
+    advance(watcher, clock, 15)
+    assert watcher.usb_answering is True
+
+
+def test_usb_answering_is_unknown_for_a_queue_that_is_not_probed(cups_, log):
+    clock = Clock()
+    watcher = Watcher(lambda: cups_, "OfficeJet", log, usb_probe=lambda uri: False, clock=clock)
+    advance(watcher, clock, 300)
+    assert watcher.usb_answering is None
+
+
 class _IppHandler(BaseHTTPRequestHandler):
     seen = []
 

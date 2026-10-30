@@ -88,6 +88,143 @@ def test_unoffered_option_is_not_validated_or_submitted(tmp_path):
     assert conn.options["print-scaling"] == "fit"
 
 
+# --- supplies and printer identity ---
+
+# What CUPS reports for the HP OfficeJet Pro 6970 (kept while the printer is unreachable).
+HP_INK = {
+    "marker-names": ["magenta ink", "cyan ink", "yellow ink", "black ink"],
+    "marker-colors": ["#FF00FF", "#00FFFF", "#FFFF00", "#000000"],
+    "marker-levels": [60, 20, 60, 30],
+    "marker-low-levels": [1, 20, 1, 1],
+    "marker-high-levels": [100, 100, 100, 100],
+    "marker-types": ["ink-cartridge"] * 4,
+}
+Supply = printing.Supply
+
+
+def test_supplies_of_the_real_ink_printer():
+    assert printing.supplies(HP_INK) == [
+        Supply("Magenta ink", "ink-cartridge", "#FF00FF", 60, False),
+        Supply("Cyan ink", "ink-cartridge", "#00FFFF", 20, True),  # at its low level counts as low
+        Supply("Yellow ink", "ink-cartridge", "#FFFF00", 60, False),
+        Supply("Black ink", "ink-cartridge", "#000000", 30, False),
+    ]
+
+
+def test_supplies_of_a_laser_printer():
+    attrs = {
+        "marker-names": ["black toner cartridge", "imaging drum", "waste toner box"],
+        "marker-colors": ["#000000", "none", "none"],
+        "marker-levels": [8, 95, -3],
+        "marker-low-levels": [0, 0, 0],
+        "marker-high-levels": [100, 100, 100],
+        "marker-types": ["toner", "opc", "waste-toner"],
+    }
+    assert printing.supplies(attrs) == [
+        Supply("Black toner cartridge", "toner", "#000000", 8, True),  # no low level: low below 15 %
+        Supply("Imaging drum", "opc", "", 95, False),
+        Supply("Waste toner box", "waste-toner", "", None, False),
+    ]
+
+
+def test_supplies_of_a_single_black_cartridge_arrive_as_scalars():
+    attrs = {
+        "marker-names": "black toner", "marker-colors": "#000000", "marker-levels": 50,
+        "marker-low-levels": 10, "marker-high-levels": 100, "marker-types": "toner",
+    }
+    assert printing.supplies(attrs) == [Supply("Black toner", "toner", "#000000", 50, False)]
+
+
+@pytest.mark.parametrize("attrs", [{}, {"marker-names": ["black ink"]}, {"marker-levels": [50]}])
+def test_no_supplies_without_names_and_levels(attrs):
+    assert printing.supplies(attrs) == []
+
+
+@pytest.mark.parametrize("level", [-1, -2, -3])
+def test_unknown_levels_are_none_and_not_low(level):
+    (only,) = printing.supplies({**HP_INK, "marker-names": ["black ink"], "marker-levels": [level]})
+    assert (only.level, only.low) == (None, False)
+
+
+def test_arrays_of_unequal_length_use_the_shortest():
+    assert [s.name for s in printing.supplies({**HP_INK, "marker-levels": [60, 20]})] == ["Magenta ink", "Cyan ink"]
+    assert len(printing.supplies({**HP_INK, "marker-colors": ["#FF00FF"]})) == 1
+
+
+def test_level_is_a_percentage_of_the_high_level():
+    attrs = {**HP_INK, "marker-names": ["a", "b", "c"], "marker-levels": [5, 300, 0], "marker-high-levels": [10, 200, 0]}
+    # a high level of 0 is no information: the level is taken as a percentage already
+    assert [s.level for s in printing.supplies(attrs)] == [50, 100, 0]
+
+
+@pytest.mark.parametrize(
+    ("raw", "color"),
+    [
+        ("#00FFFF#FF00FF", "#00FFFF"),
+        ("#ff00ff", "#ff00ff"),
+        ("none", ""),
+        ("red", ""),
+        ("#12345", ""),
+        ("#GGGGGG", ""),
+        ("#00FFFFxyz", ""),
+        ("", ""),
+    ],
+)
+def test_colour_is_a_hex_triplet_or_empty(raw, color):
+    (only,) = printing.supplies({**HP_INK, "marker-names": ["x"], "marker-colors": [raw]})
+    assert only.color == color
+
+
+class AttrsConn:
+    """getPrinterAttributes with the real printer's values; extra overrides or adds attributes."""
+
+    def __init__(self, **extra):
+        self.attrs = {
+            "printer-state": 3,
+            "printer-is-accepting-jobs": True,
+            "printer-info": "HP OfficeJet Pro 6970",
+            "printer-make-and-model": "HP OfficeJet Pro 6970, driverless, cups-filters 1.28.17",
+            **HP_INK,
+            **extra,
+        }
+
+    def getPrinterAttributes(self, queue, requested_attributes=None):
+        self.requested = requested_attributes
+        return self.attrs
+
+
+def test_printer_info_carries_name_model_and_supplies():
+    conn = AttrsConn()
+    info = printing.printer_info(conn, "OfficeJet")
+    assert (info.name, info.model, info.web_page) == ("HP OfficeJet Pro 6970", "HP OfficeJet Pro 6970", "")
+    assert info.supplies == printing.supplies(HP_INK)
+    for key in (*HP_INK, "printer-info", "printer-make-and-model", "printer-more-info", "printer-supply-info-uri"):
+        assert key in conn.requested
+
+
+def test_printer_info_falls_back_to_the_queue_name():
+    conn = AttrsConn()
+    del conn.attrs["printer-info"], conn.attrs["printer-make-and-model"]
+    info = printing.printer_info(conn, "OfficeJet")
+    assert (info.name, info.model) == ("OfficeJet", "")
+
+
+@pytest.mark.parametrize(
+    ("extra", "page"),
+    [
+        ({"printer-supply-info-uri": "http://192.168.1.50/", "printer-more-info": "http://cups.lan/printers/x"}, "http://192.168.1.50/"),
+        ({"printer-more-info": "https://printer.lan/"}, "https://printer.lan/"),
+        ({"printer-more-info": "http://localhost/printers/OfficeJet"}, ""),  # CUPS's own page on the Pi: dead link elsewhere
+        ({"printer-more-info": "http://127.0.0.1:631/"}, ""),
+        ({"printer-more-info": "javascript:alert(1)"}, ""),
+        ({"printer-more-info": "ftp://printer.lan/"}, ""),
+        ({"printer-more-info": "http:///nohost"}, ""),
+    ],
+)
+def test_web_page_is_a_reachable_http_url_or_empty(extra, page):
+    assert printing.printer_info(AttrsConn(**extra), "OfficeJet").web_page == page
+
+
 # --- virtual printer (tests/ci/start-virtual-printer.sh) ---
 
 
