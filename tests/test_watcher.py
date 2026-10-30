@@ -2,6 +2,7 @@
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import cups
 import pytest
 from test_app import FakeCups
 
@@ -119,39 +120,65 @@ def test_printer_reasons_appear_and_clear(cups_, watcher, log):
     ]
 
 
-def test_cups_down_and_back_is_one_event_each(cups_, log):
-    calls = {"n": 0}
+def test_a_brief_cups_restart_is_quiet(cups_, log):
+    # cupsctl and the installer restart cupsd; for a second or two CUPS refuses connections.
+    calls, clock = {"n": 0}, Clock()
 
     def factory():
         calls["n"] += 1
         if 1 < calls["n"] <= 4:
-            raise RuntimeError("cupsd is not running")
+            raise cups.IPPError(1280, "Connection reset by peer")
         return cups_
 
-    w = Watcher(factory, "OfficeJet", log)
+    w = Watcher(factory, "OfficeJet", log, clock=clock)
     cups_.jobs = {1: job(5)}
     w.tick()
     for _ in range(3):
+        clock.now += 3
         w.tick()
     cups_.jobs = {1: job(5), 2: job(9)}
+    clock.now += 3
     w.tick()
-    # Job 1 is unchanged; job 2 finished while CUPS was unreachable, which is still news.
-    assert events(log) == [
-        ("error", "printer", "Printer status unavailable", None),
-        ("info", "printer", "Printer status available again", None),
-        ("info", "job", "Job 2 completed", 2),
-    ]
+    # Job 2 finished while CUPS was unreachable, which is still news.
+    assert events(log) == [("info", "job", "Job 2 completed", 2)]
 
 
-def test_cups_down_at_start_then_up_is_a_baseline(cups_, log):
-    up = {"ok": False}
+def test_cups_down_for_30_seconds_is_one_event_each(cups_, log):
+    up, clock = {"ok": True}, Clock()
 
     def factory():
         if not up["ok"]:
             raise RuntimeError("cupsd is not running")
         return cups_
 
-    w = Watcher(factory, "OfficeJet", log)
+    w = Watcher(factory, "OfficeJet", log, clock=clock)
+    w.tick()
+    up["ok"] = False
+    for _ in range(9):  # 27 s of failed ticks: still quiet
+        clock.now += 3
+        w.tick()
+    assert events(log) == []
+    for _ in range(5):
+        clock.now += 3
+        w.tick()
+    assert events(log) == [("error", "printer", "Printer status unavailable", None)]
+    up["ok"] = True
+    clock.now += 3
+    w.tick()
+    assert [t for _, _, t, _ in events(log)] == ["Printer status unavailable", "Printer status available again"]
+
+
+def test_cups_down_at_start_then_up_is_a_baseline(cups_, log):
+    up, clock = {"ok": False}, Clock()
+
+    def factory():
+        if not up["ok"]:
+            raise RuntimeError("cupsd is not running")
+        return cups_
+
+    w = Watcher(factory, "OfficeJet", log, clock=clock)
+    w.tick()
+    clock.now += 31
     w.tick()
     up["ok"] = True
     cups_.jobs = {1: job(9)}
