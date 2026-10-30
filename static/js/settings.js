@@ -2,7 +2,7 @@
 import { apiFetch, errorMessage } from "./api.js";
 
 const POLL_MS = 2000;
-const GIVE_UP_MS = 30000;
+const GIVE_UP_MS = 120000; // printhub-apply.service's TimeoutStartSec: one apply waits up to 30 s for ipp-usb and 30 s for the printer
 const STORAGE = ["retention_days", "min_free_gb"];
 const EMAIL = ["smtp_host", "smtp_port", "smtp_security", "smtp_user", "mail_from"];
 const NUMBERS = new Set(["retention_days", "min_free_gb", "smtp_port"]); // the server rejects "587" for 587
@@ -78,11 +78,11 @@ async function follow(system, saved = false) {
   const mine = ++watch;
   let announce = saved;
   let lastError = "";
-  // shortcut: the 30 s is counted in poll intervals, so slow requests stretch it, upgrade: use Date.now() if that matters.
+  // shortcut: the 120 s is counted in poll intervals, so slow requests stretch it, upgrade: use Date.now() if that matters.
   for (let waited = 0; show(system, announce); waited += POLL_MS) {
     if (waited >= GIVE_UP_MS) {
       const why = lastError && ` The last status check failed: ${lastError}`;
-      return note("system", `Not applied yet: is printhub-apply.path running? Re-run the installer.${why}`, "warning");
+      return note("system", `Not applied after 2 minutes: is printhub-apply.path running? Re-run the installer.${why}`, "warning");
     }
     announce = true; // a request that was waiting ends in a result worth stating
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
