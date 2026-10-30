@@ -19,14 +19,15 @@ log = logging.getLogger(__name__)
 FILE = "notifications.json"
 KINDS: tuple[str, ...] = ("job", "scan", "printer", "conversion", "settings")
 PLACEHOLDERS = ("title", "detail", "link", "time")
-DEFAULT_HEADER = "🖨\ufe0f Print Hub"
 DEFAULT_SUBJECT_PREFIX = "[Print Hub]"
-DEFAULT_TEMPLATES = {
-    "job": "🧾 {title}\n{detail}\n{link}",
-    "scan": "📄 {title}\n{detail}\n{link}",
-    "printer": "🔔 {title}\n{detail}\n{link}",
-    "conversion": "🔄 {title}\n{detail}\n{link}",
-    "settings": "⚙\ufe0f {title}\n{detail}\n{link}",
+EMOJI = {"job": "🧾", "scan": "📄", "printer": "🔔", "conversion": "🔄", "settings": "⚙\ufe0f"}
+# Per Telegram parse mode: the header and how the title is made bold, in that mode's own markup.
+_STYLE = {
+    "MarkdownV2": ("🖨\ufe0f _*Print Hub*_", "*{title}*"),
+    "HTML": ("🖨\ufe0f <i><b>Print Hub</b></i>", "<b>{title}</b>"),
+    # Legacy Markdown cannot escape inside an entity, so a title with * or _ would break a bold title.
+    "Markdown": ("🖨\ufe0f *Print Hub*", "{title}"),
+    None: ("🖨\ufe0f Print Hub", "{title}"),
 }
 SILENCE_HOURS = (1, 8, 24, 168)
 SECRETS = {"email": "smtp_password", "telegram": "bot_token", "webhook": "header_value"}
@@ -39,7 +40,21 @@ GUARDED = {
     "webhook": ("url",),
 }
 PARSE_MODES = (None, "HTML", "Markdown", "MarkdownV2")
+EMAIL_FORMATS = ("html", "text")
 BAD_TO = "to must be a list of 1 to 10 single email addresses"
+
+
+def default_header(mode: str | None) -> str:
+    return _STYLE[mode][0]
+
+
+def default_templates(mode: str | None) -> dict[str, str]:
+    return {kind: f"{emoji} {_STYLE[mode][1]}\n{{detail}}\n{{link}}" for kind, emoji in EMOJI.items()}
+
+
+def default_email_templates(format: str) -> dict[str, str]:
+    """An HTML email uses the same markup as Telegram's HTML mode; a text one has none."""
+    return default_templates("HTML" if format == "html" else None)
 
 
 class StoreError(Exception):
@@ -217,14 +232,14 @@ def _choice(data: dict, field: str, options: tuple, default=None):
     return value
 
 
-def _templates(data: dict) -> dict[str, str]:
+def _templates(data: dict, defaults: dict[str, str]) -> dict[str, str]:
     given = data.get("templates", {})
     if not isinstance(given, dict) or any(k not in KINDS for k in given):
         raise ValueError(f"templates must be an object with text for event kinds from {list(KINDS)}")
     for kind, text in given.items():
         if not isinstance(text, str) or not 1 <= len(text) <= 1000:
             raise ValueError(f"templates must give each kind text of 1 to 1000 characters ({kind})")
-    return DEFAULT_TEMPLATES | given
+    return defaults | given
 
 
 def _kinds(data: dict) -> list[str]:
@@ -249,12 +264,13 @@ def _email(data: dict) -> dict:
         addresses = [Address(addr_spec=a).addr_spec for a in to]
     except (TypeError, ValueError, MessageError):
         raise ValueError(BAD_TO) from None
+    format = _choice(data, "format", EMAIL_FORMATS, "html")
     out = {
         "to": addresses,
         "use_scan_server": _flag(data, "use_scan_server"),
-        "format": _choice(data, "format", ("html", "text"), "html"),
+        "format": format,
         "subject_prefix": _subject_prefix(data),
-        "templates": _templates(data),
+        "templates": _templates(data, default_email_templates(format)),
     }
     if not out["use_scan_server"]:
         try:
@@ -282,16 +298,17 @@ def _telegram(data: dict) -> dict:
     thread = data.get("message_thread_id")
     if thread is not None and (isinstance(thread, bool) or not isinstance(thread, int)):
         raise ValueError("message_thread_id must be a whole number or empty")
+    mode = _choice(data, "parse_mode", PARSE_MODES, "MarkdownV2")
     return {
         "bot_token": token,
         "chat_id": chat,
         "message_thread_id": thread,
-        "parse_mode": _choice(data, "parse_mode", PARSE_MODES, "HTML"),
+        "parse_mode": mode,
         "disable_notification": _flag(data, "disable_notification"),
         "protect_content": _flag(data, "protect_content"),
         "disable_web_page_preview": _flag(data, "disable_web_page_preview"),
-        "header": _text(data, "header", 0, 200, default=DEFAULT_HEADER),
-        "templates": _templates(data),
+        "header": _text(data, "header", 0, 200, default=default_header(mode)),
+        "templates": _templates(data, default_templates(mode)),
     }
 
 

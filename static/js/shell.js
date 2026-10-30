@@ -166,6 +166,27 @@ export function showToast(message, { href, level = "info" } = {}) {
   bootstrap.Toast.getOrCreateInstance(toast, { delay: 6000 }).show();
 }
 
+const THEMES = { auto: ["brightness_auto", "Auto", "light"], light: ["light_mode", "Light", "dark"], dark: ["dark_mode", "Dark", "auto"] };
+
+/** The header button that shows the theme choice (Auto, Light, Dark) and cycles to the next on click. */
+export function themeButton(document, theme) {
+  const button = document.createElement("button");
+  button.className = "btn btn-outline-secondary";
+  button.type = "button";
+  const show = () => {
+    const [icon, name] = THEMES[theme.get()];
+    button.dataset.icon = icon;
+    button.setAttribute("aria-label", `Theme: ${name}`);
+    button.setAttribute("title", `Theme: ${name}`);
+  };
+  button.addEventListener("click", () => {
+    theme.set(THEMES[theme.get()][2]);
+    show();
+  });
+  show();
+  return button;
+}
+
 function buildBar(host) {
   const nav = el("nav", "navbar navbar-expand-md bg-body-tertiary border-bottom mb-3");
   nav.setAttribute("aria-label", "Main");
@@ -209,7 +230,9 @@ function buildBar(host) {
   toggler.setAttribute("aria-expanded", "false");
   toggler.setAttribute("aria-label", "Menu");
   toggler.append(el("span", "navbar-toggler-icon"));
-  tools.append(cog, bell, toggler);
+  // A stale cached theme.js may not define it yet: the header must still render.
+  const theme = window.printhubTheme ?? { get: () => "auto", set() {} };
+  tools.append(themeButton(document, theme), cog, bell, toggler);
 
   const collapse = el("div", "collapse navbar-collapse order-3 order-md-0");
   collapse.id = "main-nav";
@@ -372,8 +395,28 @@ function init(host) {
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && poll());
 }
 
+/** A small centred footer linking to the project, on every page including the headerless login. */
+export function mountFooter(document) {
+  const footer = document.createElement("footer");
+  footer.className = "text-center small text-body-secondary py-3 mt-auto";
+  const link = document.createElement("a");
+  link.className = "link-secondary";
+  link.href = "https://github.com/andrebrait/pi-printhub";
+  link.setAttribute("target", "_blank");
+  link.setAttribute("rel", "noopener");
+  link.dataset.icon = "github";
+  link.textContent = "Print Hub is open source on GitHub";
+  const hint = document.createElement("span");
+  hint.className = "visually-hidden";
+  hint.textContent = " (opens in a new tab)";
+  link.append(hint);
+  footer.append(link);
+  document.body.append(footer);
+}
+
 // Under node --test there is no page: only the helpers above are used.
 if (typeof document !== "undefined") {
+  mountFooter(document);
   const host = document.getElementById("shell");
   if (host) init(host);
 }

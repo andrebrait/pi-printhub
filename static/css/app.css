@@ -7,6 +7,8 @@
 [data-bs-theme="dark"] { --sheet-shadow: rgb(0 0 0 / 0.6); }
 
 [hidden] { display: none !important; }
+/* The footer sits at the bottom even on short pages. */
+body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 p:empty { display: none; }
 /* Messages often carry paths and URLs without spaces. */
 .error { color: var(--bs-danger-text-emphasis); overflow-wrap: anywhere; }
@@ -22,17 +24,21 @@ p:empty { display: none; }
 /* High contrast forces backgrounds to Canvas, which would erase the mask-drawn icons. */
 @media (forced-colors: active) { [data-icon]::before { forced-color-adjust: none; background-color: ButtonText; } }
 [data-icon="arrow_forward"] { --icon: url(/vendor/material-symbols/arrow_forward.svg); }
+[data-icon="brightness_auto"] { --icon: url(/vendor/material-symbols/brightness_auto.svg); }
 [data-icon="cancel"] { --icon: url(/vendor/material-symbols/cancel.svg); }
 [data-icon="check"] { --icon: url(/vendor/material-symbols/check.svg); }
 [data-icon="close"] { --icon: url(/vendor/material-symbols/close.svg); }
 [data-icon="crop"] { --icon: url(/vendor/material-symbols/crop.svg); }
+[data-icon="dark_mode"] { --icon: url(/vendor/material-symbols/dark_mode.svg); }
 [data-icon="delete"] { --icon: url(/vendor/material-symbols/delete.svg); }
 [data-icon="description"] { --icon: url(/vendor/material-symbols/description.svg); }
 [data-icon="document_scanner"] { --icon: url(/vendor/material-symbols/document_scanner.svg); }
 [data-icon="done_all"] { --icon: url(/vendor/material-symbols/done_all.svg); }
 [data-icon="edit"] { --icon: url(/vendor/material-symbols/edit.svg); }
+[data-icon="github"] { --icon: url(/vendor/simple-icons/github.svg); }
 [data-icon="home"] { --icon: url(/vendor/material-symbols/home.svg); }
 [data-icon="image"] { --icon: url(/vendor/material-symbols/image.svg); }
+[data-icon="light_mode"] { --icon: url(/vendor/material-symbols/light_mode.svg); }
 [data-icon="list_alt"] { --icon: url(/vendor/material-symbols/list_alt.svg); }
 [data-icon="login"] { --icon: url(/vendor/material-symbols/login.svg); }
 [data-icon="logout"] { --icon: url(/vendor/material-symbols/logout.svg); }
