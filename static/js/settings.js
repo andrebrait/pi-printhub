@@ -2,7 +2,7 @@
 import { apiFetch, errorMessage } from "./api.js";
 
 const POLL_MS = 2000;
-const GIVE_UP_MS = 120000; // printhub-apply.service's TimeoutStartSec: one apply waits up to 30 s for ipp-usb and 30 s for the printer
+const GIVE_UP_MS = 120000; // printhub-apply.service's TimeoutStartSec: one apply may wait up to 30 s for the printer
 const STORAGE = ["retention_days", "min_free_gb"];
 const EMAIL = ["smtp_host", "smtp_port", "smtp_security", "smtp_user", "mail_from"];
 const NUMBERS = new Set(["retention_days", "min_free_gb", "smtp_port"]); // the server rejects "587" for 587

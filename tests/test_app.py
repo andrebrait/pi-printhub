@@ -677,6 +677,11 @@ def test_static_files_are_revalidated_so_a_deploy_never_serves_stale_scripts(cli
     assert client.get("/js/print.js", headers={"If-None-Match": etag}).status_code == 304
 
 
+def test_the_expose_switch_says_what_it_does_now_and_what_waits_for_a_restart(client):
+    page = client.get("/settings.html").text
+    assert 'Blocks other devices now. The "(USB)" entries stop or start being advertised the next time the printer or the Pi restarts.' in page
+
+
 # Status, jobs and notifications
 
 OURS = "ipp://localhost/printers/OfficeJet"

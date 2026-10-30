@@ -20,5 +20,5 @@ Run on the Pi with the OfficeJet Pro 6970 attached, before release.
 - [ ] Image Capture or Windows Scan scans through both the AirSane and the `(USB)` scanner; the web app still scans
 - [ ] Confirm whether the ADF is single-sided
 - [ ] Settings page: toggling sharing off removes `printer-is-shared=true` from `lpoptions -p OfficeJet`, deletes `/etc/avahi/services/printhub-*.service` and stops `airsaned`; toggling it on restores all three
-- [ ] Settings page: with "Expose the printer directly" off, `curl -m5 http://<pi address>:60000/ipp/print` from another machine fails with an empty reply or a reset, while the web app still prints and scans
+- [ ] Settings page: with "Expose the printer directly" off, `curl -m5 http://<pi address>:60000/ipp/print` from another machine is dropped (curl times out), while the web app still prints and scans; the `(USB)` adverts change after a printer power cycle, and `systemctl status ipp-usb` shows no restart
 - [ ] Reinstalling and replugging the printer keep the sharing and exposure choices

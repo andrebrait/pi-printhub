@@ -67,7 +67,7 @@ App values are saved to `/var/lib/printhub/settings.json`, override `/etc/printh
 
 The two network switches are applied as root by `printhub-apply.path` and `printhub-apply.service`, which run `/usr/local/lib/printhub/apply-settings.sh`. The page shows Applying, then Applied or the error. With none saved, the printer is shared and exposed, as before.
 
-With **Expose the printer directly** off, ipp-usb still accepts the connection on port 60000 and closes it immediately for anything but the Pi itself, and it stops advertising the `(USB)` entries. Each change restarts ipp-usb; if the printer stops answering over USB, power-cycle it.
+With **Expose the printer directly** off, an nftables rule (`printhub-firewall.service` restores it at boot) drops new connections from other machines to ipp-usb's ports (60000 and up), so a LAN client's connection times out. The `(USB)` entries stop or start being advertised the next time the printer is powered on or the Pi restarts; ipp-usb is never restarted by the settings. If the printer stops answering over USB, power-cycle it.
 
 Changing the SMTP server, port, user or security needs the SMTP password typed again; the other fields keep the stored one when it is left blank.
 

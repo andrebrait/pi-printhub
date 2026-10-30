@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
 # Applies the sharing switches the web app asked for in $DATA_DIR/system-request.json, as root.
-# Run by printhub-apply.service when printhub-apply.path sees the request change. The app user owns the request, so
+# Run by printhub-apply.service when printhub-apply.path sees the request change, and with the argument "firewall"
+# by printhub-firewall.service at boot. The app user owns the request, so
 # it is untrusted input: read_request checks it before anything is applied.
 
 # _request: validate the request file and print "share", "expose_usb" and "at", one per line (no final newline).
@@ -72,33 +73,51 @@ read_request() {
 # must CMD...: run CMD; on failure say which command, so the status error is never empty.
 must() { "$@" || { echo "$1 failed (exit $?)" >&2; return 1; }; }
 
-# _ipp_usb_settle: ipp-usb restarted soon after it started (another toggle, a replug) can leave the printer's USB
-# interface claimed, so wait until it has been up IPP_USB_MIN_UPTIME seconds. /proc/uptime has centiseconds,
-# ActiveEnterTimestampMonotonic microseconds.
-_ipp_usb_settle() {
-    local since up remaining
-    systemctl is-active --quiet ipp-usb || return 0
-    since=$(systemctl show ipp-usb -p ActiveEnterTimestampMonotonic --value) || return 0
-    [[ $since =~ ^[0-9]+$ ]] || return 0
-    read -r up _ </proc/uptime
-    remaining=$((${IPP_USB_MIN_UPTIME:-30} - (10#${up/./} * 10000 - since) / 1000000))
-    if ((remaining > 0)); then sleep "$remaining"; fi
+# _ipp_usb_ports: "MIN-MAX", ipp-usb's HTTP port range from its conf. ipp-usb.conf is root's, but a value that is not
+# 1-65535 digits with MIN <= MAX falls back to ipp-usb's defaults rather than reach nft.
+_ipp_usb_ports() {
+    local conf=${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf} line min=60000 max=65535 lo="" hi=""
+    if [[ -r $conf ]]; then
+        while IFS= read -r line || [[ -n $line ]]; do
+            [[ $line =~ ^[[:space:]]*http-min-port[[:space:]]*=[[:space:]]*([0-9]{1,5})[[:space:]]*(#.*)?$ ]] && lo=${BASH_REMATCH[1]}
+            [[ $line =~ ^[[:space:]]*http-max-port[[:space:]]*=[[:space:]]*([0-9]{1,5})[[:space:]]*(#.*)?$ ]] && hi=${BASH_REMATCH[1]}
+        done <"$conf"
+    fi
+    if [[ -n $lo && -n $hi ]] && ((10#$lo >= 1 && 10#$hi <= 65535 && 10#$lo <= 10#$hi)); then
+        min=$((10#$lo)) max=$((10#$hi))
+    fi
+    echo "$min-$max"
 }
 
-# apply_expose true|false: ipp-usb serves the printer's own IPP and eSCL on the LAN (all) or only to the Pi (loopback).
+# _set_firewall true|false: drop NEW TCP connections from other hosts to ipp-usb's ports (false), or allow them (true).
+# The table is recreated in one atomic nft transaction. Only new connections are matched, and not on lo: ipp-usb's
+# range overlaps the local ephemeral ports, whose replies must pass. ipp-usb is never restarted here: that can leave
+# the printer's USB interface claimed until it is power-cycled.
+_set_firewall() {
+    local rule=""
+    [[ $1 == true ]] || rule="table inet printhub { chain input { type filter hook input priority filter; policy accept; iifname != \"lo\" ct state new tcp dport $(_ipp_usb_ports) drop } }"
+    must nft -f - <<<"table inet printhub {}
+delete table inet printhub
+$rule"
+}
+
+# apply_expose true|false: the firewall now, and ipp-usb's own interface line (all or loopback) for its next start,
+# which the printer's power-on or the Pi's boot brings.
 apply_expose() {
-    local conf=${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf} want=loopback before after
+    local conf=${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf} want=loopback
     [[ $1 == true ]] && want=all
-    # No ipp-usb (an HPLIP or printerless install): nothing to expose.
+    _set_firewall "$1" || return 1
+    # No ipp-usb (an HPLIP or printerless install): no conf to keep in step.
     [[ -e $conf ]] || return 0
     grep -q '^[[:space:]]*interface[[:space:]]*=' "$conf" || { echo "no interface line in $conf" >&2; return 1; }
-    before=$(<"$conf") || return 1
-    must sed -i "s/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)[^[:space:]#]*/\1$want/" "$conf" || return 1
-    after=$(<"$conf") || return 1
-    if [[ $before != "$after" ]]; then
-        _ipp_usb_settle
-        must systemctl try-restart ipp-usb
-    fi
+    must sed -i "s/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)[^[:space:]#]*/\1$want/" "$conf"
+}
+
+# apply_firewall: at boot, the firewall part of the saved request only. An unreadable request means the defaults.
+apply_firewall() {
+    REQ_EXPOSE=true
+    _load_request || echo "using the default: the printer's USB interface is exposed" >&2
+    _set_firewall "$REQ_EXPOSE"
 }
 
 # airsane enable|disable: AirSane's unit follows the sharing switch; absent before install.sh has built it.
@@ -174,10 +193,7 @@ current_share() {
     out=$(lpoptions -p "${PRINTER_QUEUE:-OfficeJet}" 2>/dev/null | sed "s/'[^']*'//g") || out=""
     [[ $out =~ (^|[[:space:]])printer-is-shared=true([[:space:]]|$) ]] && echo true || echo false
 }
-current_expose() {
-    grep -Eq '^[[:space:]]*interface[[:space:]]*=[[:space:]]*all([[:space:]#]|$)' "${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf}" 2>/dev/null &&
-        echo true || echo false
-}
+current_expose() { nft list table inet printhub 2>/dev/null | grep -q drop && echo false || echo true; }
 
 # apply_request: read the request and apply it. Every step is checked explicitly: set -e is off inside the
 # `if` that run_apply puts this in.
@@ -220,5 +236,9 @@ run_apply() {
 # Sourcing the file (for tests and printer-setup.sh) must not change anything.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     set -euo pipefail
-    run_apply
+    case ${1:-} in
+        "") run_apply ;;
+        firewall) apply_firewall ;;
+        *) echo "usage: apply-settings.sh [firewall]" >&2; exit 2 ;;
+    esac
 fi

@@ -149,7 +149,7 @@ install_packages() {
     apt-get install -y curl cups avahi-daemon sane-utils sane-airscan libsane-dev libjpeg-dev \
         libpng-dev libavahi-client-dev libusb-1.0-0-dev cmake g++ git python3-fastapi \
         python3-uvicorn python3-python-multipart python3-argon2 python3-itsdangerous \
-        python3-img2pdf python3-pil python3-magic python3-cups \
+        python3-img2pdf python3-pil python3-magic python3-cups nftables \
         libjpeg-turbo-progs poppler-utils libheif-examples libreoffice-nogui
 }
 
@@ -162,8 +162,8 @@ install_apply_settings() {
 # The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printhub-printer.service
 # runs printer-setup.sh now and, through the udev rule, on every plug. ipp-usb also publishes the device natively.
 # setup_ipp_usb QUEUE_URI ATTACHED: the existing queue's device line (empty without a queue), and 1 when an
-# IPP-over-USB printer is attached. Detected before the ipp-usb restart and udev trigger, which briefly hide its USB
-# interfaces. apply_expose restarts ipp-usb when the conf changed; nothing else here needs it restarted.
+# IPP-over-USB printer is attached. Detected before the udev trigger, which briefly hides its USB interfaces.
+# ipp-usb is never restarted here: that can wedge the printer's USB interface until it is power-cycled.
 setup_ipp_usb() {
     local expose
     apt-get install -y ipp-usb
@@ -361,7 +361,8 @@ start_services() {
     # Pick up new code and config on re-runs; enable --now then starts whatever was not running. AirSane is
     # started or stopped by the sharing switch below, so it is only restarted when already running.
     systemctl try-restart printhub traefik airsaned
-    systemctl enable --now printhub traefik printhub-retention.timer printhub-apply.path
+    systemctl enable --now printhub traefik printhub-retention.timer printhub-apply.path \
+        printhub-firewall.service
     # The switches the owner chose before (or the defaults), through the installed script, which also writes the status.
     "$APPLY_SETTINGS" ||
         log "warning: the sharing settings were not applied; see error in /var/lib/printhub/system-status.json"

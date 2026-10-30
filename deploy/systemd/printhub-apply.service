@@ -9,5 +9,4 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/printhub/apply-settings.sh
-# The ipp-usb restart guard can wait up to 30 s per pass.
 TimeoutStartSec=120

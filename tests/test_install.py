@@ -68,7 +68,7 @@ def ipp_usb_step(tmp_path: Path, expose_usb: bool | None, listen: str) -> str:
         write_request(data, expose_usb=expose_usb)
     stubs = (
         'apt-get() { :; }; install() { :; }; udevadm() { :; }; systemctl() { :; }; '
-        'cupsctl() { :; }; lpadmin() { :; }'
+        'cupsctl() { :; }; lpadmin() { :; }; nft() { :; }'
     )
     r = sh(f"{stubs}; setup_ipp_usb '' 0", DATA_DIR=str(data), IPP_USB_CONF=str(conf))
     assert r.returncode == 0, r.stderr
@@ -87,15 +87,25 @@ def test_install_exposes_usb_by_default(tmp_path):
     assert ipp_usb_step(tmp_path, None, "loopback") == "all"
 
 
-def test_ipp_usb_is_restarted_exactly_once_and_only_when_the_conf_changes(tmp_path):
+def test_ipp_usb_is_never_restarted_by_the_installer(tmp_path):
     conf, data = tmp_path / "ipp-usb.conf", tmp_path / "data"
     conf.write_text("[network]\n  interface = loopback # all | loopback\n")
     data.mkdir()
-    stubs = 'apt-get() { :; }; install() { :; }; udevadm() { :; }; systemctl() { echo "SYSTEMCTL $*"; }'
-    for restarts in (1, 0):  # the second run finds the conf already as wanted
-        r = sh(f"{stubs}; setup_ipp_usb '' 0", DATA_DIR=str(data), IPP_USB_CONF=str(conf))
-        assert r.returncode == 0, r.stderr
-        assert r.stdout.count("SYSTEMCTL try-restart ipp-usb") == restarts
+    stubs = 'apt-get() { :; }; install() { :; }; udevadm() { :; }; nft() { :; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    r = sh(f"{stubs}; setup_ipp_usb '' 0", DATA_DIR=str(data), IPP_USB_CONF=str(conf))
+    assert r.returncode == 0, r.stderr
+    assert "ipp-usb" not in r.stdout
+
+
+def test_nftables_is_installed_and_the_firewall_unit_installed_and_enabled():
+    r = sh('apt-get() { echo "APT $*"; }; install_packages')
+    assert " nftables" in r.stdout
+    stubs = 'show_job_details() { return 1; }; install() { echo "INSTALL $*"; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    r = sh(f"{stubs}; start_services", APPLY_SETTINGS="/bin/true")
+    install = next(line for line in r.stdout.splitlines() if line.startswith("INSTALL"))
+    assert "/deploy/systemd/printhub-firewall.service" in install
+    enable = next(line for line in r.stdout.splitlines() if line.startswith("SYSTEMCTL enable --now"))
+    assert "printhub-firewall.service" in enable
 
 
 def test_apply_settings_is_installed_executable_for_root(tmp_path):

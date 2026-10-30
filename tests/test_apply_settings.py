@@ -28,13 +28,21 @@ class Box:
             f'printer-is-shared=$(cat {self.shared})"\n'
         )
         (self.bin / "lpoptions").chmod(0o755)
-        for name in ("systemctl", "lpadmin", "cupsctl", "lpstat", "sleep"):
+        self.nft_script = tmp / "nft-script"  # what `nft -f -` last loaded; `nft list` shows it while it has a drop rule
+        (self.bin / "nft").write_text(
+            f'#!/bin/sh\necho "nft $*" >>{self.log}\n'
+            f'[ "$FAIL" = "nft $1" ] && exit 1\n'
+            f'[ "$1" = -f ] && {{ cat >{self.nft_script}; exit 0; }}\n'
+            f'[ "$1" = list ] && grep -q drop {self.nft_script} 2>/dev/null && {{ cat {self.nft_script}; exit 0; }}\n'
+            '[ "$1" = list ] && exit 1\nexit 0\n'
+        )
+        (self.bin / "nft").chmod(0o755)
+        for name in ("systemctl", "lpadmin", "cupsctl", "lpstat"):
             exe = self.bin / name
             exe.write_text(
                 f'#!/bin/sh\necho "{name} $*" >>{self.log}\n'
                 f'[ "$1" = -v ] && cat {self.uri}\n'
                 '[ "$1" = cat ] && [ "$ABSENT" = "$2" ] && exit 1\n'
-                '[ "$1" = show ] && echo "$ACTIVE_SINCE"\n'
                 f'[ "$FAIL" = {name} ] && exit 1\n[ "$FAIL" = "{name} $1" ] && exit 1\nexit 0\n'
             )
             exe.chmod(0o755)
@@ -50,6 +58,18 @@ class Box:
             text=True,
         )
 
+    def run_script(self, *args: str) -> subprocess.CompletedProcess:
+        """The script run as a program, as systemd runs it."""
+        return subprocess.run(
+            ["bash", str(SCRIPT), *args],
+            env={
+                "PATH": f"{self.bin}:/usr/bin:/bin", "DATA_DIR": str(self.data), "IPP_USB_CONF": str(self.conf),
+                "AVAHI_DIR": str(self.avahi), "OWNER": OWNER,
+            },
+            capture_output=True,
+            text=True,
+        )
+
     def request(self, body: str | dict = REQUEST) -> Path:
         path = self.data / "system-request.json"
         path.write_text(body if isinstance(body, str) else json.dumps(body))
@@ -58,7 +78,7 @@ class Box:
     def calls(self) -> list[str]:
         """The mutating commands run; the lookups (lpstat, systemctl cat) are not what tests assert on."""
         lines = self.log.read_text().splitlines() if self.log.exists() else []
-        return [c for c in lines if not c.startswith(("lpstat", "systemctl cat", "systemctl show", "systemctl is-active"))]
+        return [c for c in lines if not c.startswith(("lpstat", "systemctl cat", "nft list"))]
 
 
 def test_request_defaults_to_shared_and_exposed(tmp_path):
@@ -106,51 +126,111 @@ def test_request_of_exactly_1024_bytes_is_accepted(tmp_path):
     assert box.run("read_request").stdout == "false true\n"
 
 
-def test_expose_toggles_the_interface_and_restarts_only_on_change(tmp_path):
+RULE = 'iifname != "lo" ct state new tcp dport 60000-65535 drop'
+
+
+def test_expose_off_blocks_new_outside_connections_and_never_restarts_ipp_usb(tmp_path):
+    # The first line is the one Debian's ipp-usb package ships.
     box = Box(tmp_path)
+    box.conf.write_text("[http]\n  interface = all # all | loopback\n")
     assert box.run("apply_expose false").returncode == 0
-    assert box.conf.read_text() == "[http]\n  interface = loopback\n"
-    assert box.calls() == ["systemctl try-restart ipp-usb"]
-    assert box.run("apply_expose false").returncode == 0
-    assert box.calls() == ["systemctl try-restart ipp-usb"]
+    assert box.calls() == ["nft -f -"]  # no systemctl at all
+    script = box.nft_script.read_text()
+    assert "delete table inet printhub" in script and RULE in script
+    assert box.conf.read_text() == "[http]\n  interface = loopback # all | loopback\n"
+    assert box.run("current_expose").stdout == "false\n"
+
+
+def test_expose_on_removes_the_rule_and_restores_the_interface(tmp_path):
+    box = Box(tmp_path)
+    box.conf.write_text("[http]\n  interface = loopback # all | loopback\n")
     assert box.run("apply_expose true").returncode == 0
-    assert box.conf.read_text() == "[http]\n  interface = all\n"
-    assert len(box.calls()) == 2
+    assert box.calls() == ["nft -f -"]
+    script = box.nft_script.read_text()
+    assert "delete table inet printhub" in script and "drop" not in script
+    assert box.conf.read_text() == "[http]\n  interface = all # all | loopback\n"
+    assert box.run("current_expose").stdout == "true\n"
 
 
-def test_interface_line_with_a_trailing_comment_is_read_and_rewritten(tmp_path):
-    # The first is the line Debian's ipp-usb package ships.
-    lines = ("  interface = all # all | loopback", "  interface = all\t# c", "  interface = all#c")
-    for n, line in enumerate(lines):
+def test_interface_line_variants_are_rewritten_keeping_the_comment(tmp_path):
+    for n, line in enumerate(("  interface = all\t# c", "  interface = all#c", "  interface = all")):
         (tmp_path / str(n)).mkdir()
         box = Box(tmp_path / str(n))
         box.conf.write_text(f"[http]\n{line}\n")
-        assert box.run("current_expose").stdout == "true\n", line
-        assert box.run("apply_expose true").returncode == 0 and box.calls() == [], line
         assert box.run("apply_expose false").returncode == 0
         assert box.conf.read_text() == f"[http]\n{line.replace('all', 'loopback', 1)}\n", line
-        assert box.run("current_expose").stdout == "false\n", line
-        assert box.calls() == ["systemctl try-restart ipp-usb"], line
+        assert box.run("apply_expose true").returncode == 0
+        assert box.conf.read_text() == f"[http]\n{line}\n", line
 
 
-def uptime_us() -> int:
-    return int(float(Path("/proc/uptime").read_text().split()[0]) * 1_000_000)
+def test_the_blocked_ports_are_ipp_usbs_configured_range(tmp_path):
+    cases = (
+        ("  http-min-port = 61000\n  http-max-port = 61010 # c\n", "61000-61010"),
+        ("http-min-port=00070\nhttp-max-port=80\n", "70-80"),
+        ("  http-min-port = abc\n  http-max-port = 61010\n", "60000-65535"),
+        ("  http-min-port = 0\n  http-max-port = 61010\n", "60000-65535"),
+        ("  http-min-port = 61010\n  http-max-port = 61000\n", "60000-65535"),
+        ("  http-min-port = 100\n  http-max-port = 65536\n", "60000-65535"),
+        ("  http-min-port = 100\n  http-max-port = 123456\n", "60000-65535"),
+        ("  http-min-port = 100\n  http-max-port = 9; reboot\n", "60000-65535"),
+        ("  http-min-port = 100\n", "60000-65535"),
+    )
+    for n, (ports, want) in enumerate(cases):
+        (tmp_path / str(n)).mkdir()
+        box = Box(tmp_path / str(n))
+        box.conf.write_text(f"[http]\n{ports}  interface = all\n")
+        assert box.run("apply_expose false").returncode == 0
+        assert f"tcp dport {want} drop" in box.nft_script.read_text(), ports
 
 
-def test_ipp_usb_is_not_restarted_within_30s_of_starting(tmp_path):
+def test_current_expose_reads_the_firewall(tmp_path):
     box = Box(tmp_path)
-    assert box.run("apply_expose false", ACTIVE_SINCE=str(uptime_us() - 5_500_000)).returncode == 0
-    calls = box.calls()
-    assert len(calls) == 2 and calls[0] in ("sleep 24", "sleep 25") and calls[1] == "systemctl try-restart ipp-usb"
+    assert box.run("current_expose").stdout == "true\n"  # nft list fails: no table
+    box.nft_script.write_text(f"table inet printhub {{\n chain input {{\n  {RULE}\n }}\n}}\n")
+    assert box.run("current_expose").stdout == "false\n"
+    box.nft_script.write_text("table inet printhub {\n}\n")  # a table without a drop rule
+    assert box.run("current_expose").stdout == "true\n"
 
 
-def test_a_long_running_or_unchanged_ipp_usb_is_restarted_without_waiting(tmp_path):
+def test_a_failing_nft_fails_the_apply_and_leaves_the_conf(tmp_path):
     box = Box(tmp_path)
-    assert box.run("apply_expose false", ACTIVE_SINCE=str(uptime_us() - 3_600_000_000)).returncode == 0
-    assert box.calls() == ["systemctl try-restart ipp-usb"]
-    # Nothing to restart, so nothing to wait for either.
-    assert box.run("apply_expose false", ACTIVE_SINCE=str(uptime_us() - 1_000_000)).returncode == 0
-    assert box.calls() == ["systemctl try-restart ipp-usb"]
+    r = box.run("apply_expose false", FAIL="nft -f")
+    assert r.returncode != 0 and "nft failed" in r.stderr
+    assert box.conf.read_text() == "[http]\n  interface = all\n"
+
+
+def test_firewall_argument_applies_only_the_firewall(tmp_path):
+    for expose in (False, True):
+        (tmp_path / str(expose)).mkdir()
+        box = Box(tmp_path / str(expose))
+        box.request({**REQUEST, "expose_usb": expose, "share": True})
+        r = box.run_script("firewall")
+        assert r.returncode == 0, r.stderr
+        assert box.calls() == ["nft -f -"]
+        assert (RULE in box.nft_script.read_text()) is (not expose)
+        assert box.conf.read_text() == "[http]\n  interface = all\n"
+        assert not (box.data / "system-status.json").exists()
+
+
+def test_firewall_argument_without_a_request_removes_the_rule(tmp_path):
+    box = Box(tmp_path)
+    r = box.run_script("firewall")
+    assert r.returncode == 0, r.stderr
+    assert box.calls() == ["nft -f -"] and "drop" not in box.nft_script.read_text()
+
+
+def test_firewall_argument_with_an_unsafe_request_uses_the_default(tmp_path):
+    box = Box(tmp_path)
+    box.request({**REQUEST, "extra": 1})
+    r = box.run_script("firewall")
+    assert r.returncode == 0 and "refused" in r.stderr
+    assert box.calls() == ["nft -f -"] and "drop" not in box.nft_script.read_text()
+
+
+def test_an_unknown_argument_changes_nothing(tmp_path):
+    box = Box(tmp_path)
+    r = box.run_script("bogus")
+    assert r.returncode == 2 and box.calls() == []
 
 
 def test_unsharing_unannounces_and_stops_airsane(tmp_path):
@@ -199,13 +279,7 @@ def test_failed_command_status_reports_the_state_read_back(tmp_path):
             assert status["state"] == "failed" and status["error"]
             assert status["request_at"] == REQUEST["at"]
             assert status["share"] is shared
-            assert status["expose_usb"] is ("interface = all" in box.conf.read_text())
-
-
-def test_interface_prefixed_with_all_does_not_count_as_exposed(tmp_path):
-    box = Box(tmp_path)
-    box.conf.write_text("[http]\n  interface = allxyz\n")
-    assert box.run("current_expose").stdout == "false\n"
+            assert status["expose_usb"] is expose  # read back from the firewall
 
 
 def test_quoted_text_in_the_printer_options_does_not_count_as_shared(tmp_path):
@@ -261,7 +335,7 @@ def test_no_ipp_usb_conf_means_nothing_to_expose(tmp_path):
     assert r.returncode == 0, r.stderr
     status = json.loads((box.data / "system-status.json").read_text())
     assert status["state"] == "applied"
-    assert box.run("current_expose").stdout == "false\n"
+    assert "nft -f -" in box.calls()  # the firewall does not depend on the conf
     assert "lpadmin -p OfficeJet -o printer-is-shared=true" in box.calls()  # apply_share still ran
 
 
