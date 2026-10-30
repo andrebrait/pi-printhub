@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import logging
 import os
 import re
 import secrets
@@ -15,6 +16,8 @@ from typing import Literal
 from PIL import Image
 
 from printhub.documents import DocStore, Page
+
+log = logging.getLogger(__name__)
 
 SCANIMAGE = "scanimage"
 _PROBE_TIMEOUT = 60  # device discovery / option listing; a hung backend must not wedge the scanner
@@ -134,6 +137,8 @@ class Scanner:
         self._lock = threading.Lock()
         # Called with (doc_id, message) after a scan ends in an error.
         self.on_error: Callable[[str, str], None] | None = None
+        # Called with (doc_id, pages added) after a scan pass ends without error, before the document stops scanning.
+        self.on_done: Callable[[str, int], None] | None = None
 
     def start(self, store: DocStore, doc_id: str, settings: ScanSettings) -> None:
         if not self._lock.acquire(blocking=False):
@@ -160,11 +165,18 @@ class Scanner:
         error = None
         try:
             try:
+                before = len(store.get(doc_id).pages)
                 error = self._scan(store, doc_id, s, incoming)
             except ScannerUnavailable as e:
                 error = str(e)
             except Exception as e:  # e.g. unreadable PNG or full disk while ingesting
                 error = f"Scanner error: {e}"
+            else:
+                if not error and self.on_done:
+                    try:
+                        self.on_done(doc_id, len(store.get(doc_id).pages) - before)
+                    except Exception:
+                        log.exception("scan done hook failed")
             finally:
                 shutil.rmtree(incoming, ignore_errors=True)
                 with store.transaction(doc_id) as doc:

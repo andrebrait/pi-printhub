@@ -127,6 +127,53 @@
         </div>
       </form>
     </div>
+
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5 card-title mb-3">Notifications</h2>
+          <div class="row g-4">
+            <div class="col-lg-7">
+              <h3 class="h6">Channels</h3>
+              <p id="channels-empty" class="text-body-secondary" hidden>No channels yet. Add one to get the bell's notifications by email, Telegram or webhook.</p>
+              <ul id="channels" class="list-group mb-3"></ul>
+              <button id="channel-add" class="btn btn-outline-primary" type="button">Add channel</button>
+              <div id="channels-msg" role="status"></div>
+              <form id="channel-form" class="border rounded p-3 mt-3" hidden>
+                <h4 id="channel-title" class="h6 mb-3">Add channel</h4>
+                <div class="mb-3">
+                  <label for="channel-name" class="form-label">Name</label>
+                  <input id="channel-name" class="form-control" type="text" maxlength="60" autocomplete="off" required>
+                </div>
+                <div class="mb-3">
+                  <label for="channel-type" class="form-label">Type</label>
+                  <select id="channel-type" class="form-select">
+                    <option value="email">Email</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="webhook">Webhook</option>
+                  </select>
+                </div>
+                <div id="channel-fields"></div>
+                <div id="channel-advanced"></div>
+                <fieldset class="mb-3">
+                  <legend class="form-label fs-6">Send these events</legend>
+                  <div id="channel-kinds"></div>
+                </fieldset>
+                <button id="channel-save" class="btn btn-primary" type="submit">Save channel</button>
+                <button id="channel-cancel" class="btn btn-outline-secondary" type="button">Cancel</button>
+                <div id="channel-msg" role="status"></div>
+              </form>
+            </div>
+            <div class="col-lg-5">
+              <h3 class="h6">Silenced</h3>
+              <p id="silences-empty" class="text-body-secondary" hidden>Nothing is silenced. Use Silence on a notification in the bell.</p>
+              <ul id="silences" class="list-group"></ul>
+              <div id="silences-msg" role="status"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </main>
 <script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>

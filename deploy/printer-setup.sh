@@ -108,7 +108,7 @@ airprint_service() {
 apply_printer() {
     local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
-    local avahi=${AVAHI_DIR:-/etc/avahi/services}
+    local avahi=${AVAHI_DIR:-/etc/avahi/services} off=${OFF_DIR:-/var/lib/printhub-system/avahi-off}
     local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp attrs kind share before after
     # ipp-usb writes the state file before it serves the device (and keeps it from earlier plugs), so wait until
     # the printer itself answers.
@@ -134,6 +134,8 @@ apply_printer() {
         chmod 0644 "$tmp" # avahi-daemon reads it
         mv "$tmp" "$avahi/printhub-$kind.service"
     done
+    # Fresh files supersede an older copy kept while unshared; resharing would restore stale text.
+    rm -f "$off/printhub-airprint.service" "$off/printhub-generic.service"
     # Announced by the files above instead of by CUPS, which always names it "<info> @ <host>".
     # After reading the queue: cupsctl restarts cupsd.
     cupsctl BrowseLocalProtocols=none

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import asyncio
 import functools
 import logging
 import re
@@ -23,7 +24,8 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
 from starlette.background import BackgroundTask
 
-from printhub import convert, edits, printing, scanning
+from printhub import convert, edits, printing, scanning, senders
+from printhub import notifications as notification_store
 from printhub.auth import (
     COOKIE,
     LoginLimiter,
@@ -48,6 +50,7 @@ from printhub.mail import (
     send,
 )
 from printhub.middleware import MAX_BODY, MAX_UPLOAD, Guard
+from printhub.notifier import Notifier
 from printhub.printing import PrintOptions
 from printhub.retention import DiskFull, busy_policy, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
@@ -236,11 +239,21 @@ def create_app(
             log.exception("could not record a %s event", kind)
 
     scanner.on_error = lambda doc_id, message: notify("error", "scan", "Scan failed", message, doc_id=doc_id)
+
+    def scan_done(doc_id: str, added: int) -> None:
+        try:
+            title = f"Scan finished: {store.get(doc_id).title}"
+        except DocNotFound:
+            title = "Scan finished"
+        notify("info", "scan", title, f"{added} page(s) added", doc_id=doc_id)
+
+    scanner.on_done = scan_done
     # job id -> doc id for /api/jobs, rebuilt when documents appear or go (the docs directory changes).
     job_docs: dict[int, str] = {}
     job_docs_stamp = [None]
     free_bytes = free_bytes or (lambda: shutil.disk_usage(cfg.data_dir).free)
     settings_lock = threading.Lock()
+    notify_lock = threading.Lock()
     limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
     recipients = RecentRecipients(cfg.data_dir / "recipients.json")
 
@@ -267,16 +280,23 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app):
         stop = threading.Event()
+        notifier = None
         if watch:
-            watcher = Watcher(cups_conn_factory, cfg.printer_queue, events)
+            watcher = Watcher(cups_conn_factory, cfg.printer_queue, events, data_dir=cfg.data_dir)
             threading.Thread(target=watcher.run, args=(stop, WATCH_INTERVAL), name="watcher", daemon=True).start()
+            notifier = threading.Thread(target=app.state.notifier.run, args=(stop,), name="notifier", daemon=True)
+            notifier.start()
         try:
             yield
         finally:
             stop.set()
+            if notifier:
+                # Its close() waits up to 20 s for sends in flight; the backlog's cursor is already saved.
+                await asyncio.to_thread(notifier.join, 25)
 
     app = FastAPI(openapi_url=None, lifespan=lifespan)
     app.state.cfg = cfg
+    app.state.notifier = Notifier(events, cfg.data_dir, lambda: app.state.cfg)
     app.add_middleware(Guard, current=lambda: app.state.cfg, admit_share=admit_share, release_share=share_lock.release)
 
     def using_document(fn=None, *, exclusive=False):
@@ -450,7 +470,7 @@ def create_app(
 
     @api.get("/printer")
     def get_printer():
-        return printer_info(cups_conn())
+        return {k: v for k, v in asdict(printer_info(cups_conn())).items() if k != "device_uri"}
 
     @api.get("/status")
     def status():
@@ -821,6 +841,105 @@ def create_app(
                 title = "Direct printer exposure turned on" if body.expose_usb else "Direct printer exposure turned off"
                 notify("info", "settings", title)
             return read_system(cfg.data_dir)
+
+    def channel_at(state: dict, channel_id: str) -> int:
+        for i, channel in enumerate(state["channels"]):
+            if channel["id"] == channel_id:
+                return i
+        raise ApiError(404, "No such channel")
+
+    def load_for_write() -> dict:
+        try:
+            return notification_store.load_strict(cfg.data_dir)
+        except notification_store.StoreError as e:
+            raise ApiError(409, str(e)) from None
+
+    @api.get("/notify/defaults")
+    def get_notify_defaults():
+        return {
+            "header": notification_store.DEFAULT_HEADER,
+            "subject_prefix": notification_store.DEFAULT_SUBJECT_PREFIX,
+            "templates": notification_store.DEFAULT_TEMPLATES,
+        }
+
+    @api.get("/notify/channels")
+    def get_channels():
+        return [
+            notification_store.public(c) | {"result": app.state.notifier.results.get(c["id"])}
+            for c in notification_store.load(cfg.data_dir)["channels"]
+        ]
+
+    @api.post("/notify/channels", status_code=201)
+    def add_channel(body: dict):
+        with notify_lock:
+            state = load_for_write()
+            try:
+                channel = notification_store.validate_channel({**body, "id": secrets.token_urlsafe(8)})
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            state["channels"].append(channel)
+            notification_store.save(cfg.data_dir, state)
+            notify("info", "settings", f"Notification channel {channel['name']} added")
+            return notification_store.public(channel)
+
+    @api.put("/notify/channels/{channel_id}")
+    def change_channel(channel_id: str, body: dict):
+        with notify_lock:
+            state = load_for_write()
+            i = channel_at(state, channel_id)
+            try:
+                channel = state["channels"][i] = notification_store.merge_edit(state["channels"][i], body)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            notification_store.save(cfg.data_dir, state)
+            notify("info", "settings", f"Notification channel {channel['name']} changed")
+            return notification_store.public(channel)
+
+    @api.delete("/notify/channels/{channel_id}", status_code=204)
+    def remove_channel(channel_id: str):
+        with notify_lock:
+            state = load_for_write()
+            channel = state["channels"].pop(channel_at(state, channel_id))
+            notification_store.save(cfg.data_dir, state)
+            notify("info", "settings", f"Notification channel {channel['name']} removed")
+
+    @api.post("/notify/channels/{channel_id}/test", status_code=204)
+    def test_channel(channel_id: str):
+        state = notification_store.load(cfg.data_dir)
+        channel = state["channels"][channel_at(state, channel_id)]
+        try:
+            senders.send(channel, senders.test_event(channel["name"]), app.state.cfg)
+        except senders.SendError as e:
+            app.state.notifier.record(channel_id, str(e))
+            raise ApiError(502, str(e)) from None
+        app.state.notifier.record(channel_id)
+
+    @api.get("/notify/silences")
+    def get_silences():
+        return notification_store.active_silences(notification_store.load(cfg.data_dir)["silences"], datetime.now(timezone.utc))
+
+    @api.post("/notify/silences", status_code=201)
+    def add_silence(body: dict):
+        now = datetime.now(timezone.utc)
+        with notify_lock:
+            state = load_for_write()
+            try:
+                silence = notification_store.new_silence(body.get("match"), body.get("value"), body.get("hours"), now)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            state["silences"] = [*notification_store.active_silences(state["silences"], now), silence]
+            notification_store.save(cfg.data_dir, state)
+            return silence
+
+    @api.delete("/notify/silences/{silence_id}", status_code=204)
+    def remove_silence(silence_id: str):
+        with notify_lock:
+            state = load_for_write()
+            live = notification_store.active_silences(state["silences"], datetime.now(timezone.utc))
+            state["silences"] = [s for s in live if s.get("id") != silence_id]
+            if len(state["silences"]) == len(live):
+                raise ApiError(404, "No such silence")
+            notification_store.save(cfg.data_dir, state)
 
     app.include_router(api)
     app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")

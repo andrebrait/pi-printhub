@@ -51,8 +51,8 @@ p:empty { display: none; }
 #convert-message { white-space: pre-line; }
 /* Touch targets on phones. */
 .btn:not(.btn-sm):not(.btn-close):not(.nav-link), .form-control, .form-select { min-height: 2.75rem; }
-/* With a min-height, link buttons must centre their text like <button> does. */
-a.btn { display: inline-flex; align-items: center; justify-content: center; }
+/* With a min-height, link buttons and the bell's Silence summary must centre their text like <button> does. */
+a.btn, summary.btn { display: inline-flex; align-items: center; justify-content: center; }
 
 /* Top bar */
 .navbar .navbar-brand { flex: none; }

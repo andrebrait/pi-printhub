@@ -25,8 +25,10 @@ from printhub.documents import Crop, DocStore, Page, PrintRecord
 from printhub.events import EventLog
 from printhub.mail import MailError
 from printhub.middleware import MAX_BODY
+from printhub.notifications import DEFAULT_HEADER, DEFAULT_SUBJECT_PREFIX, DEFAULT_TEMPLATES
 from printhub.scanning import Scanner
-from printhub.settings import apply_overlay
+from printhub.senders import SendError
+from printhub.settings import apply_overlay, write_json
 
 ORIGIN = "https://print.example.com"
 PLENTY = 10**15
@@ -39,9 +41,11 @@ class FakeCups:
         self.active = set()
         self.state, self.reasons = 3, ["none"]
         self.jobs = {}  # job id -> attributes, as getJobs(which_jobs="all") returns them
+        self.device_uri = "hp:/usb/OfficeJet?serial=1"
 
     def getPrinterAttributes(self, queue, requested_attributes=None):
         return {
+            "device-uri": self.device_uri,
             "printer-state": self.state,
             "printer-state-reasons": self.reasons,
             "printer-is-accepting-jobs": True,
@@ -764,6 +768,24 @@ def test_conversion_and_scan_failures_become_events(client, cfg, tmp_path, monke
     assert events == [("conversion", "error", doc_id), ("scan", "error", scan_id)]
 
 
+def test_a_finished_scan_becomes_an_info_event_with_its_page_count(client, cfg, tmp_path, monkeypatch):
+    fake_scanimage(tmp_path, monkeypatch, f'cp {make_png(tmp_path / "p.png", (9, 9, 9))} "$out/page.png"')
+    settings = {"source": "flatbed", "resolution": 300, "mode": "color", "area": "a4"}
+
+    def scan(**extra):
+        doc_id = client.post("/api/scans", json={"settings": settings, **extra}).json()["doc_id"]
+        for _ in range(200):
+            if not client.get(f"/api/docs/{doc_id}").json()["scanning"]:
+                return doc_id
+            time.sleep(0.05)
+
+    scan_id = scan()
+    scan(doc_id=scan_id)  # a second pass adds one more page to the same document
+    title = client.get(f"/api/docs/{scan_id}").json()["title"]
+    events = [(e.level, e.kind, e.title, e.detail, e.doc_id) for e, _ in reversed(EventLog(cfg.data_dir).page())]
+    assert events == [("info", "scan", f"Scan finished: {title}", "1 page(s) added", scan_id)] * 2
+
+
 def test_failed_conversion_keeps_retry_when_the_event_log_cannot_be_written(client, monkeypatch):
     def full(*a, **kw):
         raise OSError(28, "No space left on device")
@@ -797,7 +819,43 @@ def test_the_running_app_records_events(cfg, fake_cups, monkeypatch):
                 break
             time.sleep(0.02)
         assert [e["title"] for e in c.get("/api/notifications").json()["events"]] == ["Job 7 completed"]
+        notifier = next(t for t in threading.enumerate() if t.name == "notifier")
     assert not any(t.name == "watcher" and t.is_alive() for t in threading.enumerate())
+    notifier.join(1)
+    assert not notifier.is_alive()
+
+
+def test_the_running_app_reports_a_failed_sharing_change(cfg, fake_cups, monkeypatch):
+    # The watcher is only given the data directory by create_app; without it sharing failures go unseen.
+    monkeypatch.setattr("printhub.app.WATCH_INTERVAL", 0.02)
+    app = create_app(cfg, cups_conn_factory=lambda: fake_cups, scanner=Scanner(), free_bytes=lambda: PLENTY, watch=True)
+    with TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}) as c:
+        assert c.post("/api/login", json={"password": "secret"}).status_code == 204
+        time.sleep(0.1)  # baseline
+        write_json(cfg.data_dir / "system-status.json", {"state": "failed", "request_at": "t1", "error": "Job for printhub-printer.service failed"})
+        for _ in range(150):
+            if c.get("/api/status").json()["unread"]:
+                break
+            time.sleep(0.02)
+        events = c.get("/api/notifications").json()["events"]
+        assert [(e["title"], e["detail"]) for e in events] == [("Sharing settings not applied", "The printer is not answering")]
+
+
+def test_the_notifier_sends_with_the_settings_in_force_when_it_sends(client):
+    # A saved settings change replaces app.state.cfg; the notifier must read it live, not keep the start-up copy.
+    add_channel(client, {"type": "email", "name": "Owner", "enabled": True, "kinds": ["settings"], "to": ["owner@example.com"], "use_scan_server": True})
+    notifier, hosts = client.app.state.notifier, []
+    notifier.send = lambda channel, event, cfg: hosts.append(cfg.smtp_host)
+    assert client.put("/api/settings", json={"smtp_host": "smtp.example.com", "smtp_password": "new-secret"}).status_code == 200
+
+    notifier.tick()
+    for _ in range(100):
+        if hosts:
+            break
+        time.sleep(0.02)
+    notifier.close()
+
+    assert hosts and set(hosts) == {"smtp.example.com"}
 
 
 def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(client, store, fake_cups):
@@ -987,3 +1045,190 @@ def test_test_email_reports_smtp_errors(client, monkeypatch):
 
 def test_test_email_rejects_an_invalid_address(client):
     assert client.post("/api/settings/test-email", json={"to": "not-an-address"}).status_code == 400
+
+
+# Notification channels and silences
+
+
+TOKEN = "123:secret-token"
+HOOK = {"type": "webhook", "name": "Ntfy", "enabled": True, "kinds": ["job"], "url": "https://ntfy.example.com/hub", "header_name": "Authorization", "header_value": "Bearer tok"}
+CHAT = {"type": "telegram", "name": "Phone", "enabled": True, "kinds": ["job", "printer"], "bot_token": TOKEN, "chat_id": "-100123", "message_thread_id": None, "parse_mode": "HTML", "disable_notification": False, "protect_content": False, "disable_web_page_preview": False}
+
+
+def add_channel(client, body=CHAT):
+    r = client.post("/api/notify/channels", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def event_titles(client):
+    return [e["title"] for e in client.get("/api/notifications").json()["events"]]
+
+
+def test_channels_need_a_session(make_client):
+    assert make_client(login=False).get("/api/notify/channels").status_code == 401
+
+
+def test_channel_crud_never_returns_secrets(client):
+    created = add_channel(client)
+    assert created["id"] and created["bot_token_set"] is True and "bot_token" not in created
+    client.app.state.notifier.results[created["id"]] = "Delivered 12:00"
+
+    listed = client.get("/api/notify/channels").json()
+    assert listed == [{**created, "result": "Delivered 12:00"}]
+
+    r = client.put(f"/api/notify/channels/{created['id']}", json={**CHAT, "name": "Phone 2", "bot_token": ""})
+    assert (r.status_code, r.json()["name"], r.json()["id"]) == (200, "Phone 2", created["id"])
+
+    assert client.delete(f"/api/notify/channels/{created['id']}").status_code == 204
+    assert client.get("/api/notify/channels").json() == []
+    assert TOKEN not in json.dumps(client.get("/api/notifications").json())
+
+
+def test_editing_the_name_keeps_the_secret(client, cfg):
+    created = add_channel(client)
+    r = client.put(f"/api/notify/channels/{created['id']}", json={"name": "Renamed"})
+
+    assert r.status_code == 200
+    stored = json.loads((cfg.data_dir / "notifications.json").read_text())["channels"][0]
+    assert (stored["name"], stored["bot_token"]) == ("Renamed", TOKEN)
+
+
+def test_repointing_a_guarded_edit_needs_the_secret_again(client):
+    created = add_channel(client)
+    r = client.put(f"/api/notify/channels/{created['id']}", json={"chat_id": "-100999"})
+
+    assert r.status_code == 400
+    assert "again to change chat_id" in r.json()["error"]
+
+
+def test_bad_channel_is_a_400_and_unknown_id_a_404(client):
+    assert client.post("/api/notify/channels", json={**HOOK, "url": "ftp://x"}).status_code == 400
+    assert "url" in client.post("/api/notify/channels", json={**HOOK, "url": "ftp://x"}).json()["error"]
+    assert client.put("/api/notify/channels/nope", json=HOOK).status_code == 404
+    assert client.delete("/api/notify/channels/nope").status_code == 404
+    assert client.post("/api/notify/channels/nope/test").status_code == 404
+
+
+def test_the_server_assigns_the_id(client):
+    created = add_channel(client, {**HOOK, "id": "mine"})
+    assert created["id"] != "mine"
+
+
+def test_channel_test_sends_synchronously_and_reports_failures(client, monkeypatch):
+    created = add_channel(client)
+    sent = []
+    monkeypatch.setattr("printhub.app.senders.send", lambda channel, event, cfg: sent.append((channel["name"], event.title)))
+
+    assert client.post(f"/api/notify/channels/{created['id']}/test").status_code == 204
+    assert sent == [("Phone", "Test notification")]
+
+    def refuse(channel, event, cfg):
+        raise SendError("chat not found")
+
+    monkeypatch.setattr("printhub.app.senders.send", refuse)
+    r = client.post(f"/api/notify/channels/{created['id']}/test")
+    assert (r.status_code, r.json()) == (502, {"error": "chat not found"})
+
+
+def test_channel_test_records_its_outcome_for_the_channel_row(client, monkeypatch):
+    created = add_channel(client)
+    monkeypatch.setattr("printhub.app.senders.send", lambda channel, event, cfg: None)
+    assert client.post(f"/api/notify/channels/{created['id']}/test").status_code == 204
+    assert client.get("/api/notify/channels").json()[0]["result"].startswith("Delivered ")
+
+    def refuse(channel, event, cfg):
+        raise SendError("chat not found")
+
+    monkeypatch.setattr("printhub.app.senders.send", refuse)
+    assert client.post(f"/api/notify/channels/{created['id']}/test").status_code == 502
+    assert client.get("/api/notify/channels").json()[0]["result"] == "Failed: chat not found"
+
+
+def test_changing_a_channels_type_leaves_no_secret_of_the_old_type(client, cfg):
+    created = add_channel(client)
+
+    r = client.put(f"/api/notify/channels/{created['id']}", json=HOOK)
+
+    assert (r.status_code, r.json()["type"]) == (200, "webhook")
+    stored = (cfg.data_dir / "notifications.json").read_text()
+    assert "bot_token" not in stored and TOKEN not in stored
+
+
+
+def test_channel_changes_become_events_without_secrets(client):
+    created = add_channel(client)
+    client.put(f"/api/notify/channels/{created['id']}", json={**CHAT, "name": "Phone 2", "bot_token": ""})
+    client.delete(f"/api/notify/channels/{created['id']}")
+
+    titles = event_titles(client)
+    assert titles[:3] == ["Notification channel Phone 2 removed", "Notification channel Phone 2 changed", "Notification channel Phone added"]
+    assert TOKEN not in json.dumps(client.get("/api/notifications").json())
+
+
+def test_silences_create_list_expire_and_delete(client, cfg):
+    r = client.post("/api/notify/silences", json={"match": "kind", "value": "job", "hours": 1})
+    assert r.status_code == 201
+    silence = r.json()
+    assert set(silence) == {"id", "match", "value", "until"}
+    assert client.get("/api/notify/silences").json() == [silence]
+
+    path = cfg.data_dir / "notifications.json"
+    state = json.loads(path.read_text())
+    state["silences"][0]["until"] = "2000-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(state))
+    assert client.get("/api/notify/silences").json() == []
+
+    again = client.post("/api/notify/silences", json={"match": "title", "value": "Paper jam", "hours": 8}).json()
+    assert client.delete(f"/api/notify/silences/{again['id']}").status_code == 204
+    assert client.delete(f"/api/notify/silences/{again['id']}").status_code == 404
+    assert client.get("/api/notify/silences").json() == []
+
+
+def test_bad_silences_are_refused(client):
+    for body in ({"match": "kind", "value": "job", "hours": 2}, {"match": "kind", "value": "bogus", "hours": 1}, {"match": "x", "value": "a", "hours": 1}):
+        assert client.post("/api/notify/silences", json=body).status_code == 400, body
+
+
+BAD_FILES = {
+    "truncated": '{"channels": [{"id": "c1"',
+    "one invalid channel": json.dumps({"channels": [{**CHAT, "id": "c1"}, {**CHAT, "id": "c2", "chat_id": "abc"}], "silences": []}),
+}
+WRITES = [
+    ("post", "/api/notify/channels", HOOK),
+    ("put", "/api/notify/channels/c1", {"name": "Renamed"}),
+    ("delete", "/api/notify/channels/c1", None),
+    ("post", "/api/notify/silences", {"match": "kind", "value": "job", "hours": 1}),
+    ("delete", "/api/notify/silences/s1", None),
+]
+
+
+@pytest.mark.parametrize("content", BAD_FILES.values(), ids=BAD_FILES)
+@pytest.mark.parametrize("method, url, body", WRITES)
+def test_a_notifications_file_that_did_not_load_cleanly_is_never_overwritten(client, cfg, method, url, body, content):
+    path = cfg.data_dir / "notifications.json"
+    path.write_text(content)
+
+    r = client.request(method.upper(), url, json=body)
+
+    assert r.status_code == 409
+    error = r.json()["error"]
+    assert error.startswith("notifications.json has a problem (") and error.endswith(f"fix or remove it before saving: {path}")
+    assert path.read_text() == content
+
+
+def test_notify_defaults_are_served_to_a_session_only(client, make_client):
+    assert client.get("/api/notify/defaults").json() == {
+        "header": DEFAULT_HEADER,
+        "subject_prefix": DEFAULT_SUBJECT_PREFIX,
+        "templates": DEFAULT_TEMPLATES,
+    }
+    assert make_client(login=False).get("/api/notify/defaults").status_code == 401
+
+
+def test_message_fields_round_trip_through_the_api(client):
+    created = add_channel(client, {**CHAT, "header": "*Printer*", "templates": {"job": "{title}"}})
+
+    assert created["header"] == "*Printer*"
+    assert created["templates"] == DEFAULT_TEMPLATES | {"job": "{title}"}
+    assert client.post("/api/notify/channels", json={**CHAT, "templates": {"bogus": "x"}}).status_code == 400

@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 from test_app import FakeCups
 
 from printhub import printing
 from printhub.events import EventLog
+from printhub.settings import write_json
 from printhub.watcher import Watcher
 
 OURS = "ipp://localhost/printers/OfficeJet"
@@ -195,3 +197,179 @@ def test_problem_level_change_is_reported_as_the_new_level(cups_, watcher, log):
     cups_.reasons = ["media-low-error"]
     watcher.tick()
     assert events(log) == [("warning", "printer", "Paper low", None), ("error", "printer", "Paper low", None)]
+
+
+USB = "ipp://localhost:60000/ipp/print"
+
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def usb(cups_, log):
+    """A watcher on an IPP-over-USB queue; answers["up"] switches the fake probe, clock.now moves time."""
+    cups_.device_uri = USB
+    answers, clock, probed = {"up": True}, Clock(), []
+
+    def probe(uri):
+        probed.append(uri)
+        return answers["up"]
+
+    watcher = Watcher(lambda: cups_, "OfficeJet", log, usb_probe=probe, clock=clock)
+    return watcher, answers, clock, probed
+
+
+def advance(watcher, clock, seconds, step=3):
+    for _ in range(0, seconds, step):
+        clock.now += step
+        watcher.tick()
+
+
+def test_short_outage_is_quiet(usb, log):
+    watcher, answers, clock, _ = usb
+    watcher.tick()
+    answers["up"] = False
+    advance(watcher, clock, 30)
+    answers["up"] = True
+    advance(watcher, clock, 30)
+    assert events(log) == []
+
+
+def test_two_minutes_unanswered_is_one_error_then_recovery(usb, log):
+    watcher, answers, clock, _ = usb
+    watcher.tick()
+    answers["up"] = False
+    advance(watcher, clock, 300)
+    assert events(log) == [("error", "printer", "Printer not answering over USB", None)]
+    assert log.page()[0][0].detail == "Power-cycle the printer if this lasts."
+    answers["up"] = True
+    advance(watcher, clock, 30)
+    assert events(log)[1:] == [("info", "printer", "Printer answering over USB again", None)]
+    assert len(events(log)) == 2
+
+
+def test_a_dead_printer_is_probed_at_most_every_15_seconds(usb):
+    watcher, answers, clock, probed = usb
+    answers["up"] = False
+    advance(watcher, clock, 60)
+    assert len(probed) == 4
+    assert set(probed) == {USB}
+
+
+def test_hplip_queue_is_not_probed(cups_, log):
+    probed = []
+    clock = Clock()
+    watcher = Watcher(lambda: cups_, "OfficeJet", log, usb_probe=lambda uri: probed.append(uri), clock=clock)
+    advance(watcher, clock, 300)
+    assert probed == [] and events(log) == []
+
+
+def test_failed_sharing_request_is_reported_once_in_plain_words(cups_, log, tmp_path):
+    watcher = Watcher(lambda: cups_, "OfficeJet", log, data_dir=tmp_path)
+    status = tmp_path / "system-status.json"
+    watcher.tick()
+    assert events(log) == []
+    write_json(status, {"state": "failed", "request_at": "t1", "error": "Job for printhub-printer.service failed\nsee journal"})
+    watcher.tick()
+    watcher.tick()
+    write_json(status, {"state": "failed", "request_at": "t2", "error": "x" * 300 + "\nmore"})
+    watcher.tick()
+    write_json(status, {"state": "applied", "request_at": "t3"})
+    watcher.tick()
+    rows = [e for e, _ in reversed(log.page())]
+    assert [(e.level, e.kind, e.title, e.detail) for e in rows] == [
+        ("warning", "settings", "Sharing settings not applied", "The printer is not answering"),
+        ("warning", "settings", "Sharing settings not applied", "x" * 200),
+    ]
+
+
+def test_a_restart_does_not_reannounce_a_failure_already_on_disk(cups_, log, tmp_path):
+    write_json(tmp_path / "system-status.json", {"state": "failed", "request_at": "t1", "error": "boom"})
+    watcher = Watcher(lambda: cups_, "OfficeJet", log, data_dir=tmp_path)
+    watcher.tick()
+    watcher.tick()
+    assert events(log) == []
+    write_json(tmp_path / "system-status.json", {"state": "failed", "request_at": "t2", "error": "boom"})
+    watcher.tick()
+    assert [(e.title, e.detail) for e, _ in log.page()] == [("Sharing settings not applied", "boom")]
+
+
+def test_a_queue_without_a_device_uri_is_not_probed(cups_, log):
+    class NoUri(type(cups_)):
+        def getPrinterAttributes(self, *args, **kwargs):
+            return {k: v for k, v in super().getPrinterAttributes(*args, **kwargs).items() if k != "device-uri"}
+
+    probed, clock = [], Clock()
+    watcher = Watcher(lambda: NoUri(), "OfficeJet", log, usb_probe=lambda uri: probed.append(uri), clock=clock)
+    advance(watcher, clock, 60)
+    assert probed == [] and events(log) == []
+
+
+def test_the_120_second_threshold_is_measured_on_the_clock(usb, log):
+    watcher, answers, clock, _ = usb
+    watcher.tick()
+    answers["up"] = False
+    advance(watcher, clock, 120)  # 105 s of confirmed silence
+    assert events(log) == []
+    advance(watcher, clock, 15)  # 120 s
+    assert [t for _, _, t, _ in events(log)] == ["Printer not answering over USB"]
+
+
+class _IppHandler(BaseHTTPRequestHandler):
+    seen = []
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        _IppHandler.seen.append((self.path, self.headers["Content-Type"], body))
+        reply = b"\x02\x00\x00\x00\x00\x00\x00\x01\x03"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+    def log_message(self, *args):
+        pass
+
+
+def test_usb_answers_against_a_fake_ipp_server():
+    server = HTTPServer(("127.0.0.1", 0), _IppHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_port
+    try:
+        assert printing.usb_answers(f"ipp://127.0.0.1:{port}/ipp/print", timeout=2)
+    finally:
+        server.shutdown()
+        server.server_close()
+    path, content_type, body = _IppHandler.seen[0]
+    assert (path, content_type) == ("/ipp/print", "application/ipp")
+    assert body[:4] == b"\x02\x00\x00\x0b" and f"ipp://127.0.0.1:{port}/ipp/print".encode() in body
+    assert b"requested-attributes" in body and b"printer-state" in body  # keeps the reply small
+    assert not printing.usb_answers(f"ipp://127.0.0.1:{port}/ipp/print", timeout=2)  # closed now
+
+
+def test_usb_answers_rejects_an_ipp_error_and_a_non_200():
+    class Bad(_IppHandler):
+        reply, code = b"\x02\x00\x04\x00\x00\x00\x00\x01\x03", 200
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(self.code)
+            self.send_header("Content-Length", str(len(self.reply)))
+            self.end_headers()
+            self.wfile.write(self.reply)
+
+    server = HTTPServer(("127.0.0.1", 0), Bad)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    uri = f"ipp://127.0.0.1:{server.server_port}/ipp/print"
+    try:
+        assert not printing.usb_answers(uri, timeout=2)
+        Bad.reply, Bad.code = b"\x02\x00\x00\x00\x00\x00\x00\x01\x03", 500
+        assert not printing.usb_answers(uri, timeout=2)
+    finally:
+        server.shutdown()
+        server.server_close()

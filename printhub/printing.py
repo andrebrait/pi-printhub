@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import re
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,8 @@ class PrinterInfo:
     defaults: dict[str, str]
     # hundredths of a millimetre; the smallest the printer allows on each side
     margins: dict[str, int]
+    # the CUPS device URI ("" when CUPS does not report one); not part of the API response
+    device_uri: str = ""
 
 
 @dataclass
@@ -120,6 +123,32 @@ def connect() -> cups.Connection:
     return cups.Connection()
 
 
+def usb_answers(uri: str, timeout: float = 5.0) -> bool:
+    """Whether the printer behind an ipp:// device URI answers an IPP Get-Printer-Attributes request."""
+
+    def attr(tag: int, name: str, value: str) -> bytes:
+        n, v = name.encode(), value.encode()
+        return bytes([tag]) + len(n).to_bytes(2, "big") + n + len(v).to_bytes(2, "big") + v
+
+    body = (
+        b"\x02\x00\x00\x0b\x00\x00\x00\x01\x01"
+        + attr(0x47, "attributes-charset", "utf-8")
+        + attr(0x48, "attributes-natural-language", "en")
+        + attr(0x45, "printer-uri", uri)
+        + attr(0x44, "requested-attributes", "printer-state")
+        + b"\x03"
+    )
+    request = urllib.request.Request(
+        "http:" + uri.removeprefix("ipp:"), body, {"Content-Type": "application/ipp"}, method="POST"
+    )
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as r:
+            reply = r.read(4)
+            return r.status == 200 and len(reply) == 4 and reply[0] in (1, 2) and reply[2] == 0
+    except Exception:
+        return False
+
+
 def _list(value) -> list:
     return value if isinstance(value, list) else [value]
 
@@ -129,6 +158,7 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
         queue,
         requested_attributes=[
             "printer-state",
+            "device-uri",
             "printer-state-reasons",
             "printer-is-accepting-jobs",
             *(f"{k}-supported" for k in OPTION_KEYS),
@@ -155,6 +185,7 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
             if attrs.get(f"{k}-default") is not None
         },
         margins=margins,
+        device_uri=str(attrs.get("device-uri", "")),
     )
 
 

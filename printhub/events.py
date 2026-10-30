@@ -106,6 +106,9 @@ class EventLog:
     def latest(self) -> int:
         return max((e.id for e in self._events()), default=0)
 
+    def after(self, event_id: int) -> list[Event]:
+        return sorted((e for e in self._events() if e.id > event_id), key=lambda e: e.id)
+
     def mark_read(self, *, up_to: int | None = None, ids: list[int] | None = None) -> None:
         with self._locked():
             # Never past the newest event: ids not yet issued must not be born read.

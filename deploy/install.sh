@@ -154,9 +154,11 @@ install_packages() {
 }
 
 # printer-setup.sh sources apply-settings.sh from its own directory, and printhub-apply.service runs it. Installed
-# before anything starts printhub-printer.service.
+# before anything starts printhub-printer.service. /var/lib/printhub-system is root's (the app user cannot write it):
+# apply-settings.sh keeps the unshared announcements there.
 install_apply_settings() {
     install -D -m 0755 -o root -g root "$REPO/deploy/apply-settings.sh" "$APPLY_SETTINGS"
+    install -d -m 0700 -o root -g root /var/lib/printhub-system
 }
 
 # The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printhub-printer.service
