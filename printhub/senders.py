@@ -73,12 +73,12 @@ def _email(channel: dict, event: Event, cfg: Config) -> None:
         raise SendError(str(e)) from e
 
 
-def render(template: str, event: Event, link: str, escape: Callable[[str], str], escape_link: Callable[[str], str] | None = None) -> str:
+def render(template: str, event: Event, link: str, escape: Callable[[str], str]) -> str:
     """Fills the placeholders (nothing else in the template is touched) and drops the lines left empty."""
     values = {
         "title": escape(event.title),
         "detail": escape(event.detail),
-        "link": (escape_link or escape)(link),
+        "link": escape(link),
         "time": escape(datetime.fromisoformat(event.at).astimezone().strftime("%Y-%m-%d %H:%M")),
     }
     text = re.sub(r"\{(%s)\}" % "|".join(PLACEHOLDERS), lambda m: values[m[1]], template)
@@ -88,13 +88,12 @@ def render(template: str, event: Event, link: str, escape: Callable[[str], str],
 def _telegram_text(channel: dict, event: Event, link: str) -> str:
     mode = channel["parse_mode"]
     if mode == "HTML":
-        escape = escape_link = lambda s: html.escape(s, quote=False)
+        escape = lambda s: html.escape(s, quote=False)
     elif mode in _ESCAPE:
         escape = lambda s: re.sub(f"([{_ESCAPE[mode]}])", r"\\\1", s)
-        escape_link = escape if mode == "MarkdownV2" else str
     else:
-        escape = escape_link = str
-    body = render(channel["templates"][event.kind], event, link, escape, escape_link)
+        escape = str
+    body = render(channel["templates"][event.kind], event, link, escape)
     return f"{channel['header']}\n{body}" if channel["header"] else body
 
 

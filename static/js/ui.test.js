@@ -685,6 +685,8 @@ test("a new Telegram channel's Advanced options start from the server defaults; 
   assert.equal(option(document, "ch-header").value, DEFAULTS.header);
   for (const k of KINDS) assert.equal(option(document, `ch-template-${k}`).value, DEFAULTS.templates[k]);
   assert.equal(option(document, "ch-template-job").rows, 3);
+  assert.equal(option(document, "ch-template-job").maxLength, 1000);
+  assert.equal(option(document, "ch-header").maxLength, 200);
   document.getElementById("channel-name").value = "Phone";
   field(document, "bot_token").value = "123:abc";
   field(document, "chat_id").value = "-1001";

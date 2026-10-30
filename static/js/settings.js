@@ -226,6 +226,7 @@ function renderAdvanced(channel) {
     const area = areas[k] = el("textarea", "form-control font-monospace");
     area.id = `ch-template-${k}`;
     area.rows = 3;
+    area.maxLength = 1000;
     const areaLabel = el("label", "form-label", KIND_LABELS[k]);
     areaLabel.htmlFor = area.id;
     const box = el("div", "mb-3");

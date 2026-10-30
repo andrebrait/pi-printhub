@@ -11,7 +11,7 @@ from test_mail import Recorder, client_tls, server_tls, smtp_server, tls_files  
 
 from printhub import senders
 from printhub.events import Event
-from printhub.notifications import DEFAULT_HEADER, DEFAULT_TEMPLATES, KINDS, validate_channel
+from printhub.notifications import KINDS, validate_channel
 from printhub.senders import SendError, send
 from printhub.senders import test_event as make_test_event
 
@@ -114,7 +114,7 @@ def test_telegram_request_shape(http_server, monkeypatch, cfg):
     assert headers["Content-Type"] == "application/json"
     assert body == {
         "chat_id": "-100123",
-        "text": f"{DEFAULT_HEADER}\n{DEFAULT_TEMPLATES['job'].format(title='Job failed', detail='Paper jam', link='https://print.example.com/print.html?doc=d1')}",
+        "text": "🖨\ufe0f Print Hub\n🧾 Job failed\nPaper jam\nhttps://print.example.com/print.html?doc=d1",
         "message_thread_id": 42,
         "parse_mode": "HTML",
         "disable_notification": True,
@@ -131,7 +131,7 @@ def test_telegram_plain_omits_thread_and_parse_mode(http_server, monkeypatch, cf
 
     body = seen[0][2]
     assert "parse_mode" not in body and "message_thread_id" not in body
-    assert body["text"] == f"{DEFAULT_HEADER}\n{DEFAULT_TEMPLATES['job'].format(title='Job failed', detail='', link='https://print.example.com/jobs.html')}".replace("\n\n", "\n")
+    assert body["text"] == "🖨\ufe0f Print Hub\n🧾 Job failed\nhttps://print.example.com/jobs.html"
     assert body["link_preview_options"] == {"is_disabled": True}
 
 
@@ -151,6 +151,27 @@ def test_telegram_escapes_values_per_parse_mode(http_server, monkeypatch, cfg, m
     send(bare_telegram(parse_mode=mode), event(kind="settings", title="a<b & *c_ [d]", detail="x <y>"), cfg)
 
     assert seen[0][2]["text"] == expected
+
+
+def test_telegram_markdown_escapes_underscores_in_the_link_too(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(parse_mode="Markdown", header="", templates={"job": "{link}"}), event(doc_id="a_b"), cfg)
+
+    assert seen[0][2]["text"] == "https://print.example.com/print.html?doc=a\\_b"
+
+
+@pytest.mark.parametrize("value, field", [("{detail}", "title"), ("{link}", "title"), ("{title}", "detail")])
+def test_placeholder_values_stay_literal(http_server, monkeypatch, cfg, value, field):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+    channel = telegram(parse_mode=None, header="", templates={"job": "{title}\n{detail}"})
+
+    send(channel, event(**{field: value}), cfg)
+
+    title, detail = (value, "Paper jam") if field == "title" else ("Job failed", value)
+    assert seen[0][2]["text"] == f"{title}\n{detail}"
 
 
 def test_telegram_markdown_v2_keeps_the_owners_markup_and_escapes_the_values(http_server, monkeypatch, cfg):
@@ -374,8 +395,8 @@ def test_email_body_and_subject(tls_mail, cfg):
     assert env.rcpt_tos == ["a@example.com"]
     msg = message_from_bytes(env.content, policy=policy.default)
     assert str(msg["Subject"]) == "[Print Hub] Job failed"
-    assert msg.get_content().replace("\r\n", "\n").strip() == DEFAULT_TEMPLATES["job"].format(
-        title="Job\nfailed", detail="Paper jam", link="https://print.example.com/print.html?doc=d1"
+    assert msg.get_content().replace("\r\n", "\n").strip() == (
+        "🧾 Job\nfailed\nPaper jam\nhttps://print.example.com/print.html?doc=d1"
     )
 
 
