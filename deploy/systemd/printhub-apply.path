@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[Unit]
+Description=Watch for system settings requested in the pi-printhub web app
+
+[Path]
+PathChanged=/var/lib/printhub/system-request.json
+Unit=printhub-apply.service
+
+[Install]
+WantedBy=paths.target

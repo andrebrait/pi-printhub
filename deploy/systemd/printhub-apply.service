@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Started by printhub-apply.path when the web app writes a new system-request.json.
+[Unit]
+Description=Apply the sharing settings requested in the pi-printhub web app
+After=cups.service ipp-usb.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/printhub/apply-settings.sh
