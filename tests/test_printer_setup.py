@@ -96,6 +96,8 @@ def apply(
     base = (
         f'log() {{ echo "$*" >>{log}; }}; lpadmin() {{ log "lpadmin $*"; }}; cupsctl() {{ log "cupsctl $*"; }}; '
         f'systemctl() {{ log "systemctl $*"; }}; sleep() {{ log "sleep $*"; }}; hostname() {{ echo testhost; }}; '
+        # The queue exists once lpadmin has made it.
+        'lpstat() { [[ $1 == -v ]] && echo "device for $2: ipp://localhost:60000/ipp/print"; return 0; }; '
     )
     r = sh(
         f"{base}{stubs}; apply_printer",
@@ -254,7 +256,7 @@ def test_apply_announces_both_entries_instead_of_cups(tmp_path):
     assert "<name>HP OfficeJet Pro 6970 (Pi)</name>" in (avahi / "printhub-airprint.service").read_text()
     assert "<name>HP OfficeJet Pro 6970 (Pi) (Generic)</name>" in (avahi / "printhub-generic.service").read_text()
     assert (avahi / "printhub-generic.service").stat().st_mode & 0o777 == 0o644
-    assert "cupsctl --share-printers BrowseLocalProtocols=none" in log
+    assert "cupsctl BrowseLocalProtocols=none" in log
 
 
 def test_location_is_the_hostname_on_the_queue_and_both_adverts(tmp_path):
@@ -285,6 +287,7 @@ def test_replug_keeps_sharing_off(tmp_path):
     assert "printer-is-shared=false" in log and "printer-is-shared=true" not in log
     assert "cupsctl --no-share-printers" in log
     assert list((tmp_path / "avahi").glob("printhub-*.service")) == []
+    assert "cupsctl --share-printers" not in log  # not even briefly shared
     assert "systemctl disable --now airsaned" in log
 
 

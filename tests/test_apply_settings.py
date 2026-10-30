@@ -32,6 +32,7 @@ class Box:
             exe.write_text(
                 f'#!/bin/sh\necho "{name} $*" >>{self.log}\n'
                 f'[ "$1" = -v ] && cat {self.uri}\n'
+                '[ "$1" = cat ] && [ "$ABSENT" = "$2" ] && exit 1\n'
                 f'[ "$FAIL" = {name} ] && exit 1\nexit 0\n'
             )
             exe.chmod(0o755)
@@ -53,7 +54,9 @@ class Box:
         return path
 
     def calls(self) -> list[str]:
-        return self.log.read_text().splitlines() if self.log.exists() else []
+        """The mutating commands run; the lookups (lpstat, systemctl cat) are not what tests assert on."""
+        lines = self.log.read_text().splitlines() if self.log.exists() else []
+        return [c for c in lines if not c.startswith(("lpstat", "systemctl cat"))]
 
 
 def test_request_defaults_to_shared_and_exposed(tmp_path):
@@ -187,3 +190,34 @@ def test_unsafe_request_writes_a_failed_status_and_changes_nothing(tmp_path):
     assert status["state"] == "failed" and status["request_at"] is None
     assert box.calls() == [] or all(c.startswith("lpstat") for c in box.calls())
     assert "interface = all" in box.conf.read_text()
+
+
+def test_airsane_not_installed_yet_is_skipped_not_failed(tmp_path):
+    # First install: setup_printer's sharing step runs before AirSane's unit exists.
+    for want in ("true", "false"):
+        (tmp_path / want).mkdir()
+        box = Box(tmp_path / want)
+        r = box.run(f"apply_share {want}", ABSENT="airsaned")
+        assert r.returncode == 0, r.stderr
+        assert not any("airsaned" in c for c in box.calls())
+
+
+def test_no_ipp_usb_conf_means_nothing_to_expose(tmp_path):
+    box = Box(tmp_path)
+    box.conf.unlink()
+    box.request({**REQUEST, "share": True})
+    r = box.run("run_apply")
+    assert r.returncode == 0, r.stderr
+    status = json.loads((box.data / "system-status.json").read_text())
+    assert status["state"] == "applied"
+    assert box.run("current_expose").stdout == "false\n"
+    assert "lpadmin -p OfficeJet -o printer-is-shared=true" in box.calls()  # apply_share still ran
+
+
+def test_no_queue_leaves_cups_alone_but_follows_airsane(tmp_path):
+    for want, verb in (("true", "enable"), ("false", "disable")):
+        (tmp_path / want).mkdir()
+        box = Box(tmp_path / want)
+        r = box.run(f"apply_share {want}", FAIL="lpstat")
+        assert r.returncode == 0, r.stderr
+        assert box.calls() == [f"systemctl {verb} --now airsaned"]

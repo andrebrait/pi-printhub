@@ -136,7 +136,7 @@ apply_printer() {
     done
     # Announced by the files above instead of by CUPS, which always names it "<info> @ <host>".
     # After reading the queue: cupsctl restarts cupsd.
-    cupsctl --share-printers BrowseLocalProtocols=none
+    cupsctl BrowseLocalProtocols=none
     tmp=$(mktemp "$sane/airscan.conf.XXXXXX")
     airscan_conf "$port" "$model" >"$tmp"
     chmod 0644 "$tmp" # saned and printhub read it

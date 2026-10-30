@@ -76,6 +76,8 @@ must() { "$@" || { echo "$1 failed (exit $?)" >&2; return 1; }; }
 apply_expose() {
     local conf=${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf} want=loopback before after
     [[ $1 == true ]] && want=all
+    # No ipp-usb (an HPLIP or printerless install): nothing to expose.
+    [[ -e $conf ]] || return 0
     grep -q '^[[:space:]]*interface[[:space:]]*=' "$conf" || { echo "no interface line in $conf" >&2; return 1; }
     before=$(<"$conf") || return 1
     must sed -i "s/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)[^[:space:]]*/\1$want/" "$conf" || return 1
@@ -83,24 +85,33 @@ apply_expose() {
     [[ $before == "$after" ]] || must systemctl try-restart ipp-usb
 }
 
+# airsane enable|disable: AirSane's unit follows the sharing switch; absent before install.sh has built it.
+airsane() { systemctl cat airsaned >/dev/null 2>&1 || return 0; must systemctl "$1" --now airsaned; }
+
 # apply_share true|false: the CUPS queue's sharing, its Bonjour announcements and AirSane (the network scanner).
+# Without a queue (no printer set up yet) there is nothing for CUPS to share, and lpadmin would create one.
 apply_share() {
-    local queue=${PRINTER_QUEUE:-OfficeJet} avahi=${AVAHI_DIR:-/etc/avahi/services} uri=""
+    local queue=${PRINTER_QUEUE:-OfficeJet} avahi=${AVAHI_DIR:-/etc/avahi/services} uri="" have_queue=0
+    lpstat -p "$queue" >/dev/null 2>&1 && have_queue=1
     if [[ $1 == true ]]; then
-        uri=$(lpstat -v "$queue" 2>/dev/null) || uri=""
-        if [[ $uri == *//localhost:6????/* && ! -e $avahi/printhub-airprint.service ]]; then
-            # Shared again after being unshared: printer-setup.sh writes the announcements, which cupsctl cannot.
-            must systemctl start printhub-printer.service || return 1
-        else
-            must lpadmin -p "$queue" -o printer-is-shared=true || return 1
-            must cupsctl --share-printers || return 1
+        if ((have_queue)); then
+            uri=$(lpstat -v "$queue" 2>/dev/null) || uri=""
+            if [[ $uri == *//localhost:6????/* && ! -e $avahi/printhub-airprint.service ]]; then
+                # Shared again after being unshared: printer-setup.sh writes the announcements, which cupsctl cannot.
+                must systemctl start printhub-printer.service || return 1
+            else
+                must lpadmin -p "$queue" -o printer-is-shared=true || return 1
+                must cupsctl --share-printers || return 1
+            fi
         fi
-        must systemctl enable --now airsaned
+        airsane enable
     else
-        must lpadmin -p "$queue" -o printer-is-shared=false || return 1
-        must cupsctl --no-share-printers || return 1
+        if ((have_queue)); then
+            must lpadmin -p "$queue" -o printer-is-shared=false || return 1
+            must cupsctl --no-share-printers || return 1
+        fi
         rm -f "$avahi/printhub-airprint.service" "$avahi/printhub-generic.service" || return 1
-        must systemctl disable --now airsaned
+        airsane disable
     fi
 }
 
@@ -172,6 +183,7 @@ run_apply() {
         error=$(<"$errf")
         rm -f "$errf"
         # A failure after _load_request knows the request's timestamp; one before it has none to copy.
+        echo "${error:0:500}" >&2 # the installer's own run shows why
         write_status failed "$(current_share)" "$(current_expose)" "${error:0:500}" "$REQ_AT"
         return 1
     fi

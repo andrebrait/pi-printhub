@@ -365,15 +365,15 @@ def test_origin_is_added_at_the_top_level_of_an_existing_config(tmp_path):
     assert data["mail_from"] == "x@example.com" and data["extra"] == {"key": 1}
 
 
-def test_apply_script_is_installed_before_the_printer_service_can_start():
+def test_apply_script_and_airsane_are_installed_before_the_printer_setup_runs_sharing():
     order = (
-        'install_packages() { :; }; install_airsane() { :; }; install_traefik() { :; }; install_app() { :; }; '
+        'install_packages() { :; }; install_airsane() { echo airsane; }; install_traefik() { :; }; install_app() { :; }; '
         'write_config() { :; }; write_traefik_env() { :; }; install_traefik_config() { :; }; start_services() { :; }; '
         'print_network_todo() { :; }; install_apply_settings() { echo apply-settings; }; setup_printer() { echo printer; }'
     )
     r = sh(f"{order}; die() {{ :; }}; main")  # die: main insists on root
     assert r.returncode == 0, r.stderr
-    assert r.stdout.split() == ["apply-settings", "printer"]
+    assert r.stdout.split() == ["apply-settings", "airsane", "printer"]
 
 
 def test_services_follow_the_switches_instead_of_forcing_airsane(tmp_path):
@@ -388,3 +388,14 @@ def test_services_follow_the_switches_instead_of_forcing_airsane(tmp_path):
     enable = next(line for line in r.stdout.splitlines() if line.startswith("SYSTEMCTL enable --now"))
     assert "printhub-apply.path" in enable and "airsaned" not in enable
     assert "SYSTEMCTL try-restart printhub traefik airsaned" in r.stdout
+
+
+def test_a_failing_final_apply_only_warns_and_shows_why(tmp_path):
+    stubs = 'show_job_details() { return 1; }; install() { :; }; systemctl() { :; }'
+    script = tmp_path / "apply-settings.sh"
+    script.write_text("#!/bin/sh\necho 'lpadmin failed (exit 1)' >&2\nexit 1\n")
+    script.chmod(0o755)
+    r = sh(f"{stubs}; start_services", APPLY_SETTINGS=str(script))
+    assert r.returncode == 0
+    assert "warning: the sharing settings were not applied" in r.stdout
+    assert "lpadmin failed (exit 1)" in r.stderr

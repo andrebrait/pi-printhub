@@ -384,8 +384,8 @@ main() {
     [[ $EUID -eq 0 ]] || die "run as root (sudo deploy/install.sh)"
     install_packages
     install_apply_settings
+    install_airsane # before setup_printer: its sharing step starts the unit
     setup_printer
-    install_airsane
     install_traefik
     install_app
     write_config
