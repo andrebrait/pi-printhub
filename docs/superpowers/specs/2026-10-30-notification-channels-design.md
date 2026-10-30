@@ -62,7 +62,7 @@ Each channel has a checkbox per kind; all on for a new channel.
 | Checkbox | Event kind | Examples |
 |---|---|---|
 | Print jobs | `job` | Job completed, aborted, held |
-| Scans | `scan` | Scan failed |
+| Scans | `scan` | Scan finished, scan failed |
 | Printer status | `printer` | Paper jam, ink low, not answering over USB, cleared |
 | File conversions | `conversion` | Conversion failed |
 | Settings changes | `settings` | Retention changed, sharing turned off, sharing not applied |
@@ -75,7 +75,7 @@ Each channel has a checkbox per kind; all on for a new channel.
 
 ## 5. Delivery
 
-- A notifier thread in the web app reads `events.jsonl` after a saved position in `/var/lib/printhub/notify-cursor.json` (the last event id handled). Every event is handled once, whoever wrote it.
+- A notifier thread in the web app reads `events.jsonl` after a saved position in `/var/lib/printhub/notify-cursor.json` (the last event id handled). Each event is handed to the channels once per process, whoever wrote it. A crash right after the cursor is saved can lose events still queued; a crash before it can repeat one. The event log keeps the newest 500 events.
 - On the first start (no cursor file) the position is the newest event, so history is not replayed. After a restart it resumes after the saved position.
 - For each new event and each enabled channel that takes its kind and is not silenced, the notifier sends it. A failed send is retried after 1, 5 and 15 minutes, then dropped; a slow or failing channel does not delay the others. Pending retries are kept in memory (a restart drops them).
 - Each channel's last result (`Delivered <time>` or `Failed: <reason>`) is shown on its card. Delivery failures never become events.
@@ -99,6 +99,11 @@ Each channel has a checkbox per kind; all on for a new channel.
 - `apply_share false` moves the AirPrint announcement files to `/var/lib/printhub-system/avahi-off/` (created root-owned, mode 0700; never under `/var/lib/printhub`, which the web app's user controls) instead of deleting them; `apply_share true` moves them back when the queue is an IPP-over-USB queue and they exist, and only starts `printhub-printer.service` when there is no copy. `apply_printer` writes fresh announcements and removes any stale copy.
 - Turning sharing on therefore works while the printer is off or not answering.
 
+### 6.4 Finished scans and long Telegram messages
+
+- A scan pass that ends without error adds an `info` event, kind `scan`, "Scan finished: <document title>", detail "<n> page(s) added" (the pages of that pass). Scan notifications therefore cover finished and failed scans.
+- Telegram refuses text over 4096 characters. A longer message is not split (a split can cut an entity): the event's detail is shortened (halved, ending in "…") until the message fits, then the title if the detail is already empty. The header and the owner's template text are never cut.
+
 ## 7. API
 
 All under the session router; state-changing calls pass the Origin check.
@@ -119,7 +124,7 @@ Adding, editing and deleting a channel adds a `settings` event naming the channe
 
 ## 8. Testing
 
-- Python: channel validation per type (message fields filled with defaults, unknown kinds, over-long and empty templates, a prefix with a line break); rendering (escaping per parse mode, other braces kept, blank lines dropped, no header, one template per kind, local time); secrets never returned and kept on blank; cursor (once only, resume, no replay on first start); kind filtering; silences by title and kind and their expiry; retry schedule with a fake clock; failures not becoming events; Telegram request shape and escaping per parse mode against a fake HTTP server; webhook payload, header, timeout and no redirects; email through the existing fake SMTP, with and without the scan-server toggle and with each subject prefix; the 2-minute USB check and its clearing; one event per failed sharing request.
+- Python: channel validation per type (message fields filled with defaults, unknown kinds, over-long and empty templates, a prefix with a line break); rendering (escaping per parse mode, other braces kept, blank lines dropped, no header, one template per kind, local time); secrets never returned and kept on blank; cursor (each event handed over once per process, resume, no replay on first start); kind filtering; silences by title and kind and their expiry; retry schedule with a fake clock; failures not becoming events; Telegram request shape and escaping per parse mode against a fake HTTP server; webhook payload, header, timeout and no redirects; email through the existing fake SMTP, with and without the scan-server toggle and with each subject prefix; the 2-minute USB check and its clearing; one event per failed sharing request.
 - Shell: announcements kept and restored by `apply_share`; sharing on with the printer not answering.
 - JS: add, edit and delete channels; Advanced options filled from the defaults, edited templates saved, Reset to defaults, none for a webhook; test button and result; silence from the bell; unsilence on the settings page.
 - On the Pi: the owner pastes the Telegram bot token and chat ID; a test reaches the Notifications channel; a real print and scan arrive; sharing toggled with the printer off.

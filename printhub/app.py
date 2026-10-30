@@ -239,6 +239,15 @@ def create_app(
             log.exception("could not record a %s event", kind)
 
     scanner.on_error = lambda doc_id, message: notify("error", "scan", "Scan failed", message, doc_id=doc_id)
+
+    def scan_done(doc_id: str, added: int) -> None:
+        try:
+            title = f"Scan finished: {store.get(doc_id).title}"
+        except DocNotFound:
+            title = "Scan finished"
+        notify("info", "scan", title, f"{added} page(s) added", doc_id=doc_id)
+
+    scanner.on_done = scan_done
     # job id -> doc id for /api/jobs, rebuilt when documents appear or go (the docs directory changes).
     job_docs: dict[int, str] = {}
     job_docs_stamp = [None]

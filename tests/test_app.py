@@ -768,6 +768,24 @@ def test_conversion_and_scan_failures_become_events(client, cfg, tmp_path, monke
     assert events == [("conversion", "error", doc_id), ("scan", "error", scan_id)]
 
 
+def test_a_finished_scan_becomes_an_info_event_with_its_page_count(client, cfg, tmp_path, monkeypatch):
+    fake_scanimage(tmp_path, monkeypatch, f'cp {make_png(tmp_path / "p.png", (9, 9, 9))} "$out/page.png"')
+    settings = {"source": "flatbed", "resolution": 300, "mode": "color", "area": "a4"}
+
+    def scan(**extra):
+        doc_id = client.post("/api/scans", json={"settings": settings, **extra}).json()["doc_id"]
+        for _ in range(200):
+            if not client.get(f"/api/docs/{doc_id}").json()["scanning"]:
+                return doc_id
+            time.sleep(0.05)
+
+    scan_id = scan()
+    scan(doc_id=scan_id)  # a second pass adds one more page to the same document
+    title = client.get(f"/api/docs/{scan_id}").json()["title"]
+    events = [(e.level, e.kind, e.title, e.detail, e.doc_id) for e, _ in reversed(EventLog(cfg.data_dir).page())]
+    assert events == [("info", "scan", f"Scan finished: {title}", "1 page(s) added", scan_id)] * 2
+
+
 def test_failed_conversion_keeps_retry_when_the_event_log_cannot_be_written(client, monkeypatch):
     def full(*a, **kw):
         raise OSError(28, "No space left on device")

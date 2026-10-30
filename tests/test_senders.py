@@ -153,6 +153,32 @@ def test_telegram_escapes_values_per_parse_mode(http_server, monkeypatch, cfg, m
     assert seen[0][2]["text"] == expected
 
 
+@pytest.mark.parametrize("mode", ["MarkdownV2", "HTML", None])
+def test_a_long_detail_is_cut_so_the_message_fits_telegrams_limit(http_server, monkeypatch, cfg, mode):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(parse_mode=mode), event(detail="a.b<" * 2500, doc_id="d1"), cfg)
+
+    text = seen[0][2]["text"]
+    link = "https://print.example.com/print.html?doc=d1" if mode != "MarkdownV2" else "https://print\\.example\\.com/print\\.html?doc\\=d1"
+    lines = text.split("\n")
+    assert len(text) <= 4096
+    assert lines[0] == "🖨\ufe0f Print Hub" and lines[1] == "🧾 Job failed" and lines[-1] == link
+    assert lines[2].endswith("…")
+
+
+def test_a_title_too_long_even_without_detail_is_cut_too(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(), event(title="T" * 10000, detail="D" * 10000), cfg)
+
+    text = seen[0][2]["text"]
+    assert len(text) <= 4096 and text.startswith("🖨\ufe0f Print Hub\n🧾 T") and text.endswith("/jobs.html")
+    assert "D" not in text
+
+
 def test_telegram_markdown_escapes_underscores_in_the_link_too(http_server, monkeypatch, cfg):
     url, seen = http_server(ok)
     monkeypatch.setattr(senders, "TELEGRAM_API", url)

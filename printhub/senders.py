@@ -93,6 +93,14 @@ def render(template: str, event: Event, link: str, escape: Callable[[str], str])
     return "\n".join(line for line in text.split("\n") if line.strip())
 
 
+_TELEGRAM_LIMIT = 4096
+
+
+def _shorten(text: str) -> str:
+    """Halves the text, ending it with an ellipsis; nothing is left of a very short one."""
+    return text[: len(text) // 2].rstrip() + "…" if len(text) > 2 else ""
+
+
 def _telegram_text(channel: dict, event: Event, link: str) -> str:
     mode = channel["parse_mode"]
     if mode == "HTML":
@@ -101,8 +109,19 @@ def _telegram_text(channel: dict, event: Event, link: str) -> str:
         escape = lambda s: re.sub(f"([{_ESCAPE[mode]}])", r"\\\1", s)
     else:
         escape = str
-    body = render(channel["templates"][event.kind], event, link, escape)
-    return f"{channel['header']}\n{body}" if channel["header"] else body
+
+    def build(event: Event) -> str:
+        body = render(channel["templates"][event.kind], event, link, escape)
+        return f"{channel['header']}\n{body}" if channel["header"] else body
+
+    # Telegram refuses a longer message. Cutting the raw values (before escaping) never splits an escape or an entity,
+    # and the owner's own template text stays whole.
+    text = build(event)
+    for field in ("detail", "title"):
+        while len(text) > _TELEGRAM_LIMIT and getattr(event, field):
+            event = replace(event, **{field: _shorten(getattr(event, field))})
+            text = build(event)
+    return text
 
 
 def _telegram(channel: dict, event: Event, cfg: Config) -> None:
