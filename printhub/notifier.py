@@ -40,6 +40,9 @@ class Notifier:
         self._lock = threading.Lock()
         # Problems notifications.load reported on the last tick, so a standing one is logged once, not every tick.
         self._load_errors: set[str] = set()
+        # The silences of the latest tick, so a backlog queued behind a slow send still honours a newer silence.
+        self._silences: list[dict] = []
+        self._workers: list[threading.Thread] = []
         self._last = self._read_cursor()
         if self._last is None:
             # First start: the history was never promised to this channel.
@@ -62,6 +65,8 @@ class Notifier:
 
     def tick(self) -> None:
         state = self._load()
+        self._silences = state["silences"]
+        self._workers = [t for t in self._workers if t.is_alive()]
         active = {c["id"]: c for c in state["channels"] if c["enabled"]}
         for gone in self._queues.keys() - active.keys():
             self._discard(self._queues.pop(gone))
@@ -108,7 +113,9 @@ class Notifier:
     def _enqueue(self, channel: dict, event: Event, failures: int) -> None:
         if channel["id"] not in self._queues:
             q = self._queues[channel["id"]] = queue.Queue()
-            threading.Thread(target=self._work, args=(q,), name=f"notify-{channel['id']}", daemon=True).start()
+            worker = threading.Thread(target=self._work, args=(q,), name=f"notify-{channel['id']}", daemon=True)
+            self._workers.append(worker)
+            worker.start()
         self._queues[channel["id"]].put((channel, event, failures))
 
     def _work(self, q: queue.Queue) -> None:
@@ -119,6 +126,8 @@ class Notifier:
         self.results[channel_id] = f"Failed: {error}" if error is not None else "Delivered " + self.now().astimezone().strftime("%H:%M")
 
     def _deliver(self, channel: dict, event: Event, failures: int) -> None:
+        if notifications.silenced(self._silences, event, self.now()):
+            return
         try:
             self.send(channel, event, self.current())
         except Exception as e:
@@ -143,8 +152,14 @@ class Notifier:
         finally:
             self.close()
 
-    def close(self) -> None:
+    def close(self, timeout: float = 20.0) -> None:
         # Events queued so far already moved the cursor, so the workers finish them before they exit.
         for q in self._queues.values():
             q.put(None)
         self._queues.clear()
+        end = time.monotonic() + timeout
+        for worker in self._workers:
+            worker.join(max(0.0, end - time.monotonic()))
+        self._workers = [t for t in self._workers if t.is_alive()]
+        if self._workers:
+            log.warning("notifier stopped with %d channel(s) still sending; their backlog is lost", len(self._workers))

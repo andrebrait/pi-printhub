@@ -321,7 +321,7 @@ def test_a_standing_load_error_is_logged_once(rig, caplog):
         assert logged() == 3
 
 
-def test_close_still_sends_the_backlog(rig):
+def test_close_waits_for_the_backlog(rig):
     # The cursor already passed these events, so a shutdown must not lose them.
     rig.channels(channel("busy"))
     rig.block["busy"] = threading.Event()
@@ -330,7 +330,37 @@ def test_close_still_sends_the_backlog(rig):
         rig.events.append("info", "job", title)
     n.tick()
     assert rig.entered.wait(1)
+    threading.Timer(0.3, rig.block["busy"].set).start()
     n.close()
-    rig.block["busy"].set()
-    until(lambda: "notify-busy" not in {t.name for t in threading.enumerate()})
     assert [title for _, title, _ in rig.calls] == ["one", "two", "three"]
+
+
+def test_close_gives_up_on_a_send_that_never_returns(rig, caplog):
+    rig.channels(channel("stuck"))
+    rig.block["stuck"] = threading.Event()
+    n = rig.notifier()
+    rig.events.append("info", "job", "one")
+    n.tick()
+    assert rig.entered.wait(1)
+    start = time.monotonic()
+    with caplog.at_level(logging.WARNING):
+        n.close(timeout=0.5)
+    assert time.monotonic() - start < 1.5
+    assert any("1 " in r.getMessage() and "still sending" in r.getMessage() for r in caplog.records)
+
+
+def test_silence_reaches_a_message_already_queued(rig):
+    rig.channels(channel("a"))
+    rig.block["a"] = threading.Event()
+    n = rig.notifier()
+    rig.events.append("info", "job", "one")
+    n.tick()
+    assert rig.entered.wait(1)
+    rig.events.append("info", "job", "two")
+    n.tick()
+    rig.channels(channel("a"), silences=[notifications.new_silence("kind", "job", 1, NOW)])
+    n.tick()
+    rig.block["a"].set()
+    n.close()
+    assert [title for _, title, _ in rig.calls] == ["one"]
+    assert "a" in n.results and not n.results["a"].startswith("Failed")

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import asyncio
 import functools
 import logging
 import re
@@ -270,14 +271,19 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app):
         stop = threading.Event()
+        notifier = None
         if watch:
             watcher = Watcher(cups_conn_factory, cfg.printer_queue, events, data_dir=cfg.data_dir)
             threading.Thread(target=watcher.run, args=(stop, WATCH_INTERVAL), name="watcher", daemon=True).start()
-            threading.Thread(target=app.state.notifier.run, args=(stop,), name="notifier", daemon=True).start()
+            notifier = threading.Thread(target=app.state.notifier.run, args=(stop,), name="notifier", daemon=True)
+            notifier.start()
         try:
             yield
         finally:
             stop.set()
+            if notifier:
+                # Its close() waits up to 20 s for sends in flight; the backlog's cursor is already saved.
+                await asyncio.to_thread(notifier.join, 25)
 
     app = FastAPI(openapi_url=None, lifespan=lifespan)
     app.state.cfg = cfg
