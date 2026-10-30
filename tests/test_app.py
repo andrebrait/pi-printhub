@@ -42,11 +42,9 @@ class FakeCups:
         self.jobs = {}  # job id -> attributes, as getJobs(which_jobs="all") returns them
         self.device_uri = "hp:/usb/OfficeJet?serial=1"
 
-    def getPrinters(self, requested_attributes=None):
-        return {"OfficeJet": {"device-uri": self.device_uri}}
-
     def getPrinterAttributes(self, queue, requested_attributes=None):
         return {
+            "device-uri": self.device_uri,
             "printer-state": self.state,
             "printer-state-reasons": self.reasons,
             "printer-is-accepting-jobs": True,

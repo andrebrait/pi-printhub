@@ -288,6 +288,38 @@ def test_failed_sharing_request_is_reported_once_in_plain_words(cups_, log, tmp_
     ]
 
 
+def test_a_restart_does_not_reannounce_a_failure_already_on_disk(cups_, log, tmp_path):
+    write_json(tmp_path / "system-status.json", {"state": "failed", "request_at": "t1", "error": "boom"})
+    watcher = Watcher(lambda: cups_, "OfficeJet", log, data_dir=tmp_path)
+    watcher.tick()
+    watcher.tick()
+    assert events(log) == []
+    write_json(tmp_path / "system-status.json", {"state": "failed", "request_at": "t2", "error": "boom"})
+    watcher.tick()
+    assert [(e.title, e.detail) for e, _ in log.page()] == [("Sharing settings not applied", "boom")]
+
+
+def test_a_queue_without_a_device_uri_is_not_probed(cups_, log):
+    class NoUri(type(cups_)):
+        def getPrinterAttributes(self, *args, **kwargs):
+            return {k: v for k, v in super().getPrinterAttributes(*args, **kwargs).items() if k != "device-uri"}
+
+    probed, clock = [], Clock()
+    watcher = Watcher(lambda: NoUri(), "OfficeJet", log, usb_probe=lambda uri: probed.append(uri), clock=clock)
+    advance(watcher, clock, 60)
+    assert probed == [] and events(log) == []
+
+
+def test_the_120_second_threshold_is_measured_on_the_clock(usb, log):
+    watcher, answers, clock, _ = usb
+    watcher.tick()
+    answers["up"] = False
+    advance(watcher, clock, 120)  # 105 s of confirmed silence
+    assert events(log) == []
+    advance(watcher, clock, 15)  # 120 s
+    assert [t for _, _, t, _ in events(log)] == ["Printer not answering over USB"]
+
+
 class _IppHandler(BaseHTTPRequestHandler):
     seen = []
 
@@ -316,6 +348,7 @@ def test_usb_answers_against_a_fake_ipp_server():
     path, content_type, body = _IppHandler.seen[0]
     assert (path, content_type) == ("/ipp/print", "application/ipp")
     assert body[:4] == b"\x02\x00\x00\x0b" and f"ipp://127.0.0.1:{port}/ipp/print".encode() in body
+    assert b"requested-attributes" in body and b"printer-state" in body  # keeps the reply small
     assert not printing.usb_answers(f"ipp://127.0.0.1:{port}/ipp/print", timeout=2)  # closed now
 
 

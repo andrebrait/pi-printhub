@@ -41,6 +41,8 @@ class PrinterInfo:
     defaults: dict[str, str]
     # hundredths of a millimetre; the smallest the printer allows on each side
     margins: dict[str, int]
+    # the CUPS device URI ("" when CUPS does not report one); not part of the API response
+    device_uri: str = ""
 
 
 @dataclass
@@ -133,6 +135,7 @@ def usb_answers(uri: str, timeout: float = 5.0) -> bool:
         + attr(0x47, "attributes-charset", "utf-8")
         + attr(0x48, "attributes-natural-language", "en")
         + attr(0x45, "printer-uri", uri)
+        + attr(0x44, "requested-attributes", "printer-state")
         + b"\x03"
     )
     request = urllib.request.Request(
@@ -155,6 +158,7 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
         queue,
         requested_attributes=[
             "printer-state",
+            "device-uri",
             "printer-state-reasons",
             "printer-is-accepting-jobs",
             *(f"{k}-supported" for k in OPTION_KEYS),
@@ -181,6 +185,7 @@ def printer_info(conn: cups.Connection, queue: str) -> PrinterInfo:
             if attrs.get(f"{k}-default") is not None
         },
         margins=margins,
+        device_uri=str(attrs.get("device-uri", "")),
     )
 
 

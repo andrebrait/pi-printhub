@@ -455,7 +455,7 @@ def create_app(
 
     @api.get("/printer")
     def get_printer():
-        return printer_info(cups_conn())
+        return {k: v for k, v in asdict(printer_info(cups_conn())).items() if k != "device_uri"}
 
     @api.get("/status")
     def status():

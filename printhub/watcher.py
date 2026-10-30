@@ -40,15 +40,16 @@ class Watcher:
         self.usb_probed_at: float | None = None
         self.usb_silent_since: float | None = None
         self.usb_reported = False
-        self.sharing_reported: set[str] = set()  # a restart may report the last failure once more
+        # None until the first tick: a failure already on disk then is a baseline, so restarts do not re-announce it.
+        self.sharing_reported: set[str] | None = None
 
     def tick(self) -> None:
         self._check_sharing()
         try:
             conn = self.conn_factory()
             jobs = printing.queue_jobs(conn, self.queue)
-            problems = printing.problems(printing.printer_info(conn, self.queue).state_reasons)
-            device_uri = conn.getPrinters()[self.queue]["device-uri"]
+            info = printing.printer_info(conn, self.queue)
+            problems = printing.problems(info.state_reasons)
         except (cups.IPPError, RuntimeError, OSError) as e:
             if not self.down:
                 self.down = True
@@ -72,7 +73,7 @@ class Watcher:
                 self.events.append("info", "printer", f"{label} cleared")
         self.jobs = {job.id: job.state for job in jobs}
         self.problems = problems
-        self._check_usb(device_uri)
+        self._check_usb(info.device_uri)
 
     def _check_usb(self, device_uri: str) -> None:
         if not USB_URI.match(device_uri):
@@ -95,10 +96,17 @@ class Watcher:
     def _check_sharing(self) -> None:
         if self.data_dir is None:
             return
-        status = settings.read_system(self.data_dir)["status"]
-        if not status or status.get("state") != "failed" or status.get("request_at") in self.sharing_reported:
+        status = settings.read_system(self.data_dir)["status"] or {}
+        failed = status.get("state") == "failed"
+        at = str(status.get("request_at"))
+        baseline = self.sharing_reported is None
+        if baseline:
+            self.sharing_reported = set()
+        if not failed or at in self.sharing_reported:
             return
-        self.sharing_reported.add(status.get("request_at"))
+        self.sharing_reported.add(at)
+        if baseline:
+            return
         error = str(status.get("error") or "")
         reason = "The printer is not answering" if "printhub-printer.service" in error else error.split("\n")[0][:200]
         self.events.append("warning", "settings", "Sharing settings not applied", reason)
