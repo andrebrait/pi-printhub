@@ -412,6 +412,15 @@ test("a sharing change shows Applying until the status catches up, then the appl
   assert.equal(document.getElementById("system-save").disabled, false);
 });
 
+test("a page loaded during a pending sharing change shows the requested switches", async () => {
+  const requested = { share: true, expose_usb: true };
+  const { document, main, tick } = settingsEnv([{ requested, status: null, pending: true }]);
+  main(); // the wait for the apply goes on in the background; tick fires its poll
+  await tick();
+  assert.equal(document.getElementById("share").checked, true);
+  assert.equal(document.getElementById("expose_usb").checked, true);
+});
+
 test("a sharing change that never applies says so after 120 seconds", async () => {
   const { document, main, tick } = settingsEnv([applied, pending]);
   await main();

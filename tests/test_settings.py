@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import json
 import logging
+import os
 
 import pytest
 
 from printhub.config import ConfigError, load_config
-from printhub.settings import read_system, save
+from printhub.settings import read_system, save, write_json
 
 TOML = """\
 password_hash = "$argon2id$hash"
@@ -129,3 +130,24 @@ def test_a_status_for_an_older_request_is_still_pending(tmp_path):
 
     (tmp_path / "system-status.json").write_text(json.dumps({**status, "request_at": request["at"]}))
     assert read_system(tmp_path)["pending"] is False
+
+
+def test_a_saved_file_is_synced_after_its_rename(tmp_path, monkeypatch):
+    # The rename is only durable once the directory entry is on disk, so the directory is synced after the replace.
+    events = []
+    dir_ino = os.stat(tmp_path).st_ino
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd):
+        events.append("dir fsync" if os.fstat(fd).st_ino == dir_ino else "file fsync")
+        real_fsync(fd)
+
+    def replace(src, dst):
+        events.append("replace")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    write_json(tmp_path / "settings.json", {"retention_days": 7})
+
+    assert events == ["file fsync", "replace", "dir fsync"]

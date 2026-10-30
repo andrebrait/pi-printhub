@@ -331,6 +331,15 @@ def test_unsafe_request_writes_a_failed_status_and_changes_nothing(tmp_path):
     assert "interface = all" in box.conf.read_text()
 
 
+def test_unsafe_request_run_as_a_program_still_writes_a_failed_status(tmp_path):
+    # Run as a program, so set -u is on: an unset REQ_SHARE must not stop the script before it writes the status.
+    box = Box(tmp_path)
+    box.request({**REQUEST, "extra": 1})
+    assert box.run_script().returncode != 0
+    status = json.loads((box.data / "system-status.json").read_text())
+    assert status["state"] == "failed" and status["error"]
+
+
 def test_airsane_not_installed_yet_is_skipped_not_failed(tmp_path):
     # First install: setup_printer's sharing step runs before AirSane's unit exists.
     for want in ("true", "false"):

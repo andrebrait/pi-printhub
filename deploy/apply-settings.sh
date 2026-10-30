@@ -226,7 +226,7 @@ run_apply() {
     # shellcheck disable=SC2064 # errf is local and gone when the trap fires, so expand it now
     trap "rm -f '$errf'" EXIT
     for _ in 1 2 3; do
-        REQ_AT="" failed=0
+        REQ_SHARE="" REQ_EXPOSE="" REQ_AT="" failed=0
         apply_request 2>"$errf" || failed=1
         # A failure before _load_request knows no timestamp to copy.
         share=$REQ_SHARE expose=$REQ_EXPOSE at=$REQ_AT

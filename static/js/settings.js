@@ -59,6 +59,9 @@ async function saveSettings(card, body) {
 
 /** Shows the state of a sharing request; true while it is still waiting for the root script. */
 function show({ requested, status, pending }, announce) {
+  // A request still being applied is what the switches show: a Save here must not undo it.
+  $("share").checked = requested.share;
+  $("expose_usb").checked = requested.expose_usb;
   if (pending) {
     note("system", "Applying…", "info");
     return true;

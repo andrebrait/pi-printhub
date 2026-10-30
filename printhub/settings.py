@@ -102,6 +102,12 @@ def write_json(path: Path, data: dict) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        # The rename is only durable once the directory entry is on disk.
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
