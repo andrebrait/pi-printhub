@@ -46,6 +46,9 @@ class FakeElement {
   scrollIntoView() {
     this.scrolled = (this.scrolled ?? 0) + 1;
   }
+  focus() {
+    this.focused = true;
+  }
   get classList() {
     const el = this;
     return {

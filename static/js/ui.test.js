@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isLoadableMedia, mediaLabel, mediaSizeMm, sheetLayout } from "./layout.js";
 import { snapCrop } from "./crop.js";
-import { fakeDocument } from "./fake-dom.test-util.js";
+import { fakeDocument, find, findAll, textOf } from "./fake-dom.test-util.js";
+import { KIND_LABELS, when } from "./shell.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
 const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [], dataset: {}, attributes: {},
@@ -352,29 +353,46 @@ const SETTINGS = { retention_days: 30, min_free_gb: 2, smtp_host: "smtp.example"
 const reply = (body, ok = true) => ({ ok, json: async () => body });
 
 // A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
-function settingsEnv(systems, failing = []) {
-  const document = dom();
+// notify = { channels, silences, confirm } seeds what the notification API lists and answers the delete prompt; like the server it
+// never gives a bot token back. Every element is a fake one that keeps its children, so the tests can read what the page renders.
+function settingsEnv(systems, failing = [], notify = {}) {
+  const make = fakeDocument().createElement;
+  const els = new Map();
+  const document = { createElement: make, getElementById: (id) => els.get(id) ?? els.set(id, make("div")).get(id), addEventListener() {} };
+  const channels = notify.channels ?? [], silences = notify.silences ?? [], confirms = [];
   const calls = [];
   const timers = [];
   const apiFetch = async (url, opts = {}) => {
-    calls.push({ url, method: opts.method ?? "GET", body: opts.body });
-    if (url === "/api/settings/system" && opts.method !== "PUT") {
+    const method = opts.method ?? "GET";
+    calls.push({ url, method, body: opts.body });
+    if (url === "/api/settings/system" && method !== "PUT") {
       const next = systems.length > 1 ? systems.shift() : systems[0];
       return next instanceof Error ? reply(null, false) : reply(next);
     }
     if (url === "/api/settings/system") return reply(pending); // 202: the request is written, not applied
     if (failing.includes(url)) return reply(null, false);
+    if (url === "/api/notify/channels" && method === "POST") {
+      const { bot_token, ...rest } = opts.body;
+      channels.push({ id: "c-new", ...rest, bot_token_set: Boolean(bot_token) });
+    }
+    if (url === "/api/notify/channels") return reply(channels);
+    if (url === "/api/notify/silences") return reply(silences);
+    const gone = url.match(/^\/api\/notify\/(channels|silences)\/([^/]+)$/);
+    if (gone && method === "DELETE") {
+      const list = gone[1] === "channels" ? channels : silences;
+      list.splice(list.findIndex((x) => x.id === gone[2]), 1);
+    }
     return reply(SETTINGS);
   };
-  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout",
+  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout", "confirm", "KIND_LABELS", "when",
     `${source("settings.js").replace(/main\(\);\s*$/, "")} return { main };`)(
-    document, apiFetch, async () => "Rejected", (fn) => timers.push(fn));
+    document, apiFetch, async () => "Rejected", (fn) => timers.push(fn), (text) => (confirms.push(text), notify.confirm !== false), KIND_LABELS, when);
   const tick = async () => { // let pending promises settle, then fire the timers that were waiting
     await new Promise((r) => setImmediate(r));
     timers.splice(0).forEach((fn) => fn());
     await new Promise((r) => setImmediate(r));
   };
-  return { document, calls, main, tick };
+  return { document, calls, main, tick, confirms };
 }
 const applied = { requested: { share: true, expose_usb: true }, status: { state: "applied", share: true, expose_usb: true, error: null }, pending: false };
 const pending = { requested: { share: false, expose_usb: true }, status: null, pending: true };
@@ -445,7 +463,7 @@ test("a failed apply restores the switches to what is in force", async () => {
   await saved;
   assert.equal(document.getElementById("share").checked, true);
   assert.equal(document.getElementById("expose_usb").checked, false);
-  assert.match(document.getElementById("system-msg").textContent, /cupsctl failed/);
+  assert.equal(document.getElementById("system-msg").textContent, "Not applied yet: cupsctl failed");
 });
 
 test("a failed status poll does not end the wait", async () => {
@@ -520,4 +538,194 @@ test("a test email says it is sending, then the result, next to its own button",
     assert.equal(button.disabled, false);
     assert.equal(button.textContent, "Send test email");
   }
+});
+
+test("a sharing change that could not be applied says so as a plain warning, not the raw error", async () => {
+  const failed = (error) => ({ requested: { share: true, expose_usb: true }, status: { state: "failed", share: false, expose_usb: true, error }, pending: false });
+  for (const [error, plain] of [
+    ["Job for printhub-printer.service failed because the control process exited.\nSee systemctl status", "the printer is not answering"],
+    ["cupsctl: Bad request\nsecond line", "cupsctl: Bad request"],
+    ["x".repeat(300), "x".repeat(200)],
+  ]) {
+    const { document, main } = settingsEnv([failed(error)]);
+    await main();
+    const line = document.getElementById("system-msg");
+    assert.equal(line.textContent, `Not applied yet: ${plain}`);
+    assert.equal(line.attributes.role, "status");
+    assert.match(line.className, /alert-warning/);
+  }
+});
+
+const KINDS = Object.keys(KIND_LABELS);
+const PHONE = { id: "c1", name: "Phone", type: "telegram", enabled: true, kinds: KINDS, chat_id: "-1001", message_thread_id: null, parse_mode: "HTML",
+  disable_notification: false, protect_content: false, disable_web_page_preview: false, bot_token_set: true, result: "Delivered Oct 30, 2026, 3:15 PM" };
+const submit = (el) => el.listeners.submit({ preventDefault() {} });
+const buttonIn = (root, text) => find(root, (e) => e.tagName === "BUTTON" && e.textContent === text);
+const field = (document, key) => find(document.getElementById("channel-fields"), (e) => e.id === `ch-${key}`);
+const kind = (document, key) => find(document.getElementById("channel-kinds"), (e) => e.id === `ch-kind-${key}`);
+const shown = (document, key) => !findAll(document.getElementById("channel-fields"), (e) => e.children.includes(field(document, key)))[0].hidden;
+const posts = (calls) => calls.filter((c) => c.method === "POST" && c.url === "/api/notify/channels");
+
+test("each channel row shows its name, type, events and last result", async () => {
+  const hook = { ...PHONE, id: "c2", name: "Hook", type: "webhook", kinds: ["job", "printer"], result: null };
+  const { document, main } = settingsEnv([applied], [], { channels: [PHONE, hook] });
+  await main();
+  const [phone, other] = document.getElementById("channels").children.map(textOf);
+  for (const part of ["Phone", "Telegram", "All events", "Delivered Oct 30, 2026, 3:15 PM"]) assert.ok(phone.includes(part), part);
+  for (const part of ["Hook", "Webhook", "Print jobs, Printer status", "Nothing sent yet"]) assert.ok(other.includes(part), part);
+  assert.equal(document.getElementById("channels-empty").hidden, true);
+});
+
+test("adding a Telegram channel sends its fields, and the token never comes back", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  document.getElementById("channel-name").value = "Phone";
+  document.getElementById("channel-type").value = "telegram";
+  document.getElementById("channel-type").listeners.change();
+  const fields = textOf(document.getElementById("channel-fields"));
+  for (const label of ["Bot token", "Chat ID", "Message thread ID", "Parse mode", "Send silently", "Protect content", "Disable link preview"]) {
+    assert.ok(fields.includes(label), label);
+  }
+  assert.equal(field(document, "bot_token").type, "password");
+  assert.equal(field(document, "parse_mode").value, "HTML");
+  field(document, "bot_token").value = "123:abc";
+  field(document, "chat_id").value = "-1001";
+  field(document, "message_thread_id").value = "7";
+  field(document, "protect_content").checked = true;
+  kind(document, "settings").checked = false;
+  await submit(document.getElementById("channel-form"));
+  assert.deepEqual(posts(calls)[0].body, {
+    name: "Phone", type: "telegram", enabled: true, kinds: ["job", "scan", "printer", "conversion"],
+    bot_token: "123:abc", chat_id: "-1001", message_thread_id: 7, parse_mode: "HTML",
+    disable_notification: false, protect_content: true, disable_web_page_preview: false,
+  });
+  assert.equal(document.getElementById("channel-form").hidden, true);
+  const list = textOf(document.getElementById("channels"));
+  assert.ok(list.includes("Phone"));
+  assert.equal(list.includes("123:abc"), false);
+});
+
+test("an email channel uses the scan email server or its own, and sends only what applies", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click(); // email is the first type
+  assert.equal(field(document, "use_scan_server").checked, true);
+  assert.equal(shown(document, "smtp_host"), false);
+  document.getElementById("channel-name").value = "Mail";
+  field(document, "to").value = "a@example.com, b@example.com";
+  await submit(document.getElementById("channel-form"));
+  assert.deepEqual(posts(calls)[0].body, {
+    name: "Mail", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com", "b@example.com"], use_scan_server: true,
+  });
+  document.getElementById("channel-add").listeners.click();
+  document.getElementById("channel-name").value = "Own";
+  field(document, "to").value = "a@example.com";
+  field(document, "use_scan_server").checked = false;
+  field(document, "use_scan_server").listeners.change();
+  assert.equal(shown(document, "smtp_host"), true);
+  field(document, "smtp_host").value = "smtp.example";
+  field(document, "mail_from").value = "Hub <hub@example.com>";
+  await submit(document.getElementById("channel-form"));
+  assert.deepEqual(posts(calls)[1].body, {
+    name: "Own", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com"], use_scan_server: false,
+    smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls", smtp_user: "", smtp_password: "", mail_from: "Hub <hub@example.com>",
+  });
+});
+
+test("editing a channel keeps its saved secret unless a new one is typed", async () => {
+  const { document, calls, main } = settingsEnv([applied], [], { channels: [{ ...PHONE }] });
+  await main();
+  const edit = () => buttonIn(document.getElementById("channels"), "Edit").listeners.click();
+  edit();
+  assert.equal(document.getElementById("channel-type").value, "telegram");
+  assert.equal(document.getElementById("channel-type").disabled, true, "the type of a saved channel stays");
+  assert.equal(document.getElementById("channel-name").value, "Phone");
+  assert.equal(field(document, "chat_id").value, "-1001");
+  assert.equal(field(document, "bot_token").value, "");
+  assert.match(field(document, "bot_token").placeholder, /saved/i);
+  document.getElementById("channel-name").value = "Family";
+  await submit(document.getElementById("channel-form"));
+  const puts = () => calls.filter((c) => c.method === "PUT");
+  assert.equal(puts()[0].url, "/api/notify/channels/c1");
+  assert.equal(puts()[0].body.name, "Family");
+  assert.equal("bot_token" in puts()[0].body, false);
+  edit();
+  field(document, "bot_token").value = "456:def";
+  await submit(document.getElementById("channel-form"));
+  assert.equal(puts()[1].body.bot_token, "456:def");
+});
+
+test("a refused channel save stays open with the reason", async () => {
+  const { document, main } = settingsEnv([applied], ["/api/notify/channels/c1"], { channels: [{ ...PHONE }] });
+  await main();
+  buttonIn(document.getElementById("channels"), "Edit").listeners.click();
+  await submit(document.getElementById("channel-form"));
+  assert.equal(document.getElementById("channel-form").hidden, false);
+  assert.equal(document.getElementById("channel-msg").textContent, "Rejected");
+  assert.equal(document.getElementById("channel-msg").attributes.role, "alert");
+  assert.equal(document.getElementById("channel-save").disabled, false);
+});
+
+test("deleting a channel asks first and then removes it from the list", async () => {
+  for (const sure of [false, true]) {
+    const { document, calls, main, confirms } = settingsEnv([applied], [], { channels: [{ ...PHONE }], confirm: sure });
+    await main();
+    await buttonIn(document.getElementById("channels"), "Delete").listeners.click();
+    assert.match(confirms[0], /Phone/);
+    assert.equal(calls.some((c) => c.method === "DELETE" && c.url === "/api/notify/channels/c1"), sure);
+    assert.equal(textOf(document.getElementById("channels")).includes("Phone"), !sure);
+    assert.equal(document.getElementById("channels-empty").hidden, !sure);
+  }
+});
+
+test("the enabled switch saves at once and goes back when the server refuses", async () => {
+  for (const failing of [[], ["/api/notify/channels/c1"]]) {
+    const { document, calls, main } = settingsEnv([applied], failing, { channels: [{ ...PHONE }] });
+    await main();
+    const toggle = find(document.getElementById("channels"), (e) => e.type === "checkbox");
+    assert.equal(toggle.checked, true);
+    toggle.checked = false;
+    await toggle.listeners.change();
+    assert.deepEqual(calls.find((c) => c.method === "PUT").body, { enabled: false });
+    assert.equal(toggle.checked, failing.length > 0);
+    assert.equal(document.getElementById("channels-msg").textContent, failing.length ? "Rejected" : "");
+  }
+});
+
+test("a channel's test says it is sending, then the result, under its own button", async () => {
+  for (const [failing, result] of [[[], "Test sent to Phone"], [["/api/notify/channels/c1/test"], "Rejected"]]) {
+    const { document, calls, main } = settingsEnv([applied], failing, { channels: [{ ...PHONE }, { ...PHONE, id: "c2", name: "Other" }] });
+    await main();
+    const [row, other] = document.getElementById("channels").children;
+    const button = buttonIn(row, "Send test"), line = row.children.at(-1);
+    const sending = submit(find(row, (e) => e.tagName === "FORM"));
+    assert.equal(button.disabled, true);
+    assert.equal(button.textContent, "Sending…");
+    assert.match(line.textContent, /Sending a test to Phone/);
+    await sending;
+    assert.deepEqual([calls.at(-1).method, calls.at(-1).url], ["POST", "/api/notify/channels/c1/test"]);
+    assert.equal(line.textContent, result);
+    assert.equal(line.attributes.role, failing.length ? "alert" : "status");
+    assert.equal(other.children.at(-1).textContent, "", "the other channel's line stays empty");
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, "Send test");
+  }
+});
+
+test("active silences list what they match and until when, and Unsilence removes one", async () => {
+  const until = "2026-10-30T15:00:00+00:00";
+  const silences = [{ id: "s1", match: "kind", value: "job", until }, { id: "s2", match: "title", value: "Printer not answering over USB", until }];
+  const { document, calls, main } = settingsEnv([applied], [], { silences });
+  await main();
+  const list = document.getElementById("silences");
+  const text = textOf(list);
+  for (const part of ["All Print jobs", "Printer not answering over USB", when(until)]) assert.ok(text.includes(part), part);
+  assert.equal(document.getElementById("silences-empty").hidden, true);
+  await buttonIn(list.children[0], "Unsilence").listeners.click();
+  assert.deepEqual(calls.find((c) => c.method === "DELETE").url, "/api/notify/silences/s1");
+  assert.equal(list.children.length, 1);
+  await buttonIn(list.children[0], "Unsilence").listeners.click();
+  assert.equal(list.children.length, 0);
+  assert.equal(document.getElementById("silences-empty").hidden, false);
 });

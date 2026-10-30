@@ -3,6 +3,9 @@
 /* global bootstrap */
 import { apiFetch, errorMessage } from "./api.js";
 
+// The event kinds in the settings page's order, as the server's KINDS lists them.
+export const KIND_LABELS = { job: "Print jobs", scan: "Scans", printer: "Printer status", conversion: "File conversions", settings: "Settings changes" };
+
 const LEVEL_TEXT = { info: "Info", warning: "Warning", error: "Error" };
 const PILL_CLASS = {
   ok: "text-success-emphasis bg-success-subtle border border-success-subtle",
@@ -38,18 +41,57 @@ function eventHref(e) {
   return null;
 }
 
-function when(iso) {
+export function when(iso) {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** One notification for the list: level in words (not only colour), text never parsed as HTML. */
-export function eventItem(e, document) {
-  const href = eventHref(e);
-  const item = document.createElement(href ? "a" : "div");
-  if (href) item.href = href;
-  item.className = `list-group-item list-group-item-action ${ITEM_CLASS[e.level] ?? ""}${e.read ? "" : " fw-semibold"}`;
+const DURATIONS = [[1, "1 hour"], [8, "8 hours"], [24, "1 day"], [168, "1 week"]];
+
+/** Silence menu: this alert (same title) or every alert of its kind, for 1 hour to 1 week; picking one calls onSilence({match, value, hours}). */
+function silenceMenu(e, document, onSilence) {
+  const menu = document.createElement("details");
+  menu.className = "mt-2 fw-normal";
+  const summary = document.createElement("summary");
+  summary.className = "btn btn-sm btn-outline-secondary";
+  summary.textContent = "Silence";
+  menu.append(summary);
+  for (const [label, match, value] of [["This alert", "title", e.title], [`All ${KIND_LABELS[e.kind] ?? e.kind}`, "kind", e.kind]]) {
+    const group = document.createElement("div");
+    group.className = "d-flex flex-wrap align-items-center gap-1 mt-2";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", label);
+    const name = document.createElement("span");
+    name.className = "small w-100";
+    name.textContent = label;
+    group.append(name);
+    for (const [hours, text] of DURATIONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-sm btn-outline-secondary";
+      button.textContent = text;
+      button.addEventListener("click", () => {
+        menu.open = false;
+        onSilence({ match, value, hours });
+      });
+      group.append(button);
+    }
+    menu.append(group);
+  }
+  return menu;
+}
+
+/** One notification for the list: level in words (not only colour), text never parsed as HTML. With onSilence it gets a Silence menu, kept out of the link. */
+export function eventItem(e, document, onSilence) {
+  const item = document.createElement("div");
+  item.className = `list-group-item ${ITEM_CLASS[e.level] ?? ""}${e.read ? "" : " fw-semibold"}`;
   item.dataset.id = String(e.id);
+  const href = eventHref(e);
+  const body = document.createElement(href ? "a" : "div");
+  if (href) {
+    body.href = href;
+    body.className = "d-block text-reset text-decoration-none";
+  }
   const head = document.createElement("div");
   head.className = "d-flex flex-wrap justify-content-between gap-1";
   const level = document.createElement("span");
@@ -62,14 +104,23 @@ export function eventItem(e, document) {
   const title = document.createElement("div");
   title.className = "text-break";
   title.textContent = e.title;
-  item.append(head, title);
+  body.append(head, title);
   if (e.detail) {
     const detail = document.createElement("div");
     detail.className = "small text-body-secondary text-break fw-normal";
     detail.textContent = e.detail;
-    item.append(detail);
+    body.append(detail);
   }
+  item.append(body);
+  if (onSilence) item.append(silenceMenu(e, document, onSilence));
   return item;
+}
+
+/** Silences an alert or a kind; resolves to the text for a toast. */
+export async function silence(body) {
+  const res = await apiFetch("/api/notify/silences", { method: "POST", body });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return `Silenced until ${when((await res.json()).until)}`;
 }
 
 function el(tag, className, text) {
@@ -237,6 +288,15 @@ function init(host) {
     bar.bell.setAttribute("aria-label", unread ? `Notifications, ${unread} unread` : "Notifications");
   }
 
+  async function silenceAlert(body) {
+    try {
+      showToast(await silence(body));
+      document.dispatchEvent(new Event("silences-changed")); // the settings page lists them
+    } catch (e) {
+      showToast(`Could not silence: ${e.message}`, { level: "error" });
+    }
+  }
+
   async function poll() {
     let status;
     try {
@@ -273,8 +333,8 @@ function init(host) {
       if (!res.ok) throw new Error(await errorMessage(res));
       const page = await res.json();
       const items = page.events.map((e) => {
-        const item = eventItem(e, document);
-        // keepalive: the item is a link, so the page may unload before the request finishes.
+        const item = eventItem(e, document, silenceAlert);
+        // keepalive: the item holds a link, so the page may unload before the request finishes.
         if (!e.read) item.addEventListener("click", () => markRead({ ids: [e.id] }, { keepalive: true }).catch(() => {}));
         return item;
       });
