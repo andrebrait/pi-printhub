@@ -872,6 +872,15 @@ def test_settings_rejects_bad_values(client):
     assert client.get("/api/settings").json() == before
 
 
+def test_the_settings_page_refuses_a_sender_that_is_not_an_address(client, cfg):
+    r = client.put("/api/settings", json={"mail_from": "apikey"})
+
+    assert r.status_code == 400
+    assert "mail_from" in r.json()["error"]
+    assert client.get("/api/settings").json()["mail_from"] == "printhub@example.com"
+    assert not (cfg.data_dir / "settings.json").exists()
+
+
 def test_system_defaults_to_shared_and_exposed(client):
     body = client.get("/api/settings/system").json()
 

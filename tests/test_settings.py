@@ -62,6 +62,21 @@ def test_save_rejects_out_of_range_and_writes_nothing(cfg, key, value):
     assert not (cfg.data_dir / "settings.json").exists()
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["apikey", "AKIAXXXXXXXX", "no-at-sign", "a@example.com, b@example.com", "Hub <a@example.com>", "", "a@example.com\nBcc: x@example.com", 5],
+)
+def test_the_page_only_saves_a_single_plain_address_as_sender(cfg, value):
+    with pytest.raises(ConfigError, match="mail_from must be a single email address"):
+        save(cfg, {"mail_from": value})
+
+    assert not (cfg.data_dir / "settings.json").exists()
+
+
+def test_the_page_saves_an_address_as_sender(cfg):
+    assert save(cfg, {"mail_from": "hub@example.com"}).mail_from == "hub@example.com"
+
+
 def test_saved_file_is_private(cfg):
     save(cfg, {"retention_days": 7})
 

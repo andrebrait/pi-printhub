@@ -164,6 +164,24 @@ def test_smtp_port_prompt_retries_invalid_input():
     assert r.stdout == "587"
 
 
+def test_mail_from_validation_accepts_a_plain_address_only():
+    for ok in ("printhub@example.com", "a@b"):
+        assert sh(f"valid_mail_from {ok}").returncode == 0, ok
+    for bad in ("", "apikey", "AKIAXXXXXXXX", "a@", "@b.com", "a@b@c", "a b@c.com", "Hub <a@b.com>", "a@b.com\nBcc: x@y.com"):
+        assert sh('valid_mail_from "$1"', bad).returncode != 0, repr(bad)
+
+
+def test_first_install_asks_again_when_the_smtp_user_is_not_an_address(tmp_path):
+    # The prompt defaults to the SMTP user, which is often an API key id.
+    answers = ["print.example.com", "web-password", "web-password", "smtp.example.com", "", "", "apikey", "smtp-secret", "",
+               "printhub@example.com"]
+    r = sh("install() { :; }; write_secret() { cat; }; write_config", input="\n".join(answers) + "\n")
+    assert r.returncode == 0, r.stderr
+    assert 'mail_from = "printhub@example.com"' in r.stdout
+    assert 'smtp_user = "apikey"' in r.stdout
+    assert "invalid value: apikey" in r.stderr
+
+
 def test_traefik_yml_gets_the_email():
     r = sh("render_traefik_yml me@example.com")
     assert 'email: "me@example.com"' in r.stdout

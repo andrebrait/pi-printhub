@@ -64,6 +64,9 @@ show_job_details() {
 
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_security() { [[ $1 == starttls || $1 == tls ]]; }
+# A plain address: one @, something on both sides, no whitespace (so no CR or LF). The prompt's default, the SMTP
+# user, is often not one (SendGrid's "apikey", SES access key ids), and a mail server rejects it as a sender.
+valid_mail_from() { [[ $1 =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]]; }
 valid_hostname() { [[ ${#1} -le 253 && $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$ ]]; }
 
 # ask_host: WEB_HOST from the user, lowercased (local -l) because browsers send the Origin host in lowercase.
@@ -319,7 +322,7 @@ write_config() {
     ask security "SMTP security (starttls or tls)" starttls valid_security
     ask user "SMTP user"
     ask_secret smtp_pw "SMTP password"
-    ask from "Mail From address" "$user"
+    ask from "Mail From address" "$user" valid_mail_from
 
     content=$(PASSWORD_HASH=$hash SESSION_SECRET=$secret SMTP_HOST=$host SMTP_PORT=$port \
         SMTP_SECURITY=$security SMTP_USER=$user SMTP_PASSWORD=$smtp_pw MAIL_FROM=$from WEB_HOST=$WEB_HOST python3 -c '

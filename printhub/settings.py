@@ -5,6 +5,8 @@ import os
 import tempfile
 from dataclasses import replace
 from datetime import datetime, timezone
+from email.errors import MessageError
+from email.headerregistry import Address
 from pathlib import Path
 
 from printhub.config import Config, ConfigError, validate
@@ -58,6 +60,12 @@ def save(cfg: Config, changes: dict) -> Config:
     unknown = set(changes) - APP_KEYS
     if unknown:
         raise ConfigError(f"not a settings key: {', '.join(sorted(unknown))}")
+    if "mail_from" in changes:
+        # Stricter than validate: the page is where a person types the sender, and config.toml may hold an SMTP login.
+        try:  # the way mail.py checks a recipient; it also refuses CR and LF
+            Address(addr_spec=changes["mail_from"])
+        except (TypeError, ValueError, MessageError):
+            raise ConfigError(f"mail_from must be a single email address, got {changes['mail_from']!r}") from None
     new = replace(cfg, **changes)
     validate(new)
     path = cfg.data_dir / "settings.json"

@@ -3,8 +3,6 @@ import os
 import shutil
 import tomllib
 from dataclasses import MISSING, dataclass, fields
-from email.errors import MessageError
-from email.headerregistry import Address
 from pathlib import Path
 from typing import Literal
 
@@ -36,10 +34,10 @@ def validate(cfg: Config) -> None:
     _check(cfg.smtp_port, "smtp_port", int, 1, 65535)
     if cfg.smtp_security not in ("starttls", "tls"):
         raise ConfigError(f'smtp_security must be "starttls" or "tls", got {cfg.smtp_security!r}')
-    try:  # the way mail.py checks a recipient; it also refuses CR and LF, which would inject headers
-        Address(addr_spec=cfg.mail_from)
-    except (TypeError, ValueError, MessageError):
-        raise ConfigError(f"mail_from must be a single email address, got {cfg.mail_from!r}") from None
+    # Only the header injection is refused here: config.toml may name a sender that is not an address (an SMTP
+    # service's "apikey"). The settings page demands an address of its own (settings.save).
+    if not isinstance(cfg.mail_from, str) or "\r" in cfg.mail_from or "\n" in cfg.mail_from:
+        raise ConfigError(f"mail_from must be text without line breaks, got {cfg.mail_from!r}")
     # Skipped while the directory is missing (first start: it is created on the first save).
     if cfg.data_dir.exists():
         total = shutil.disk_usage(cfg.data_dir).total / 1024**3
