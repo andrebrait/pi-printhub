@@ -63,7 +63,7 @@ def save(cfg: Config, changes: dict) -> Config:
         raise ConfigError(f"not a settings key: {', '.join(sorted(unknown))}")
     if "mail_from" in changes:
         # Stricter than validate: the page is where a person types the sender, and config.toml may hold an SMTP login.
-        changes = {**changes, "mail_from": _sender(changes["mail_from"])}
+        changes = {**changes, "mail_from": sender(changes["mail_from"])}
     new = replace(cfg, **changes)
     validate(new)
     path = cfg.data_dir / "settings.json"
@@ -71,7 +71,7 @@ def save(cfg: Config, changes: dict) -> Config:
     return new
 
 
-def _sender(value) -> str:
+def sender(value) -> str:
     """One address, optionally with a display name ("Printer <print@example.com>"), in canonical form."""
     try:
         if not isinstance(value, str) or "\r" in value or "\n" in value:
