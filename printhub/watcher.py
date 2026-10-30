@@ -82,6 +82,9 @@ class Watcher:
 
     def _check_usb(self, device_uri: str) -> None:
         if not USB_URI.match(device_uri):
+            # No longer an ipp-usb queue (HPLIP now): nothing is probed, so what was learned about the old one is stale.
+            self.usb_probed_at = self.usb_silent_since = None
+            self.usb_reported = False
             return
         now = self.clock()
         if self.usb_probed_at is not None and now - self.usb_probed_at < USB_PROBE_EVERY:

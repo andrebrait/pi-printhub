@@ -7,6 +7,8 @@ import { apiFetch, errorMessage } from "./api.js";
 export const KIND_LABELS = { job: "Print jobs", scan: "Scans", printer: "Printer status", conversion: "File conversions", settings: "Settings changes" };
 
 const LEVEL_TEXT = { info: "Info", warning: "Warning", error: "Error" };
+/** The document event the shell dispatches with each /api/status result; the Home page's printer cards listen to it. */
+export const STATUS_EVENT = "printhub-status";
 export const LEVEL_CLASS = {
   ok: "text-success-emphasis",
   busy: "text-primary-emphasis",
@@ -90,11 +92,13 @@ export function unavailableText(status) {
 }
 
 /**
- * The header's compact printer widget: a link to Jobs with the printer name (from md up), a bar per supply and a status icon.
- * update(status) takes an /api/status response; showTip(link, text) runs on a long touch press.
+ * The header's compact printer widget: a link to Jobs with the printer name (from md up), a bar per supply and a status icon,
+ * inside the live region that announces it. update(status) takes an /api/status response; showTip(link, text) runs on a long touch press.
  */
 export function printerWidget(document, showTip = () => {}) {
   const make = (tag, className) => node(document, tag, className);
+  const live = make("span", "printer-live d-inline-flex min-w-0 order-2 order-md-last");
+  live.setAttribute("role", "status"); // wraps the link, so the widget stays a link for assistive technology
   const link = make("a", "printer-widget");
   link.href = "/jobs.html";
   link.id = "printer-status";
@@ -105,11 +109,16 @@ export function printerWidget(document, showTip = () => {}) {
   bars.setAttribute("aria-hidden", "true");
   icon.setAttribute("aria-hidden", "true");
   link.append(name, bars, icon, spoken);
+  live.append(link);
+  // Text written into a live region can be read out again, so an unchanged value is left alone.
+  const write = (el, value) => {
+    if (el.textContent !== value) el.textContent = value;
+  };
   let text = "";
   const set = (nextText, nextName, iconName, level, supplies) => {
     text = nextText;
-    name.textContent = nextName;
-    spoken.textContent = text;
+    write(name, nextName);
+    write(spoken, text);
     link.setAttribute("aria-label", text);
     link.setAttribute("title", text);
     icon.dataset.icon = iconName;
@@ -125,6 +134,7 @@ export function printerWidget(document, showTip = () => {}) {
   set("Checking printer…", "", "refresh", "unknown", []);
   onLongPress(link, () => showTip(link, text));
   return {
+    live,
     link,
     update(status) {
       const p = status.printers?.[0];
@@ -136,15 +146,31 @@ export function printerWidget(document, showTip = () => {}) {
 }
 
 let tipText = "";
+let tipTimer;
 
 /** A tooltip with the widget's text, for touch screens that have no hover; it fades after a few seconds. */
-function showTip(target, text) {
+export function showTip(target, text) {
   tipText = text;
   const tip = bootstrap.Tooltip.getOrCreateInstance(target, {
     trigger: "manual", container: "body", placement: "bottom", fallbackPlacements: ["bottom"], title: () => tipText,
   });
   tip.show();
-  setTimeout(() => tip.hide(), TIP_MS);
+  clearTimeout(tipTimer); // a show while the last one is still up keeps its full time
+  tipTimer = setTimeout(() => tip.hide(), TIP_MS);
+}
+
+/** Reads /api/status ({printer: null, error, …} when that fails), tells the page's listeners (the Home page's printer cards) and returns it. */
+export async function loadStatus(document, latestSeen) {
+  let status;
+  try {
+    const res = await apiFetch("/api/status");
+    if (!res.ok) throw new Error(await errorMessage(res));
+    status = await res.json();
+  } catch (e) {
+    status = { printer: null, error: e.message, unread: null, latest_event: latestSeen };
+  }
+  document.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail: status }));
+  return status;
 }
 
 function eventHref(e) {
@@ -314,10 +340,7 @@ function buildBar(host) {
   // Status and the bell stay visible when the links collapse on phones.
   const tools = el("div", "shell-tools d-flex align-items-center gap-2 order-1 order-md-last");
   const widget = printerWidget(document, showTip);
-  // The live region wraps the link, so the widget stays a link for assistive technology.
-  const live = el("span", "printer-live d-inline-flex min-w-0 order-2 order-md-last");
-  live.setAttribute("role", "status");
-  live.append(widget.link);
+  const live = widget.live;
   const cog = el("a", "btn btn-outline-secondary");
   cog.href = "/settings.html";
   cog.dataset.icon = "settings";
@@ -433,16 +456,8 @@ function init(host) {
   }
 
   async function poll() {
-    let status;
-    try {
-      const res = await apiFetch("/api/status");
-      if (!res.ok) throw new Error(await errorMessage(res));
-      status = await res.json();
-    } catch (e) {
-      status = { printer: null, error: e.message, unread: null, latest_event: latestSeen };
-    }
+    const status = await loadStatus(document, latestSeen);
     bar.widget.update(status);
-    document.dispatchEvent(new CustomEvent("printhub-status", { detail: status })); // the Home page's printer cards listen
     if (status.unread != null) setCount(status.unread);
     if (latestSeen !== null && status.latest_event > latestSeen) await toastNew(latestSeen);
     if (status.latest_event != null) latestSeen = Math.max(latestSeen ?? 0, status.latest_event);

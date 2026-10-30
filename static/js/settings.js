@@ -3,7 +3,7 @@ import { apiFetch, errorMessage } from "./api.js";
 import { KIND_LABELS, when } from "./shell.js";
 
 const POLL_MS = 2000;
-const GIVE_UP_MS = 120000; // printhub-apply.service's TimeoutStartSec: one apply may wait up to 30 s for the printer
+const GIVE_UP_MS = 250000; // a little over printhub-apply.service's TimeoutStartSec (240 s: one apply may wait up to 180 s for the printer)
 const STORAGE = ["retention_days", "min_free_gb"];
 const EMAIL = ["smtp_host", "smtp_port", "smtp_security", "smtp_user", "mail_from"];
 const NUMBERS = new Set(["retention_days", "min_free_gb", "smtp_port"]); // the server rejects "587" for 587
@@ -134,11 +134,11 @@ async function follow(system, saved = false) {
   const mine = ++watch;
   let announce = saved;
   let lastError = "";
-  // shortcut: the 120 s is counted in poll intervals, so slow requests stretch it, upgrade: use Date.now() if that matters.
+  // shortcut: the 250 s is counted in poll intervals, so slow requests stretch it, upgrade: use Date.now() if that matters.
   for (let waited = 0; show(system, announce); waited += POLL_MS) {
     if (waited >= GIVE_UP_MS) {
       const why = lastError && ` The last status check failed: ${lastError}`;
-      return note("system", `Not applied after 2 minutes: is printhub-apply.path running? Re-run the installer.${why}`, "warning");
+      return note("system", `Not applied after 4 minutes: is printhub-apply.path running? Re-run the installer.${why}`, "warning");
     }
     announce = true; // a request that was waiting ends in a result worth stating
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));

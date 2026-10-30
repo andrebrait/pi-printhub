@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { printerCard, watchPrinters } from "./home.js";
+import { STATUS_EVENT } from "./shell.js";
 import { fakeDocument, textOf, find, findAll } from "./fake-dom.test-util.js";
 
 // What /api/status reports for the HP OfficeJet Pro 6970.
@@ -55,13 +56,15 @@ test("each supply is a labelled meter with its percentage, and only the low one 
   assert.match(textOf(rows[1]), /20%/);
 });
 
-test("an unknown level shows a question mark and a meter without a value", () => {
+test("an unknown level shows a question mark and a labelled image, not a meter that reads as a value", () => {
   const c = card({ ...REAL, supplies: [{ name: "Waste toner box", type: "waste-toner", color: "", level: null, low: false }] });
-  const [m] = meters(c);
-  assert.equal(m.attributes["aria-valuenow"], undefined);
-  assert.equal(m.attributes["aria-valuetext"], "unknown");
-  assert.equal(m.style.props["--level"], undefined);
-  assert.equal(m.style.props["--color"], undefined);
+  assert.equal(meters(c).length, 0);
+  const bar = find(c, (e) => e.attributes["aria-label"] === "Waste toner box: unknown");
+  assert.equal(bar.attributes.role, "img");
+  for (const name of ["aria-valuenow", "aria-valuetext", "aria-valuemin", "aria-valuemax"]) assert.equal(bar.attributes[name], undefined, name);
+  assert.match(bar.className, /\bunknown\b/);
+  assert.equal(bar.style.props["--level"], undefined);
+  assert.equal(bar.style.props["--color"], undefined);
   assert.match(textOf(c), /Waste toner box[\s\S]*\?/);
 });
 
@@ -93,6 +96,8 @@ test("the printer page opens in a new tab only for an http(s) address", () => {
   assert.equal(page.attributes.rel, "noopener");
   const bad = links(card({ ...REAL, web_page: "javascript:alert(1)" }));
   assert.equal(bad.some((a) => textOf(a) === "Open printer page"), false);
+  const upper = links(card({ ...REAL, web_page: "HTTPS://printer.lan/" })).find((a) => textOf(a) === "Open printer page");
+  assert.equal(upper.attributes.href, "HTTPS://printer.lan/");
 });
 
 test("the list follows the shell's status event and rebuilds only when the printers changed", () => {
@@ -101,7 +106,7 @@ test("the list follows the shell's status event and rebuilds only when the print
   document.addEventListener = (type, fn) => (handlers[type] = fn);
   const list = document.createElement("div");
   watchPrinters(document, list);
-  const emit = (status) => handlers["printhub-status"]({ detail: status });
+  const emit = (status) => handlers[STATUS_EVENT]({ detail: status });
 
   emit({ printers: [REAL] });
   assert.equal(list.children.length, 1);

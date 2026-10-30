@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Home page's printer cards: state, problems and supplies of each printer /api/status lists.
-import { LEVEL_CLASS, node, printerState, unavailableText } from "./shell.js";
+import { LEVEL_CLASS, STATUS_EVENT, node, printerState, unavailableText } from "./shell.js";
 
 /** One printer as a card in a grid column. */
 export function printerCard(document, p) {
@@ -29,13 +29,17 @@ export function printerCard(document, p) {
     const line = make("div", "d-flex justify-content-between align-items-baseline gap-2 small");
     line.append(make("span", "", s.name), value);
     const meter = make("div", `supply-meter${s.level == null ? " unknown" : ""}`);
-    meter.setAttribute("role", "meter");
-    meter.setAttribute("aria-label", s.name);
-    meter.setAttribute("aria-valuemin", "0");
-    meter.setAttribute("aria-valuemax", "100");
-    meter.setAttribute("aria-valuetext", s.level == null ? "unknown" : `${s.level}%`);
-    if (s.level != null) {
+    if (s.level == null) {
+      // A meter needs a value; an unknown level is a picture that says so.
+      meter.setAttribute("role", "img");
+      meter.setAttribute("aria-label", `${s.name}: unknown`);
+    } else {
+      meter.setAttribute("role", "meter");
+      meter.setAttribute("aria-label", s.name);
+      meter.setAttribute("aria-valuemin", "0");
+      meter.setAttribute("aria-valuemax", "100");
       meter.setAttribute("aria-valuenow", String(s.level));
+      meter.setAttribute("aria-valuetext", `${s.level}%`);
       meter.style.setProperty("--level", `${s.level}%`);
     }
     if (s.color) meter.style.setProperty("--color", s.color);
@@ -48,7 +52,7 @@ export function printerCard(document, p) {
   const jobs = make("a", "btn btn-outline-secondary btn-sm", "Jobs");
   jobs.href = "/jobs.html";
   actions.append(jobs);
-  if (/^https?:\/\//.test(p.web_page)) {
+  if (/^https?:\/\//i.test(p.web_page)) {
     const page = make("a", "btn btn-outline-secondary btn-sm", "Open printer page");
     page.href = p.web_page;
     page.setAttribute("target", "_blank");
@@ -64,10 +68,10 @@ export function printerCard(document, p) {
   return column;
 }
 
-/** Keeps `list` in step with the shell's `printhub-status` events; it is rebuilt only when the printers changed, so focus stays put. */
+/** Keeps `list` in step with the shell's status events; it is rebuilt only when the printers changed, so focus stays put. */
 export function watchPrinters(document, list) {
   let shown;
-  document.addEventListener("printhub-status", ({ detail: status }) => {
+  document.addEventListener(STATUS_EVENT, ({ detail: status }) => {
     const key = JSON.stringify(status.printers ?? unavailableText(status));
     if (key === shown) return;
     shown = key;

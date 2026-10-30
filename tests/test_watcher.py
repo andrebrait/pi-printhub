@@ -335,6 +335,22 @@ def test_usb_answering_follows_the_silence_threshold(usb):
     assert watcher.usb_answering is True
 
 
+def test_a_queue_that_stops_being_ipp_usb_forgets_the_usb_state(usb, cups_, log):
+    watcher, answers, clock, _ = usb
+    watcher.tick()
+    answers["up"] = False
+    advance(watcher, clock, 135)
+    assert watcher.usb_answering is False
+    assert len(events(log)) == 1
+    cups_.device_uri = "hp:/usb/OfficeJet?serial=1"  # the queue now uses HPLIP
+    advance(watcher, clock, 3)
+    assert watcher.usb_answering is None
+    cups_.device_uri = USB
+    advance(watcher, clock, 105)  # silent again; the earlier silence does not count towards the 120 s
+    assert watcher.usb_answering is True
+    assert len(events(log)) == 1
+
+
 def test_usb_answering_is_unknown_for_a_queue_that_is_not_probed(cups_, log):
     clock = Clock()
     watcher = Watcher(lambda: cups_, "OfficeJet", log, usb_probe=lambda uri: False, clock=clock)

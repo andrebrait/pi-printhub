@@ -456,16 +456,16 @@ test("a page loaded during a pending sharing change shows the requested switches
   assert.equal(document.getElementById("expose_usb").checked, true);
 });
 
-test("a sharing change that never applies says so after 120 seconds", async () => {
+test("a sharing change that never applies says so after 250 seconds", async () => {
   const { document, main, tick } = settingsEnv([applied, pending]);
   await main();
   const msg = document.getElementById("system-msg");
   const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
-  for (let i = 0; i < 59; i++) await tick();
-  assert.match(msg.textContent, /Applying/, "still waiting at the poll before 120 seconds");
+  for (let i = 0; i < 124; i++) await tick();
+  assert.match(msg.textContent, /Applying/, "still waiting at the poll before 250 seconds");
   await tick();
   await saved;
-  assert.match(msg.textContent, /Not applied after 2 minutes: is printhub-apply\.path running\? Re-run the installer\./);
+  assert.match(msg.textContent, /Not applied after 4 minutes: is printhub-apply\.path running\? Re-run the installer\./);
 });
 
 test("a failed apply restores the switches to what is in force", async () => {
@@ -500,11 +500,11 @@ test("status polls that keep failing end with the not-applied message and the la
   await main();
   const msg = document.getElementById("system-msg");
   const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
-  for (let i = 0; i < 59; i++) await tick();
-  assert.match(msg.textContent, /Applying/, "still waiting before 2 minutes");
+  for (let i = 0; i < 124; i++) await tick();
+  assert.match(msg.textContent, /Applying/, "still waiting before 4 minutes");
   await tick();
   await saved;
-  assert.match(msg.textContent, /Not applied after 2 minutes: is printhub-apply\.path running\?/);
+  assert.match(msg.textContent, /Not applied after 4 minutes: is printhub-apply\.path running\?/);
   assert.match(msg.textContent, /Rejected/);
 });
 

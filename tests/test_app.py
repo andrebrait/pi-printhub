@@ -733,6 +733,13 @@ def test_status_lists_the_printer_with_its_supplies(client, fake_cups):
     assert s["printer"]["state"] == "processing"  # the older key stays
 
 
+def test_status_survives_unusable_marker_levels(client, fake_cups):
+    fake_cups.extra.update({"marker-high-levels": ["x"] * 4, "marker-low-levels": [None] * 4})
+    r = client.get("/api/status")
+    assert r.status_code == 200
+    assert [s["level"] for s in r.json()["printers"][0]["supplies"]] == [60, 20, 60, 30]
+
+
 def test_status_printer_is_unreachable_without_supplies_when_cups_is_down(make_client):
     def down():
         raise RuntimeError("cupsd is not running")

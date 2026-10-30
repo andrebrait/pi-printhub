@@ -146,9 +146,42 @@ def test_unknown_levels_are_none_and_not_low(level):
     assert (only.level, only.low) == (None, False)
 
 
-def test_arrays_of_unequal_length_use_the_shortest():
+def test_names_and_levels_set_the_count():
     assert [s.name for s in printing.supplies({**HP_INK, "marker-levels": [60, 20]})] == ["Magenta ink", "Cyan ink"]
-    assert len(printing.supplies({**HP_INK, "marker-colors": ["#FF00FF"]})) == 1
+    assert [s.name for s in printing.supplies({**HP_INK, "marker-names": ["magenta ink", "cyan ink"]})] == ["Magenta ink", "Cyan ink"]
+
+
+def test_shorter_colour_type_and_level_arrays_are_padded_with_their_defaults():
+    # One entry for four supplies (as some firmwares report): all four are still supplies.
+    short = {**HP_INK, "marker-colors": ["#FF00FF"], "marker-types": ["ink-cartridge"], "marker-low-levels": [1], "marker-high-levels": [100]}
+    assert printing.supplies(short) == [
+        Supply("Magenta ink", "ink-cartridge", "#FF00FF", 60, False),
+        Supply("Cyan ink", "", "", 20, False),  # no low level here: low only below 15 %
+        Supply("Yellow ink", "", "", 60, False),
+        Supply("Black ink", "", "", 30, False),
+    ]
+    assert printing.supplies({**short, "marker-levels": [60, 10, 60, 30]})[1].low
+
+
+def test_a_missing_high_level_means_100():
+    attrs = {k: v for k, v in HP_INK.items() if k != "marker-high-levels"}
+    assert [s.level for s in printing.supplies(attrs)] == [60, 20, 60, 30]
+
+
+@pytest.mark.parametrize("bad", ["x", None, 2.5])
+def test_unusable_low_and_high_levels_fall_back_to_the_defaults(bad):
+    attrs = {**HP_INK, "marker-names": ["a"], "marker-levels": [10], "marker-low-levels": [bad], "marker-high-levels": [bad]}
+    (only,) = printing.supplies(attrs)
+    assert (only.level, only.low) == (10, True)
+
+
+def test_a_waste_container_is_never_low():
+    # Its level is how full it is, so the low-level test means nothing.
+    attrs = {
+        "marker-names": ["waste toner box", "waste ink"], "marker-types": ["waste-toner", "waste-ink"],
+        "marker-levels": [5, 8], "marker-low-levels": [10, 0], "marker-high-levels": [100, 100],
+    }
+    assert [(s.level, s.low) for s in printing.supplies(attrs)] == [(5, False), (8, False)]
 
 
 def test_level_is_a_percentage_of_the_high_level():
@@ -198,8 +231,9 @@ def test_printer_info_carries_name_model_and_supplies():
     info = printing.printer_info(conn, "OfficeJet")
     assert (info.name, info.model, info.web_page) == ("HP OfficeJet Pro 6970", "HP OfficeJet Pro 6970", "")
     assert info.supplies == printing.supplies(HP_INK)
-    for key in (*HP_INK, "printer-info", "printer-make-and-model", "printer-more-info", "printer-supply-info-uri"):
+    for key in (*HP_INK, "printer-info", "printer-make-and-model", "printer-supply-info-uri"):
         assert key in conn.requested
+    assert "printer-more-info" not in conn.requested
 
 
 def test_printer_info_falls_back_to_the_queue_name():
@@ -212,16 +246,30 @@ def test_printer_info_falls_back_to_the_queue_name():
 @pytest.mark.parametrize(
     ("extra", "page"),
     [
-        ({"printer-supply-info-uri": "http://192.168.1.50/", "printer-more-info": "http://cups.lan/printers/x"}, "http://192.168.1.50/"),
-        ({"printer-more-info": "https://printer.lan/"}, "https://printer.lan/"),
-        ({"printer-more-info": "http://localhost/printers/OfficeJet"}, ""),  # CUPS's own page on the Pi: dead link elsewhere
-        ({"printer-more-info": "http://127.0.0.1:631/"}, ""),
-        ({"printer-more-info": "javascript:alert(1)"}, ""),
-        ({"printer-more-info": "ftp://printer.lan/"}, ""),
-        ({"printer-more-info": "http:///nohost"}, ""),
+        ({"printer-supply-info-uri": "http://192.168.1.50/"}, "http://192.168.1.50/"),
+        ({"printer-supply-info-uri": "https://printer.lan/status"}, "https://printer.lan/status"),
+        ({"printer-supply-info-uri": "HTTPS://Printer.lan/"}, "HTTPS://Printer.lan/"),
+        # printer-more-info is CUPS's own page on the Pi (or nothing): never offered, with or without a supply page
+        ({"printer-more-info": "http://printer.lan/"}, ""),
+        ({"printer-more-info": "http://localhost/printers/OfficeJet"}, ""),
+        ({"printer-supply-info-uri": "http://localhost/", "printer-more-info": "http://printer.lan/"}, ""),
+        # this machine's own addresses would not open from another device
+        ({"printer-supply-info-uri": "http://localhost/"}, ""),
+        ({"printer-supply-info-uri": "http://localhost./"}, ""),
+        ({"printer-supply-info-uri": "http://LOCALHOST:631/"}, ""),
+        ({"printer-supply-info-uri": "http://127.0.0.1:631/"}, ""),
+        ({"printer-supply-info-uri": "http://127.1.2.3/"}, ""),
+        ({"printer-supply-info-uri": "http://[::1]/"}, ""),
+        # credentials in a link are shown in the page and sent to the printer
+        ({"printer-supply-info-uri": "http://user:pw@printer.lan/"}, ""),
+        ({"printer-supply-info-uri": "http://user@printer.lan/"}, ""),
+        ({"printer-supply-info-uri": "javascript:alert(1)"}, ""),
+        ({"printer-supply-info-uri": "ftp://printer.lan/"}, ""),
+        ({"printer-supply-info-uri": "http:///nohost"}, ""),
+        ({"printer-supply-info-uri": ""}, ""),
     ],
 )
-def test_web_page_is_a_reachable_http_url_or_empty(extra, page):
+def test_web_page_is_the_supply_page_if_it_is_a_reachable_http_url(extra, page):
     assert printing.printer_info(AttrsConn(**extra), "OfficeJet").web_page == page
 
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import test from "node:test";
 import assert from "node:assert/strict";
-import { eventItem, mountFooter, printerState, printerWidget, silence, themeButton, when } from "./shell.js";
+import { STATUS_EVENT, eventItem, loadStatus, mountFooter, printerState, printerWidget, showTip, silence, themeButton, when } from "./shell.js";
 import { fakeDocument, textOf, find, findAll } from "./fake-dom.test-util.js";
 
 // What /api/status reports for the HP OfficeJet Pro 6970.
@@ -150,6 +150,84 @@ test("a short tap, a mouse press or a cancelled touch show nothing and the link 
   let prevented = 0;
   click({ preventDefault: () => prevented++ });
   assert.equal(prevented, 0);
+});
+
+test("the widget sits in a status live region and only its text, not the bars or the icon, is read out", () => {
+  const w = widget(REAL);
+  assert.equal(w.live.attributes.role, "status");
+  assert.equal(w.live.children.length, 1);
+  assert.equal(w.live.children[0], w.link);
+  const hiddenFromReaders = (cls) => find(w.link, (e) => e.className.split(" ").includes(cls)).attributes["aria-hidden"];
+  assert.equal(hiddenFromReaders("supply-bars"), "true");
+  assert.equal(hiddenFromReaders("printer-icon"), "true");
+});
+
+/** Counts the writes to an element's text: rewriting the text of a live region can be announced again. */
+function countTextWrites(el) {
+  const own = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "textContent");
+  const writes = { count: 0 };
+  Object.defineProperty(el, "textContent", {
+    get() {
+      return own.get.call(this);
+    },
+    set(value) {
+      writes.count++;
+      own.set.call(this, value);
+    },
+  });
+  return writes;
+}
+
+test("an update that changes nothing leaves the text in the live region alone", () => {
+  const w = widget(REAL);
+  const spoken = find(w.link, (e) => e.className.includes("visually-hidden"));
+  const name = find(w.link, (e) => e.className.includes("printer-name"));
+  const spokenWrites = countTextWrites(spoken);
+  const nameWrites = countTextWrites(name);
+  w.update({ printers: [{ ...REAL }], unread: 3 }); // the same printer again, as every poll reports it
+  assert.deepEqual([spokenWrites.count, nameWrites.count], [0, 0]);
+  w.update({ printers: [{ ...REAL, state: "processing" }] });
+  assert.equal(textOf(spoken), REAL_TEXT.replace("Ready", "Printing"));
+  assert.deepEqual([spokenWrites.count, nameWrites.count], [1, 0]);
+});
+
+test("a status poll tells the page's listeners what /api/status said, and what a failure looked like", async () => {
+  const sent = [];
+  const document = { dispatchEvent: (event) => sent.push(event) };
+  const status = { printer: null, error: null, unread: 2, latest_event: 5, printers: [REAL] };
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => status });
+  try {
+    assert.deepEqual(await loadStatus(document, 4), status);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].type, STATUS_EVENT);
+    assert.deepEqual(sent[0].detail, status);
+    globalThis.fetch = async () => ({ ok: false, status: 503, statusText: "Service Unavailable", json: async () => ({ error: "CUPS unavailable" }) });
+    const failed = await loadStatus(document, 4);
+    assert.deepEqual(failed, { printer: null, error: "CUPS unavailable", unread: null, latest_event: 4 });
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[1].detail, failed);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("a tooltip shown again is hidden four seconds after the last show, not by the first one's timer", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const tip = { show: () => calls.push("show"), hide: () => calls.push("hide") };
+  globalThis.bootstrap = { Tooltip: { getOrCreateInstance: () => tip } };
+  try {
+    showTip({}, "first");
+    t.mock.timers.tick(3000);
+    showTip({}, "second");
+    t.mock.timers.tick(1500); // past the first show's four seconds, inside the second's
+    assert.deepEqual(calls, ["show", "show"]);
+    t.mock.timers.tick(2500);
+    assert.deepEqual(calls, ["show", "show", "hide"]);
+  } finally {
+    delete globalThis.bootstrap;
+  }
 });
 
 test("notification items render text literally and say their level in words", () => {
