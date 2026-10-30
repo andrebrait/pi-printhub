@@ -64,17 +64,29 @@ def test_save_rejects_out_of_range_and_writes_nothing(cfg, key, value):
 
 @pytest.mark.parametrize(
     "value",
-    ["apikey", "AKIAXXXXXXXX", "no-at-sign", "a@example.com, b@example.com", "Hub <a@example.com>", "", "a@example.com\nBcc: x@example.com", 5],
+    [
+        "apikey", "AKIAXXXXXXXX", "no-at-sign", "a@example.com, b@example.com", "Hub <apikey>", "Hub",
+        "", "a@example.com\nBcc: x@example.com", "Hub <a@example.com>\r\nBcc: x@example.com", 5,
+    ],
 )
-def test_the_page_only_saves_a_single_plain_address_as_sender(cfg, value):
-    with pytest.raises(ConfigError, match="mail_from must be a single email address"):
+def test_the_page_only_saves_one_address_as_sender(cfg, value):
+    with pytest.raises(ConfigError, match="mail_from must be one email address"):
         save(cfg, {"mail_from": value})
 
     assert not (cfg.data_dir / "settings.json").exists()
 
 
-def test_the_page_saves_an_address_as_sender(cfg):
-    assert save(cfg, {"mail_from": "hub@example.com"}).mail_from == "hub@example.com"
+@pytest.mark.parametrize(
+    "value, saved",
+    [
+        ("hub@example.com", "hub@example.com"),
+        ("Printer <print@example.com>", "Printer <print@example.com>"),
+        ('"Print, Hub" <print@example.com>', '"Print, Hub" <print@example.com>'),
+        ("  Printer   <print@example.com> ", "Printer <print@example.com>"),
+    ],
+)
+def test_the_page_saves_an_address_with_or_without_a_name_as_sender(cfg, value, saved):
+    assert save(cfg, {"mail_from": value}).mail_from == saved
 
 
 def test_saved_file_is_private(cfg):

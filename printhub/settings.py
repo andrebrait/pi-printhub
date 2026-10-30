@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from email.errors import MessageError
 from email.headerregistry import Address
+from email.utils import getaddresses
 from pathlib import Path
 
 from printhub.config import Config, ConfigError, validate
@@ -62,15 +63,25 @@ def save(cfg: Config, changes: dict) -> Config:
         raise ConfigError(f"not a settings key: {', '.join(sorted(unknown))}")
     if "mail_from" in changes:
         # Stricter than validate: the page is where a person types the sender, and config.toml may hold an SMTP login.
-        try:  # the way mail.py checks a recipient; it also refuses CR and LF
-            Address(addr_spec=changes["mail_from"])
-        except (TypeError, ValueError, MessageError):
-            raise ConfigError(f"mail_from must be a single email address, got {changes['mail_from']!r}") from None
+        changes = {**changes, "mail_from": _sender(changes["mail_from"])}
     new = replace(cfg, **changes)
     validate(new)
     path = cfg.data_dir / "settings.json"
     write_json(path, {**(_read_json_object(path) or {}), **changes})
     return new
+
+
+def _sender(value) -> str:
+    """One address, optionally with a display name ("Printer <print@example.com>"), in canonical form."""
+    try:
+        if not isinstance(value, str) or "\r" in value or "\n" in value:
+            raise ValueError
+        (name, addr), *rest = getaddresses([value])
+        if rest:
+            raise ValueError
+        return str(Address(display_name=name, addr_spec=addr))  # Address refuses a malformed address
+    except (TypeError, ValueError, MessageError):
+        raise ConfigError(f"mail_from must be one email address, optionally with a name, got {value!r}") from None
 
 
 def _read_json_object(path: Path) -> dict | None:

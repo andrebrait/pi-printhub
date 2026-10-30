@@ -67,8 +67,9 @@
             <input id="smtp_password" class="form-control" type="password" autocomplete="new-password">
           </div>
           <div class="mb-3">
-            <label for="mail_from" class="form-label">Sender address</label>
-            <input id="mail_from" class="form-control" type="email" autocomplete="off">
+            <label for="mail_from" class="form-label">From</label>
+            <input id="mail_from" class="form-control" type="text" autocomplete="off" aria-describedby="mail_from-help" placeholder="Printer &lt;print@example.com&gt;">
+            <div id="mail_from-help" class="form-text">An address, or a name and an address, as recipients see it.</div>
           </div>
           <button id="email-save" class="btn btn-primary" type="submit">Save</button>
           </form>
