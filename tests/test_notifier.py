@@ -284,6 +284,22 @@ def test_silence_added_after_a_failure_stops_its_retry(rig):
     assert rig.sent.empty()
 
 
+def test_unchecking_a_kind_after_a_failure_stops_its_retry(rig):
+    rig.channels(channel("a"))
+    n = rig.notifier()
+    rig.events.append("error", "scan", "boom")
+    n.tick()
+    assert rig.got() == [("a", "boom")]
+    until(lambda: n.results.get("a") == "Failed: down 1")
+    rig.channels(channel("a", kinds=["printer"]))
+    rig.clock.advance(60)
+    rig.events.append("info", "printer", "Paper jam")
+    n.tick()
+    # The retry would be queued before this event, so it would arrive first.
+    assert rig.got() == [("a", "Paper jam")]
+    assert rig.sent.empty()
+
+
 def test_disabled_channel_stops_without_its_backlog(rig):
     rig.channels(channel("doomed"))
     rig.block["doomed"] = threading.Event()

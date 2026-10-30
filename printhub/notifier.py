@@ -75,8 +75,10 @@ class Notifier:
             due = [r for r in self._retries if r[0] <= now]
             self._retries = [r for r in self._retries if r[0] > now]
         for _, channel_id, event, failures in due:
-            if channel_id in active and not notifications.silenced(state["silences"], event, self.now()):
-                self._enqueue(active[channel_id], event, failures)
+            # The channel as saved now: a kind unchecked or a silence added since the failure stops the retry.
+            current = active.get(channel_id)
+            if current and event.kind in current["kinds"] and not notifications.silenced(state["silences"], event, self.now()):
+                self._enqueue(current, event, failures)
         if self.events.latest() < self._last:
             log.warning("The event log is behind the notification cursor (%d); it was probably emptied. Starting over", self._last)
             self._last = 0
