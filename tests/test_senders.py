@@ -229,8 +229,8 @@ def test_control_characters_in_url_never_leak_the_secret(monkeypatch, cfg, junk)
     assert "SECRET" not in str(exc.value)
 
 
-@pytest.mark.parametrize("token", ["12\x01abc", "12\x7fabc", "12 abc", "12\nabc", "12é", ""])
-def test_telegram_token_must_be_printable_ascii_without_spaces(token):
+@pytest.mark.parametrize("token", ["12\x01abc", "12\x7fabc", "12 abc", "12\nabc", "12é", "12/abc", "12.abc", "12?x=1", ""])
+def test_telegram_token_must_be_letters_digits_colon_underscore_hyphen(token):
     with pytest.raises(ValueError, match="bot_token"):
         telegram(bot_token=token)
 
@@ -246,13 +246,31 @@ def test_telegram_markdown_v2_escapes_every_special_character(http_server, monke
     assert seen[0][2]["text"].split("\n")[:2] == [f"*{escaped}*", escaped]
 
 
-def test_telegram_markdown_escapes_only_underscore_star_bracket_backtick(http_server, monkeypatch, cfg):
+def test_telegram_markdown_escapes_only_underscore_star_bracket_backtick_backslash(http_server, monkeypatch, cfg):
     url, seen = http_server(ok)
     monkeypatch.setattr(senders, "TELEGRAM_API", url)
 
     send(telegram(parse_mode="Markdown"), event(title="_*[`]\\.-", detail=""), cfg)
 
-    assert seen[0][2]["text"].split("\n")[0] == "*\\_\\*\\[\\`]\\.-*"
+    assert seen[0][2]["text"].split("\n")[0] == "*\\_\\*\\[\\`]\\\\.-*"
+
+
+def test_telegram_html_escapes_only_what_the_markup_needs(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(parse_mode="HTML"), event(title="say \"hi\" it's <b>", detail=""), cfg)
+
+    assert seen[0][2]["text"].split("\n")[0] == "<b>say \"hi\" it's &lt;b&gt;</b>"
+
+
+@pytest.mark.parametrize("status", [200, 500])
+def test_a_reply_is_read_only_up_to_64_kb(http_server, status):
+    url, _ = http_server(lambda *a: (status, b"x" * 200_000, None, 0))
+
+    got, body = senders._post(url, {}, {})
+
+    assert (got, len(body)) == (status, 64 * 1024)
 
 
 def test_webhook_bad_header_value_does_not_leak(cfg):

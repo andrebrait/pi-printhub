@@ -116,10 +116,12 @@ def merge_edit(stored: dict, edit: dict) -> dict:
     secret = SECRETS[kind]
     # Fields the edit leaves out keep their stored values.
     merged = {**stored, **edit, "id": stored["id"]}
-    # A missing or blank secret keeps the stored one, but only when the type is unchanged.
-    kept = merged["type"] == kind and _blank(edit.get(secret)) and bool(stored.get(secret))
+    # A missing or blank secret keeps the stored one; with none stored there is nothing to keep (a server without a login).
+    kept = _blank(edit.get(secret)) and bool(stored.get(secret))
     if kept:
         merged[secret] = stored[secret]
+    elif _blank(merged.get(secret)):
+        merged[secret] = ""
     channel = validate_channel(merged)
     if kept:
         for field in GUARDED[kind]:
@@ -239,8 +241,8 @@ def _email(data: dict) -> dict:
 
 def _telegram(data: dict) -> dict:
     token = data.get("bot_token")
-    if not isinstance(token, str) or not re.fullmatch(r"[\x21-\x7e]+", token):
-        raise ValueError("bot_token must be a token of printable characters with no spaces")
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9:_-]+", token):
+        raise ValueError("bot_token must be letters, digits, colon, underscore or hyphen")
     chat = data.get("chat_id")
     if not isinstance(chat, str) or not re.fullmatch(r"-?[0-9]+|@[A-Za-z0-9_]{5,}", chat):
         raise ValueError("chat_id must be a number or @channelname")
@@ -266,7 +268,12 @@ def _webhook(data: dict) -> dict:
         parts = None
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("url must be an http or https address with a host")
+    if "@" in parts.netloc:
+        raise ValueError("url must not contain a username or password; put credentials in the header, not the URL")
     name = data.get("header_name")
     if not isinstance(name, str) or (name and not re.fullmatch(r"[A-Za-z0-9-]+", name)):
         raise ValueError("header_name must be empty or a header name such as Authorization")
-    return {"url": url, "header_name": name, "header_value": _text(data, "header_value", 0, 1000)}
+    value = _text(data, "header_value", 0, 1000)
+    if re.search(r"[\x00-\x1f\x7f]", value):
+        raise ValueError("header_value must not contain control characters")
+    return {"url": url, "header_name": name, "header_value": value}

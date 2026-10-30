@@ -16,7 +16,8 @@ from printhub.events import Event
 
 TELEGRAM_API = "https://api.telegram.org"
 TIMEOUT = 10
-_ESCAPE = {"Markdown": r"_*\[`", "MarkdownV2": r"_*\[\]()~`>#+\-=|{}.!\\"}
+MAX_REPLY = 64 * 1024  # Telegram's JSON answer is tiny; the rest of any reply is ignored.
+_ESCAPE = {"Markdown": r"_*\[`\\", "MarkdownV2": r"_*\[\]()~`>#+\-=|{}.!\\"}
 
 
 class SendError(Exception):
@@ -71,7 +72,7 @@ def _email(channel: dict, event: Event, cfg: Config) -> None:
 
 def _telegram_text(mode: str | None, event: Event, link: str) -> str:
     if mode == "HTML":
-        esc, bold = html.escape, "<b>{}</b>".format
+        esc, bold = (lambda s: html.escape(s, quote=False)), "<b>{}</b>".format
     elif mode in _ESCAPE:
         esc, bold = (lambda s: re.sub(f"([{_ESCAPE[mode]}])", r"\\\1", s)), "*{}*".format
     else:
@@ -118,10 +119,10 @@ def _post(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, bytes]
     )
     try:
         with _opener.open(request, timeout=TIMEOUT) as response:
-            return response.status, response.read()
+            return response.status, response.read(MAX_REPLY)
     except urllib.error.HTTPError as e:
         try:
-            return e.code, e.read()
+            return e.code, e.read(MAX_REPLY)
         except (OSError, http.client.HTTPException):
             return e.code, b""
     except (ValueError, http.client.InvalidURL):

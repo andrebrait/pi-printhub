@@ -887,7 +887,9 @@ def create_app(
         try:
             senders.send(channel, senders.test_event(channel["name"]), app.state.cfg)
         except senders.SendError as e:
+            app.state.notifier.record(channel_id, str(e))
             raise ApiError(502, str(e)) from None
+        app.state.notifier.record(channel_id)
 
     @api.get("/notify/silences")
     def get_silences():

@@ -98,7 +98,16 @@ def test_valid_channels_of_each_type_round_trip(tmp_path):
         ("smtp_port", own_email(smtp_port=0)),
         ("chat_id", telegram(chat_id="abc")),
         ("url", webhook(url="ftp://x")),
+        ("url", webhook(url="https://user:pw@ntfy.example.com/hub")),
+        ("url", webhook(url="https://token@ntfy.example.com/hub")),
         ("header_name", webhook(header_name="a b")),
+        ("header_value", webhook(header_value="tok\r\nX-Evil: 1")),
+        ("header_value", webhook(header_value="tok\n")),
+        ("header_value", webhook(header_value="tok\x00")),
+        ("header_value", webhook(header_value="tok\x7f")),
+        ("bot_token", telegram(bot_token="123:abc def")),
+        ("bot_token", telegram(bot_token="123:abc/../x")),
+        ("bot_token", telegram(bot_token="123:abc.def")),
         ("kinds", email(kinds=["bogus"])),
         ("name", email(name="x" * 61)),
     ],
@@ -157,6 +166,32 @@ def test_edit_may_send_only_the_changed_fields(make, secret):
 def test_partial_edit_cannot_repoint_a_stored_secret(make, change):
     with pytest.raises(ValueError, match="again to change"):
         merge_edit(validate_channel(make()), change)
+
+
+def test_a_url_with_credentials_says_where_they_belong():
+    with pytest.raises(ValueError, match="put credentials in the header, not the URL"):
+        validate_channel(webhook(url="https://user:pw@ntfy.example.com/hub"))
+
+
+def test_telegram_token_charset_and_header_values_with_spaces_are_accepted():
+    assert validate_channel(telegram(bot_token="123456:AA-bb_CC9"))["bot_token"] == "123456:AA-bb_CC9"
+    assert validate_channel(webhook(header_value="Bearer a b c"))["header_value"] == "Bearer a b c"
+
+
+@pytest.mark.parametrize("password", [{}, {"smtp_password": ""}, {"smtp_password": None}])
+def test_an_email_channel_can_move_to_its_own_server_without_a_login(password):
+    stored = validate_channel(email())
+    edit = {k: v for k, v in own_email().items() if k != "smtp_password"} | password
+
+    merged = merge_edit(stored, edit)
+
+    assert merged["smtp_password"] == "" and merged["smtp_host"] == "mail.example.com"
+
+
+def test_changing_the_type_leaves_nothing_of_the_old_secret():
+    merged = merge_edit(validate_channel(telegram()), webhook())
+
+    assert merged["type"] == "webhook" and "bot_token" not in merged
 
 
 def test_telegram_parse_mode_defaults_to_html_but_may_be_plain():

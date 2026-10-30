@@ -115,6 +115,9 @@ class Notifier:
         while (item := q.get()) is not None:
             self._deliver(*item)
 
+    def record(self, channel_id: str, error: str | None = None) -> None:
+        self.results[channel_id] = f"Failed: {error}" if error is not None else "Delivered " + self.now().astimezone().strftime("%H:%M")
+
     def _deliver(self, channel: dict, event: Event, failures: int) -> None:
         try:
             self.send(channel, event, self.current())
@@ -125,9 +128,9 @@ class Notifier:
             if failures < len(RETRY_AFTER):
                 with self._lock:
                     self._retries.append((self.clock() + RETRY_AFTER[failures], channel["id"], event, failures + 1))
-            self.results[channel["id"]] = f"Failed: {reason}"
+            self.record(channel["id"], reason)
         else:
-            self.results[channel["id"]] = "Delivered " + self.now().astimezone().strftime("%H:%M")
+            self.record(channel["id"])
 
     def run(self, stop: threading.Event, interval: float = 2.0) -> None:
         try:

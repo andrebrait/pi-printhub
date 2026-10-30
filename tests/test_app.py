@@ -1112,6 +1112,31 @@ def test_channel_test_sends_synchronously_and_reports_failures(client, monkeypat
     assert (r.status_code, r.json()) == (502, {"error": "chat not found"})
 
 
+def test_channel_test_records_its_outcome_for_the_channel_row(client, monkeypatch):
+    created = add_channel(client)
+    monkeypatch.setattr("printhub.app.senders.send", lambda channel, event, cfg: None)
+    assert client.post(f"/api/notify/channels/{created['id']}/test").status_code == 204
+    assert client.get("/api/notify/channels").json()[0]["result"].startswith("Delivered ")
+
+    def refuse(channel, event, cfg):
+        raise SendError("chat not found")
+
+    monkeypatch.setattr("printhub.app.senders.send", refuse)
+    assert client.post(f"/api/notify/channels/{created['id']}/test").status_code == 502
+    assert client.get("/api/notify/channels").json()[0]["result"] == "Failed: chat not found"
+
+
+def test_changing_a_channels_type_leaves_no_secret_of_the_old_type(client, cfg):
+    created = add_channel(client)
+
+    r = client.put(f"/api/notify/channels/{created['id']}", json=HOOK)
+
+    assert (r.status_code, r.json()["type"]) == (200, "webhook")
+    stored = (cfg.data_dir / "notifications.json").read_text()
+    assert "bot_token" not in stored and TOKEN not in stored
+
+
+
 def test_channel_changes_become_events_without_secrets(client):
     created = add_channel(client)
     client.put(f"/api/notify/channels/{created['id']}", json={**CHAT, "name": "Phone 2", "bot_token": ""})
