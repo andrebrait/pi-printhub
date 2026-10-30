@@ -67,6 +67,12 @@ App values are saved to `/var/lib/printhub/settings.json`, override `/etc/printh
 
 The two network switches are applied as root by `printhub-apply.path` and `printhub-apply.service`, which run `/usr/local/lib/printhub/apply-settings.sh`. The page shows Applying, then Applied or the error. With none saved, the printer is shared and exposed, as before.
 
+With **Expose the printer directly** off, ipp-usb still accepts the connection on port 60000 and closes it immediately for anything but the Pi itself, and it stops advertising the `(USB)` entries. Each change restarts ipp-usb; if the printer stops answering over USB, power-cycle it.
+
+Changing the SMTP server, port, user or security needs the SMTP password typed again; the other fields keep the stored one when it is left blank.
+
+A forgotten web password: as root, delete `password_hash` and `session_secret` from `/var/lib/printhub/settings.json` and restart printhub. The password the installer wrote to `/etc/printhub/config.toml` applies again.
+
 
 ## Document safety
 
