@@ -381,3 +381,30 @@ def test_a_request_that_changes_during_the_apply_is_applied_too(tmp_path):
         status = json.loads((box.data / "system-status.json").read_text())
         assert (status["state"], status["share"], status["request_at"]) == ("applied", True, applied_at)
         assert len([c for c in box.calls() if c.startswith("lpadmin")]) == passes
+
+
+def test_a_request_written_during_a_failing_pass_is_applied_too(tmp_path):
+    # The first lpadmin fails after the app wrote a newer request; the path unit does not fire while the script runs.
+    box = Box(tmp_path)
+    count = tmp_path / "count"
+    (box.bin / "lpadmin").write_text(
+        f'#!/bin/sh\necho "lpadmin $*" >>{box.log}\n'
+        f"n=$(($(cat {count} 2>/dev/null || echo 0) + 1)); echo $n >{count}\n"
+        f'[ $n -eq 1 ] && {{ printf \'{{"share": true, "expose_usb": true, "at": "t1"}}\' >{box.data}/system-request.json; exit 1; }}\n'
+        "exit 0\n"
+    )
+    box.request()
+    r = box.run("run_apply")
+    assert r.returncode == 0, r.stderr
+    status = json.loads((box.data / "system-status.json").read_text())
+    assert (status["state"], status["share"], status["request_at"], status["error"]) == ("applied", True, "t1", None)
+    assert len([c for c in box.calls() if c.startswith("lpadmin")]) == 2
+
+
+def test_a_failing_pass_with_no_newer_request_is_the_final_status(tmp_path):
+    box = Box(tmp_path)
+    box.request()
+    assert box.run("run_apply", FAIL="lpadmin").returncode != 0
+    status = json.loads((box.data / "system-status.json").read_text())
+    assert (status["state"], status["request_at"]) == ("failed", REQUEST["at"])
+    assert len([c for c in box.calls() if c.startswith("lpadmin")]) == 1

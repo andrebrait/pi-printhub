@@ -216,7 +216,7 @@ apply_request() {
 # run_apply: up to three passes, because the web app can write a newer request while one is being applied and the
 # path unit may not start the service again for it. The status carries the last request applied.
 run_apply() {
-    local errf error share expose at
+    local errf error share expose at failed
     REQ_AT=""
     if ! errf=$(mktemp); then
         _load_request 2>/dev/null || true
@@ -226,19 +226,26 @@ run_apply() {
     # shellcheck disable=SC2064 # errf is local and gone when the trap fires, so expand it now
     trap "rm -f '$errf'" EXIT
     for _ in 1 2 3; do
-        REQ_AT=""
-        if ! apply_request 2>"$errf"; then
-            error=$(<"$errf")
-            rm -f "$errf"
-            # A failure after _load_request knows the request's timestamp; one before it has none to copy.
-            echo "${error:0:500}" >&2 # the installer's own run shows why
-            write_status failed "$(current_share)" "$(current_expose)" "${error:0:500}" "$REQ_AT"
-            return 1
-        fi
+        REQ_AT="" failed=0
+        apply_request 2>"$errf" || failed=1
+        # A failure before _load_request knows no timestamp to copy.
         share=$REQ_SHARE expose=$REQ_EXPOSE at=$REQ_AT
-        # An unreadable request counts as changed: the next pass fails on it and says why.
-        if _load_request 2>/dev/null && [[ $REQ_AT == "$at" ]]; then break; fi
+        # The app may have written a newer request meanwhile, and the path unit does not fire while this runs: that one
+        # is applied too, after a failed pass as well as after a good one. An unreadable request counts as changed
+        # after a good pass (the next one fails on it and says why), and as final after a failed one.
+        if _load_request 2>/dev/null; then
+            [[ $REQ_AT == "$at" ]] && break
+        else
+            ((failed)) && break
+        fi
     done
+    if ((failed)); then
+        error=$(<"$errf")
+        rm -f "$errf"
+        echo "${error:0:500}" >&2 # the installer's own run shows why
+        write_status failed "$(current_share)" "$(current_expose)" "${error:0:500}" "$at"
+        return 1
+    fi
     write_status applied "$share" "$expose" "" "$at"
     rm -f "$errf"
 }
