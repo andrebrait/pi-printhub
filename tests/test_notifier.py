@@ -319,3 +319,18 @@ def test_a_standing_load_error_is_logged_once(rig, caplog):
         path.write_text("{not json")
         n.tick()
         assert logged() == 3
+
+
+def test_close_still_sends_the_backlog(rig):
+    # The cursor already passed these events, so a shutdown must not lose them.
+    rig.channels(channel("busy"))
+    rig.block["busy"] = threading.Event()
+    n = rig.notifier()
+    for title in ("one", "two", "three"):
+        rig.events.append("info", "job", title)
+    n.tick()
+    assert rig.entered.wait(1)
+    n.close()
+    rig.block["busy"].set()
+    until(lambda: "notify-busy" not in {t.name for t in threading.enumerate()})
+    assert [title for _, title, _ in rig.calls] == ["one", "two", "three"]

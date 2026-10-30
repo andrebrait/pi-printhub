@@ -64,7 +64,7 @@ class Notifier:
         state = self._load()
         active = {c["id"]: c for c in state["channels"] if c["enabled"]}
         for gone in self._queues.keys() - active.keys():
-            self._stop(self._queues.pop(gone))
+            self._discard(self._queues.pop(gone))
         with self._lock:
             now = self.clock()
             due = [r for r in self._retries if r[0] <= now]
@@ -97,7 +97,7 @@ class Notifier:
         return state
 
     @staticmethod
-    def _stop(q: queue.Queue) -> None:
+    def _discard(q: queue.Queue) -> None:
         # A disabled or deleted channel must not get its backlog, however long its worker sits in a send.
         try:
             while True:
@@ -141,6 +141,7 @@ class Notifier:
             self.close()
 
     def close(self) -> None:
+        # Events queued so far already moved the cursor, so the workers finish them before they exit.
         for q in self._queues.values():
-            self._stop(q)
+            q.put(None)
         self._queues.clear()
