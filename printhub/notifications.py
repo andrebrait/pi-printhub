@@ -25,7 +25,8 @@ EMOJI = {"job": "🧾", "scan": "📄", "printer": "🔔", "conversion": "🔄",
 _STYLE = {
     "MarkdownV2": ("🖨\ufe0f _*Print Hub*_", "*{title}*"),
     "HTML": ("🖨\ufe0f <i><b>Print Hub</b></i>", "<b>{title}</b>"),
-    "Markdown": ("🖨\ufe0f *Print Hub*", "*{title}*"),
+    # Legacy Markdown cannot escape inside an entity, so a title with * or _ would break a bold title.
+    "Markdown": ("🖨\ufe0f *Print Hub*", "{title}"),
     None: ("🖨\ufe0f Print Hub", "{title}"),
 }
 SILENCE_HOURS = (1, 8, 24, 168)

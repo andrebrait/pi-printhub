@@ -208,7 +208,7 @@ def test_a_new_telegram_channel_without_a_parse_mode_is_markdown_v2_with_its_def
 
 EMOJI = {"job": "🧾", "scan": "📄", "printer": "🔔", "conversion": "🔄", "settings": "⚙\ufe0f"}
 WRAP = {"MarkdownV2": ("*{}*", "🖨\ufe0f _*Print Hub*_"), "HTML": ("<b>{}</b>", "🖨\ufe0f <i><b>Print Hub</b></i>"),
-        "Markdown": ("*{}*", "🖨\ufe0f *Print Hub*"), None: ("{}", "🖨\ufe0f Print Hub")}
+        "Markdown": ("{}", "🖨\ufe0f *Print Hub*"), None: ("{}", "🖨\ufe0f Print Hub")}
 
 
 @pytest.mark.parametrize("mode", WRAP)

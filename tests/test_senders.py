@@ -495,3 +495,12 @@ def test_text_email_stays_a_single_plain_part(tls_mail, cfg):
 
     assert msg.get_content_type() == "text/plain"
     assert msg.get_content().strip() == "<b>Job failed</b>"
+
+
+def test_legacy_markdown_default_keeps_the_title_outside_bold():
+    # Legacy Markdown allows no escaping inside an entity, so a title with * must not sit in *...*.
+    from printhub.notifications import default_header, default_templates
+    channel = {"parse_mode": "Markdown", "header": default_header("Markdown"), "templates": default_templates("Markdown")}
+    event = Event(id=1, at="2026-10-30T12:00:00+00:00", level="info", kind="scan", title="Scan finished: a*b", detail="")
+    text = senders._telegram_text(channel, event, "https://print.example.com/")
+    assert text.splitlines()[1] == "📄 Scan finished: a\\*b"
