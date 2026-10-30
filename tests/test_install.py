@@ -110,10 +110,18 @@ def test_nftables_is_installed_and_the_firewall_unit_installed_and_enabled():
 
 def test_apply_settings_is_installed_executable_for_root(tmp_path):
     target = tmp_path / "apply-settings.sh"
-    r = sh('install() { printf "%s\\n" "$@"; }; install_apply_settings', APPLY_SETTINGS=str(target))
-    args = r.stdout.split()
+    r = sh('install() { echo "$*"; }; install_apply_settings', APPLY_SETTINGS=str(target))
+    args = r.stdout.splitlines()[0].split()
     assert args[args.index("-m") + 1] == "0755" and args[args.index("-o") + 1] == "root"
     assert args[-2].endswith("/deploy/apply-settings.sh") and args[-1] == str(target)
+
+
+def test_the_root_state_dir_is_created_private_before_settings_are_applied():
+    r = sh('install() { echo "$*"; }; install_apply_settings')
+    args = next(line for line in r.stdout.splitlines() if line.endswith("/var/lib/printhub-system")).split()
+    assert args[0] == "-d"
+    assert args[args.index("-m") + 1] == "0700"
+    assert args[args.index("-o") + 1] == "root" and args[args.index("-g") + 1] == "root"
 
 
 def test_airsane_ignores_hpaio_network_devices(tmp_path):

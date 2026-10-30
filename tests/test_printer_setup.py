@@ -102,7 +102,7 @@ def apply(
     r = sh(
         f"{base}{stubs}; apply_printer",
         STATE_DIR=str(statedir), USB_SYSFS=str(sysfs), SANE_DIR=str(tmp_path / "sane"),
-        DROPIN_DIR=str(tmp_path / "dropin"), AVAHI_DIR=str(tmp_path / "avahi"),
+        DROPIN_DIR=str(tmp_path / "dropin"), AVAHI_DIR=str(tmp_path / "avahi"), OFF_DIR=str(tmp_path / "off"),
         **{"DATA_DIR": str(tmp_path / "nodata"), "OWNER": OWNER, **(env or {})},
     )
     return r, log.read_text() if log.exists() else ""
@@ -237,6 +237,17 @@ def test_apply_writes_a_readable_airprint_advert(tmp_path):
     service = tmp_path / "avahi" / "printhub-airprint.service"
     assert "ty=HP OfficeJet Pro 6970" in service.read_text()
     assert service.stat().st_mode & 0o777 == 0o644
+
+
+def test_apply_printer_drops_a_stale_copy(tmp_path):
+    off = tmp_path / "off"
+    off.mkdir()
+    for kind in ("airprint", "generic"):
+        (off / f"printhub-{kind}.service").write_text("stale")
+    r, _ = apply(tmp_path, IPPTOOL_OK)
+    assert r.returncode == 0, r.stderr
+    assert list(off.iterdir()) == []
+    assert "ty=HP OfficeJet Pro 6970" in (tmp_path / "avahi" / "printhub-airprint.service").read_text()
 
 
 def test_queue_is_read_before_cupsctl_restarts_cups(tmp_path):

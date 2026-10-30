@@ -17,7 +17,7 @@ class Box:
     """A fake system: data dir, ipp-usb.conf, avahi dir and CUPS/systemd commands that log their argv."""
 
     def __init__(self, tmp: Path):
-        self.data, self.avahi, self.bin = tmp / "data", tmp / "avahi", tmp / "bin"
+        self.data, self.avahi, self.bin, self.off = tmp / "data", tmp / "avahi", tmp / "bin", tmp / "off"
         self.conf, self.log, self.uri = tmp / "ipp-usb.conf", tmp / "log", tmp / "uri"
         for d in (self.data, self.avahi, self.bin):
             d.mkdir()
@@ -55,7 +55,7 @@ class Box:
             ["bash", "-c", f'source "{SCRIPT}"; {expr}'],
             env={
                 "PATH": f"{self.bin}:/usr/bin:/bin", "DATA_DIR": str(self.data), "IPP_USB_CONF": str(self.conf),
-                "AVAHI_DIR": str(self.avahi), "OWNER": OWNER, **env,
+                "AVAHI_DIR": str(self.avahi), "OFF_DIR": str(self.off), "OWNER": OWNER, **env,
             },
             capture_output=True,
             text=True,
@@ -67,7 +67,7 @@ class Box:
             ["bash", str(SCRIPT), *args],
             env={
                 "PATH": f"{self.bin}:/usr/bin:/bin", "DATA_DIR": str(self.data), "IPP_USB_CONF": str(self.conf),
-                "AVAHI_DIR": str(self.avahi), "OWNER": OWNER,
+                "AVAHI_DIR": str(self.avahi), "OFF_DIR": str(self.off), "OWNER": OWNER,
             },
             capture_output=True,
             text=True,
@@ -261,6 +261,25 @@ def test_unsharing_unannounces_and_stops_airsane(tmp_path):
     assert list(box.avahi.iterdir()) == []
 
 
+def test_unsharing_keeps_a_root_copy(tmp_path):
+    box = Box(tmp_path)
+    box.off.mkdir()
+    for kind in ("airprint", "generic"):
+        (box.avahi / f"printhub-{kind}.service").write_text(kind)
+        (box.off / f"printhub-{kind}.service").write_text("old")  # a stale copy is overwritten
+    assert box.run("apply_share false").returncode == 0
+    assert list(box.avahi.iterdir()) == []
+    assert (box.off / "printhub-airprint.service").read_text() == "airprint"
+    assert (box.off / "printhub-generic.service").read_text() == "generic"
+    assert box.off.stat().st_mode & 0o777 == 0o700
+
+
+def test_unsharing_without_announcements_is_fine(tmp_path):
+    box = Box(tmp_path)
+    assert box.run("apply_share false").returncode == 0
+    assert list(box.off.iterdir()) == []
+
+
 def test_sharing_a_network_queue_just_flips_cups(tmp_path):
     box = Box(tmp_path)
     assert box.run("apply_share true").returncode == 0
@@ -269,6 +288,35 @@ def test_sharing_a_network_queue_just_flips_cups(tmp_path):
         "cupsctl --share-printers",
         "systemctl enable --now airsaned",
     ]
+
+
+def test_resharing_restores_the_copy_without_the_printer(tmp_path):
+    box = Box(tmp_path)
+    box.off.mkdir()
+    box.uri.write_text("device for OfficeJet: ipp://localhost:60000/ipp/print\n")
+    for kind in ("airprint", "generic"):
+        (box.off / f"printhub-{kind}.service").write_text(kind)
+    assert box.run("apply_share true").returncode == 0
+    for kind in ("airprint", "generic"):
+        restored = box.avahi / f"printhub-{kind}.service"
+        assert restored.read_text() == kind and restored.stat().st_mode & 0o777 == 0o644
+    assert list(box.off.iterdir()) == []
+    assert box.calls() == [
+        "lpadmin -p OfficeJet -o printer-is-shared=true",
+        "cupsctl --share-printers",
+        "systemctl enable --now airsaned",
+    ]
+
+
+def test_resharing_without_a_copy_reruns_printer_setup(tmp_path):
+    box = Box(tmp_path)
+    box.off.mkdir()
+    (box.off / "printhub-airprint.service").write_text("half")  # one copy is not enough
+    box.uri.write_text("device for OfficeJet: ipp://localhost:60000/ipp/print\n")
+    assert box.run("apply_share true").returncode == 0
+    assert "systemctl start printhub-printer.service" in box.calls()
+    assert not any(c.startswith("lpadmin") for c in box.calls())
+    assert list(box.avahi.iterdir()) == []
 
 
 def test_resharing_an_ipp_usb_queue_reruns_printer_setup(tmp_path):

@@ -136,14 +136,28 @@ airsane() {
 
 # apply_share true|false: the CUPS queue's sharing, its Bonjour announcements and AirSane (the network scanner).
 # Without a queue (no printer set up yet) there is nothing for CUPS to share, and lpadmin would create one.
+# Unsharing moves printer-setup.sh's announcements to $OFF_DIR and sharing moves them back, so sharing can be turned
+# on while the printer is off (printer-setup.sh, the only writer of them, needs the printer to answer). $OFF_DIR is
+# root's, outside the app user's data dir: nothing is ever read or moved from a directory that user can write.
 apply_share() {
-    local queue=${PRINTER_QUEUE:-OfficeJet} avahi=${AVAHI_DIR:-/etc/avahi/services} uri="" have_queue=0
+    local queue=${PRINTER_QUEUE:-OfficeJet} avahi=${AVAHI_DIR:-/etc/avahi/services} uri="" have_queue=0 kind rerun=0
+    local off=${OFF_DIR:-/var/lib/printhub-system/avahi-off}
     lpstat -p "$queue" >/dev/null 2>&1 && have_queue=1
     if [[ $1 == true ]]; then
         if ((have_queue)); then
             uri=$(lpstat -v "$queue" 2>/dev/null) || uri=""
             if [[ $uri == *//localhost:6????/* && ! -e $avahi/printhub-airprint.service ]]; then
-                # Shared again after being unshared: printer-setup.sh writes the announcements, which cupsctl cannot.
+                if [[ -e $off/printhub-airprint.service && -e $off/printhub-generic.service ]]; then
+                    for kind in airprint generic; do
+                        must mv -f "$off/printhub-$kind.service" "$avahi/" || return 1
+                        must chmod 0644 "$avahi/printhub-$kind.service" || return 1 # avahi-daemon reads it
+                    done
+                else
+                    rerun=1
+                fi
+            fi
+            if ((rerun)); then
+                # Shared again after being unshared, with no copy: printer-setup.sh writes the announcements, which cupsctl cannot.
                 must systemctl start printhub-printer.service || return 1
             else
                 must lpadmin -p "$queue" -o printer-is-shared=true || return 1
@@ -156,7 +170,12 @@ apply_share() {
             must lpadmin -p "$queue" -o printer-is-shared=false || return 1
             must cupsctl --no-share-printers || return 1
         fi
-        rm -f "$avahi/printhub-airprint.service" "$avahi/printhub-generic.service" || return 1
+        must install -d -m 0700 "$off" || return 1
+        for kind in airprint generic; do
+            if [[ -e $avahi/printhub-$kind.service ]]; then
+                must mv -f "$avahi/printhub-$kind.service" "$off/" || return 1
+            fi
+        done
         airsane disable
     fi
 }
