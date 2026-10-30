@@ -1111,3 +1111,30 @@ def test_silences_create_list_expire_and_delete(client, cfg):
 def test_bad_silences_are_refused(client):
     for body in ({"match": "kind", "value": "job", "hours": 2}, {"match": "kind", "value": "bogus", "hours": 1}, {"match": "x", "value": "a", "hours": 1}):
         assert client.post("/api/notify/silences", json=body).status_code == 400, body
+
+
+BAD_FILES = {
+    "truncated": '{"channels": [{"id": "c1"',
+    "one invalid channel": json.dumps({"channels": [{**CHAT, "id": "c1"}, {**CHAT, "id": "c2", "chat_id": "abc"}], "silences": []}),
+}
+WRITES = [
+    ("post", "/api/notify/channels", HOOK),
+    ("put", "/api/notify/channels/c1", {"name": "Renamed"}),
+    ("delete", "/api/notify/channels/c1", None),
+    ("post", "/api/notify/silences", {"match": "kind", "value": "job", "hours": 1}),
+    ("delete", "/api/notify/silences/s1", None),
+]
+
+
+@pytest.mark.parametrize("content", BAD_FILES.values(), ids=BAD_FILES)
+@pytest.mark.parametrize("method, url, body", WRITES)
+def test_a_notifications_file_that_did_not_load_cleanly_is_never_overwritten(client, cfg, method, url, body, content):
+    path = cfg.data_dir / "notifications.json"
+    path.write_text(content)
+
+    r = client.request(method.upper(), url, json=body)
+
+    assert r.status_code == 409
+    error = r.json()["error"]
+    assert error.startswith("notifications.json has a problem (") and error.endswith(f"fix or remove it before saving: {path}")
+    assert path.read_text() == content

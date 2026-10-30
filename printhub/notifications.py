@@ -32,27 +32,50 @@ PARSE_MODES = (None, "HTML", "Markdown", "MarkdownV2")
 BAD_TO = "to must be a list of 1 to 10 single email addresses"
 
 
-def load(data_dir: Path, report: Callable[[str], None] = log.error) -> dict:
-    path = Path(data_dir) / FILE
+class StoreError(Exception):
+    pass
+
+
+def _read(path: Path) -> tuple[dict, list[str]]:
     empty = {"channels": [], "silences": []}
     try:
         raw = json.loads(path.read_text())
     except FileNotFoundError:
-        return empty
+        return empty, []
     except (OSError, ValueError) as e:
-        report(f"Notifications file {path} cannot be read; no channels or silences are active: {e}")
-        return empty
+        return empty, [f"cannot be read: {e}"]
     if not isinstance(raw, dict) or not isinstance(raw.get("channels", []), list) or not isinstance(raw.get("silences", []), list):
-        report(f"Notifications file {path} has the wrong shape; no channels or silences are active")
-        return empty
-    channels = []
+        return empty, ["has the wrong shape"]
+    problems, channels, silences = [], [], []
     for item in raw.get("channels", []):
         try:
             channels.append(validate_channel(item))
         except ValueError as e:
-            report(f"Skipping notification channel {item.get('id') if isinstance(item, dict) else None!r}: {e}")
-    silences = [s for s in raw.get("silences", []) if isinstance(s, dict)]
-    return {"channels": channels, "silences": silences}
+            problems.append(f"channel {item.get('id') if isinstance(item, dict) else None!r} skipped: {e}")
+    for item in raw.get("silences", []):
+        if isinstance(item, dict) and _until(item) is not None:
+            silences.append(item)
+        else:
+            problems.append(f"silence {item.get('id') if isinstance(item, dict) else None!r} skipped: not a silence with an end time")
+    return {"channels": channels, "silences": silences}, problems
+
+
+def load(data_dir: Path, report: Callable[[str], None] = log.error) -> dict:
+    """What the notifier uses: whatever is valid, with each problem reported."""
+    path = Path(data_dir) / FILE
+    state, problems = _read(path)
+    for problem in problems:
+        report(f"Notifications file {path}: {problem}")
+    return state
+
+
+def load_strict(data_dir: Path) -> dict:
+    """What every write starts from: saving a state that dropped something would destroy it."""
+    path = Path(data_dir) / FILE
+    state, problems = _read(path)
+    if problems:
+        raise StoreError(f"{FILE} has a problem ({'; '.join(problems)}); fix or remove it before saving: {path}")
+    return state
 
 
 def save(data_dir: Path, state: dict) -> None:

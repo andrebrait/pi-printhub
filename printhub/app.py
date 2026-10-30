@@ -833,6 +833,12 @@ def create_app(
                 return i
         raise ApiError(404, "No such channel")
 
+    def load_for_write() -> dict:
+        try:
+            return notification_store.load_strict(cfg.data_dir)
+        except notification_store.StoreError as e:
+            raise ApiError(409, str(e)) from None
+
     @api.get("/notify/channels")
     def get_channels():
         return [
@@ -843,7 +849,7 @@ def create_app(
     @api.post("/notify/channels", status_code=201)
     def add_channel(body: dict):
         with notify_lock:
-            state = notification_store.load(cfg.data_dir)
+            state = load_for_write()
             try:
                 channel = notification_store.validate_channel({**body, "id": secrets.token_urlsafe(8)})
             except ValueError as e:
@@ -856,7 +862,7 @@ def create_app(
     @api.put("/notify/channels/{channel_id}")
     def change_channel(channel_id: str, body: dict):
         with notify_lock:
-            state = notification_store.load(cfg.data_dir)
+            state = load_for_write()
             i = channel_at(state, channel_id)
             try:
                 channel = state["channels"][i] = notification_store.merge_edit(state["channels"][i], body)
@@ -869,7 +875,7 @@ def create_app(
     @api.delete("/notify/channels/{channel_id}", status_code=204)
     def remove_channel(channel_id: str):
         with notify_lock:
-            state = notification_store.load(cfg.data_dir)
+            state = load_for_write()
             channel = state["channels"].pop(channel_at(state, channel_id))
             notification_store.save(cfg.data_dir, state)
             notify("info", "settings", f"Notification channel {channel['name']} removed")
@@ -891,7 +897,7 @@ def create_app(
     def add_silence(body: dict):
         now = datetime.now(timezone.utc)
         with notify_lock:
-            state = notification_store.load(cfg.data_dir)
+            state = load_for_write()
             try:
                 silence = notification_store.new_silence(body.get("match"), body.get("value"), body.get("hours"), now)
             except ValueError as e:
@@ -903,7 +909,7 @@ def create_app(
     @api.delete("/notify/silences/{silence_id}", status_code=204)
     def remove_silence(silence_id: str):
         with notify_lock:
-            state = notification_store.load(cfg.data_dir)
+            state = load_for_write()
             live = notification_store.active_silences(state["silences"], datetime.now(timezone.utc))
             state["silences"] = [s for s in live if s.get("id") != silence_id]
             if len(state["silences"]) == len(live):

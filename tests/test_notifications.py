@@ -9,8 +9,10 @@ import pytest
 from printhub.events import Event
 from printhub.notifications import (
     KINDS,
+    StoreError,
     active_silences,
     load,
+    load_strict,
     merge_edit,
     new_silence,
     public,
@@ -206,3 +208,29 @@ def test_unparsable_file_and_bad_channel_are_skipped_with_errors(tmp_path, caplo
     assert [c["id"] for c in loaded["channels"]] == ["c1"]
     assert "c2" in caplog.text
     assert "123:abc" not in caplog.text
+
+
+def test_strict_load_returns_a_clean_or_missing_file(tmp_path):
+    assert load_strict(tmp_path) == {"channels": [], "silences": []}
+    state = {"channels": [validate_channel(telegram())], "silences": [new_silence("kind", "job", 1, datetime.now(UTC))]}
+    save(tmp_path, state)
+    assert load_strict(tmp_path) == state
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not json",
+        "[]",
+        json.dumps({"channels": [telegram(), telegram(id="c2", chat_id="abc")], "silences": []}),
+        json.dumps({"channels": [], "silences": ["junk"]}),
+        json.dumps({"channels": [], "silences": [{"id": "s", "match": "kind", "value": "job"}]}),
+    ],
+)
+def test_strict_load_refuses_a_file_that_did_not_load_cleanly(tmp_path, content):
+    path = tmp_path / "notifications.json"
+    path.write_text(content)
+    with pytest.raises(StoreError, match=r"^notifications\.json has a problem \(.+\); fix or remove it before saving: ") as e:
+        load_strict(tmp_path)
+    assert str(e.value).endswith(str(path))
+    assert "123:abc" not in str(e.value)
