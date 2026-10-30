@@ -27,7 +27,7 @@ from printhub.mail import MailError
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
 from printhub.senders import SendError
-from printhub.settings import apply_overlay
+from printhub.settings import apply_overlay, write_json
 
 ORIGIN = "https://print.example.com"
 PLENTY = 10**15
@@ -804,6 +804,39 @@ def test_the_running_app_records_events(cfg, fake_cups, monkeypatch):
     assert not any(t.name == "watcher" and t.is_alive() for t in threading.enumerate())
     notifier.join(1)
     assert not notifier.is_alive()
+
+
+def test_the_running_app_reports_a_failed_sharing_change(cfg, fake_cups, monkeypatch):
+    # The watcher is only given the data directory by create_app; without it sharing failures go unseen.
+    monkeypatch.setattr("printhub.app.WATCH_INTERVAL", 0.02)
+    app = create_app(cfg, cups_conn_factory=lambda: fake_cups, scanner=Scanner(), free_bytes=lambda: PLENTY, watch=True)
+    with TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}) as c:
+        assert c.post("/api/login", json={"password": "secret"}).status_code == 204
+        time.sleep(0.1)  # baseline
+        write_json(cfg.data_dir / "system-status.json", {"state": "failed", "request_at": "t1", "error": "Job for printhub-printer.service failed"})
+        for _ in range(150):
+            if c.get("/api/status").json()["unread"]:
+                break
+            time.sleep(0.02)
+        events = c.get("/api/notifications").json()["events"]
+        assert [(e["title"], e["detail"]) for e in events] == [("Sharing settings not applied", "The printer is not answering")]
+
+
+def test_the_notifier_sends_with_the_settings_in_force_when_it_sends(client):
+    # A saved settings change replaces app.state.cfg; the notifier must read it live, not keep the start-up copy.
+    add_channel(client, {"type": "email", "name": "Owner", "enabled": True, "kinds": ["settings"], "to": ["owner@example.com"], "use_scan_server": True})
+    notifier, hosts = client.app.state.notifier, []
+    notifier.send = lambda channel, event, cfg: hosts.append(cfg.smtp_host)
+    assert client.put("/api/settings", json={"smtp_host": "smtp.example.com", "smtp_password": "new-secret"}).status_code == 200
+
+    notifier.tick()
+    for _ in range(100):
+        if hosts:
+            break
+        time.sleep(0.02)
+    notifier.close()
+
+    assert hosts and set(hosts) == {"smtp.example.com"}
 
 
 def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(client, store, fake_cups):
