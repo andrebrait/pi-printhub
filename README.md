@@ -1,6 +1,12 @@
-# pi-printhub
+<div align="center">
 
-A Raspberry Pi print and scan server for a USB HP OfficeJet Pro 6970.
+<img src="static/icons/logo.svg" alt="pi-printhub logo" width="128">
+
+<h1>pi-printhub</h1>
+
+<p>A Raspberry Pi print and scan server for a USB HP OfficeJet Pro 6970.</p>
+
+</div>
 
 It appears to every client on the LAN as a standard network printer and scanner. It also serves a web app at a hostname you choose, such as `https://print.example.com` (app listens on `127.0.0.1:8000`) that prints uploaded files and runs a scan, edit, export and email workflow.
 
