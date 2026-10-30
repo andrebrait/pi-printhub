@@ -70,7 +70,7 @@ def test_missing_session_cookie_is_invalid(cfg):
 def test_require_session_rejects_missing_cookie_and_accepts_valid_one(cfg):
     app = FastAPI()
 
-    @app.get("/private", dependencies=[Depends(require_session(cfg))])
+    @app.get("/private", dependencies=[Depends(require_session(lambda: cfg))])
     def private():
         return {"ok": True}
 

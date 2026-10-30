@@ -21,8 +21,10 @@ from printhub.app import MAX_UPLOAD, create_app
 from printhub.auth import COOKIE, issue_session
 from printhub.documents import Crop, DocStore, Page, PrintRecord
 from printhub.events import EventLog
+from printhub.mail import MailError
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
+from printhub.settings import apply_overlay
 
 ORIGIN = "https://print.example.com"
 PLENTY = 10**15
@@ -808,3 +810,86 @@ def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(cli
     assert (auto["orientation-requested"], "pdfAutoRotate" in auto) == ("3", False)
     assert (portrait["orientation-requested"], portrait["pdfAutoRotate"]) == ("3", "false")
     assert (landscape["orientation-requested"], landscape["pdfAutoRotate"]) == ("4", "false")
+
+
+# Settings
+
+
+def latest_event_title(client):
+    return client.get("/api/notifications").json()["events"][0]["title"]
+
+
+def test_settings_get_never_returns_secrets(client):
+    body = client.get("/api/settings").json()
+
+    assert body["smtp_password_set"] is True
+    assert not {"smtp_password", "password_hash", "session_secret"} & body.keys()
+
+
+def test_saving_retention_applies_without_restart_and_logs_an_event(client):
+    r = client.put("/api/settings", json={"retention_days": 14})
+
+    assert r.status_code == 200
+    assert client.get("/api/settings").json()["retention_days"] == 14
+    assert "14" in latest_event_title(client)
+
+
+def test_blank_smtp_password_keeps_the_stored_one(client, cfg):
+    r = client.put("/api/settings", json={"smtp_host": "smtp.example.com", "smtp_password": ""})
+
+    assert r.status_code == 200
+    saved = apply_overlay(cfg)
+    assert (saved.smtp_host, saved.smtp_password) == ("smtp.example.com", "smtp-secret")
+
+
+def test_settings_rejects_bad_values(client):
+    before = client.get("/api/settings").json()
+
+    assert client.put("/api/settings", json={"smtp_port": 70000}).status_code == 400
+    assert client.put("/api/settings", json={"smtp_host": 5}).status_code == 400
+    assert client.put("/api/settings", json={"password_hash": "x"}).status_code == 400
+    assert client.get("/api/settings").json() == before
+
+
+def test_password_change_logs_out_other_sessions(cfg, fake_cups, space):
+    app = create_app(cfg, cups_conn_factory=lambda: fake_cups, scanner=Scanner(), free_bytes=lambda: space["free"]())
+
+    def session():
+        c = TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}, follow_redirects=False)
+        assert c.post("/api/login", json={"password": "secret"}).status_code == 204
+        return c
+
+    a, b = session(), session()
+
+    r = a.post("/api/settings/password", json={"current": "secret", "new": "a-new-password"})
+
+    assert r.status_code == 204
+    assert a.get("/api/settings").status_code == 200
+    assert b.get("/api/settings").status_code == 401
+    fresh = TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}, follow_redirects=False)
+    assert fresh.post("/api/login", json={"password": "secret"}).status_code == 401
+    assert fresh.post("/api/login", json={"password": "a-new-password"}).status_code == 204
+    assert "password" in latest_event_title(a).lower()
+
+
+def test_password_change_needs_the_current_password(client):
+    wrong = client.post("/api/settings/password", json={"current": "nope", "new": "a-new-password"})
+    short = client.post("/api/settings/password", json={"current": "secret", "new": "short"})
+
+    assert (wrong.status_code, short.status_code) == (403, 400)
+
+
+def test_test_email_reports_smtp_errors(client, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise MailError("refused")
+
+    monkeypatch.setattr("printhub.app.send", refuse)
+
+    r = client.post("/api/settings/test-email", json={"to": "me@example.com"})
+
+    assert r.status_code == 502
+    assert "refused" in r.json()["error"]
+
+
+def test_test_email_rejects_an_invalid_address(client):
+    assert client.post("/api/settings/test-email", json={"to": "not-an-address"}).status_code == 400

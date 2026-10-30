@@ -55,9 +55,9 @@ def set_session_cookie(response: Response, value: str) -> None:
     )
 
 
-def require_session(cfg: Config) -> Callable[[Request], None]:
+def require_session(current: Callable[[], Config]) -> Callable[[Request], None]:
     def dependency(request: Request) -> None:
-        if not session_valid(cfg, request.cookies.get(COOKIE)):
+        if not session_valid(current(), request.cookies.get(COOKIE)):
             raise HTTPException(status_code=401)
 
     return dependency
