@@ -108,17 +108,20 @@ function main() {
     else if (SMTP_SERVER.some((k) => body[k] !== loaded[k])) throw new Error("Enter the SMTP password again to change the server settings");
     return saveSettings("email", body);
   });
-  $("test-email").addEventListener("click", async () => {
-    const to = $("test-to").value;
-    $("test-email").disabled = true;
-    note("email", "");
+  $("test-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const to = $("test-to").value, button = $("test-email");
+    button.disabled = true;
+    button.textContent = "Sending…";
+    note("test", `Sending a test email to ${to}…`, "info");
     try {
       await call("/api/settings/test-email", { method: "POST", body: { to } });
-      note("email", `Test email sent to ${to}`, "success");
+      note("test", `Test email sent to ${to}`, "success");
     } catch (err) {
-      note("email", err.message);
+      note("test", err.message);
     } finally {
-      $("test-email").disabled = false;
+      button.disabled = false;
+      button.textContent = "Send test email";
     }
   });
   wire("password", async () => {

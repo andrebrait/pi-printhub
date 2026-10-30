@@ -75,11 +75,14 @@
           </form>
           <div id="email-msg" role="status"></div>
           <hr>
-          <label for="test-to" class="form-label">Send a test email with the saved values</label>
-          <div class="input-group">
-            <input id="test-to" class="form-control" type="email" autocomplete="email" placeholder="you@example.com">
-            <button id="test-email" class="btn btn-outline-secondary" type="button" data-icon="send">Send test email</button>
-          </div>
+          <form id="test-form">
+            <label for="test-to" class="form-label">Send a test email with the saved values</label>
+            <div class="input-group">
+              <input id="test-to" class="form-control" type="email" autocomplete="email" placeholder="you@example.com" required>
+              <button id="test-email" class="btn btn-outline-primary" type="submit" data-icon="send">Send test email</button>
+            </div>
+          </form>
+          <div id="test-msg" role="status"></div>
         </div>
       </div>
     </div>

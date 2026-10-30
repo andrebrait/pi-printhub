@@ -352,7 +352,7 @@ const SETTINGS = { retention_days: 30, min_free_gb: 2, smtp_host: "smtp.example"
 const reply = (body, ok = true) => ({ ok, json: async () => body });
 
 // A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
-function settingsEnv(systems) {
+function settingsEnv(systems, failing = []) {
   const document = dom();
   const calls = [];
   const timers = [];
@@ -363,6 +363,7 @@ function settingsEnv(systems) {
       return next instanceof Error ? reply(null, false) : reply(next);
     }
     if (url === "/api/settings/system") return reply(pending); // 202: the request is written, not applied
+    if (failing.includes(url)) return reply(null, false);
     return reply(SETTINGS);
   };
   const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout",
@@ -499,4 +500,24 @@ test("changing only the sender needs no SMTP password", async () => {
   await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
   assert.equal(calls.filter((c) => c.method === "PUT" && c.url === "/api/settings").length, 1);
   assert.match(document.getElementById("email-msg").textContent, /Saved/);
+});
+
+test("a test email says it is sending, then the result, next to its own button", async () => {
+  for (const [failing, result] of [[[], "Test email sent to me@example.com"], [["/api/settings/test-email"], "Rejected"]]) {
+    const { document, calls, main } = settingsEnv([applied], failing);
+    await main();
+    const button = document.getElementById("test-email"), line = document.getElementById("test-msg");
+    document.getElementById("test-to").value = "me@example.com";
+    const sending = document.getElementById("test-form").listeners.submit({ preventDefault() {} });
+    assert.equal(button.disabled, true);
+    assert.equal(button.textContent, "Sending…");
+    assert.match(line.textContent, /Sending a test email to me@example\.com/);
+    await sending;
+    assert.equal(calls.at(-1).body.to, "me@example.com");
+    assert.equal(line.textContent, result);
+    assert.equal(line.attributes.role, failing.length ? "alert" : "status");
+    assert.equal(document.getElementById("email-msg").textContent, "", "the Save line stays for saves");
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, "Send test email");
+  }
 });
