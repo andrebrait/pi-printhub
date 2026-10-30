@@ -28,7 +28,10 @@ def http_server():
     servers = []
 
     def start(respond):
-        """respond(path, headers, body) -> (status, body bytes, extra headers or None, delay seconds)."""
+        """respond(path, headers, body) -> (status, body bytes, extra headers or None, delay seconds).
+
+        The delay comes before the reply, unless extra sets Content-Length (a lie): then the reply goes out at
+        once and the delay stalls the unfinished body."""
         seen = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -36,14 +39,16 @@ def http_server():
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 seen.append((self.path, self.headers, json.loads(body)))
                 status, answer, extra, delay = respond(self.path, self.headers, body)
-                time.sleep(delay)
+                lie = "Content-Length" in (extra or {})
+                time.sleep(0 if lie else delay)
                 try:
                     self.send_response(status)
-                    for k, v in (extra or {}).items():
+                    for k, v in ({"Content-Length": str(len(answer))} | (extra or {})).items():
                         self.send_header(k, v)
-                    self.send_header("Content-Length", str(len(answer)))
                     self.end_headers()
                     self.wfile.write(answer)
+                    self.wfile.flush()
+                    time.sleep(delay if lie else 0)
                 except OSError:
                     pass  # the client gave up (timeout test)
 
@@ -199,6 +204,55 @@ def test_webhook_timeout_is_a_send_error(http_server, monkeypatch, cfg):
 
     with pytest.raises(SendError, match="timed out"):
         send(webhook(url), event(), cfg)
+
+
+@pytest.mark.parametrize("delay", [0, 1.5])
+def test_error_with_a_short_or_stalled_body_is_still_a_send_error(http_server, monkeypatch, cfg, delay):
+    url, _ = http_server(lambda *a: (500, b"part", {"Content-Length": "100"}, delay))
+    monkeypatch.setattr(senders, "TIMEOUT", 0.5)
+
+    with pytest.raises(SendError, match="HTTP 500"):
+        send(webhook(url), event(), cfg)
+
+
+@pytest.mark.parametrize("junk", ["\x01", "\x7f", " ", "\n"])
+def test_control_characters_in_url_never_leak_the_secret(monkeypatch, cfg, junk):
+    monkeypatch.setattr(senders, "TELEGRAM_API", "http://127.0.0.1:1")
+    channel = telegram() | {"bot_token": f"12{junk}SECRETtoken"}
+
+    with pytest.raises(SendError) as exc:
+        send(channel, event(), cfg)
+    assert "SECRET" not in str(exc.value)
+
+    with pytest.raises(SendError) as exc:
+        send(webhook("http://127.0.0.1:1/") | {"url": f"http://127.0.0.1:1/SECRETpath{junk}x"}, event(), cfg)
+    assert "SECRET" not in str(exc.value)
+
+
+@pytest.mark.parametrize("token", ["12\x01abc", "12\x7fabc", "12 abc", "12\nabc", "12é", ""])
+def test_telegram_token_must_be_printable_ascii_without_spaces(token):
+    with pytest.raises(ValueError, match="bot_token"):
+        telegram(bot_token=token)
+
+
+def test_telegram_markdown_v2_escapes_every_special_character(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+    specials = "_*[]()~`>#+-=|{}.!\\"
+
+    send(telegram(parse_mode="MarkdownV2"), event(title=specials, detail=specials), cfg)
+
+    escaped = "".join("\\" + c for c in specials)
+    assert seen[0][2]["text"].split("\n")[:2] == [f"*{escaped}*", escaped]
+
+
+def test_telegram_markdown_escapes_only_underscore_star_bracket_backtick(http_server, monkeypatch, cfg):
+    url, seen = http_server(ok)
+    monkeypatch.setattr(senders, "TELEGRAM_API", url)
+
+    send(telegram(parse_mode="Markdown"), event(title="_*[`]\\.-", detail=""), cfg)
+
+    assert seen[0][2]["text"].split("\n")[0] == "*\\_\\*\\[\\`]\\.-*"
 
 
 def test_webhook_bad_header_value_does_not_leak(cfg):

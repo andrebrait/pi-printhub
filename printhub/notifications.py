@@ -211,8 +211,8 @@ def _email(data: dict) -> dict:
 
 def _telegram(data: dict) -> dict:
     token = data.get("bot_token")
-    if not isinstance(token, str) or not token or re.search(r"\s", token):
-        raise ValueError("bot_token must be a token with no spaces")
+    if not isinstance(token, str) or not re.fullmatch(r"[\x21-\x7e]+", token):
+        raise ValueError("bot_token must be a token of printable characters with no spaces")
     chat = data.get("chat_id")
     if not isinstance(chat, str) or not re.fullmatch(r"-?[0-9]+|@[A-Za-z0-9_]{5,}", chat):
         raise ValueError("chat_id must be a number or @channelname")

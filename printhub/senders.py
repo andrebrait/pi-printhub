@@ -16,7 +16,7 @@ from printhub.events import Event
 
 TELEGRAM_API = "https://api.telegram.org"
 TIMEOUT = 10
-_ESCAPE = {"Markdown": r"_*\[`\\", "MarkdownV2": r"_*\[\]()~`>#+\-=|{}.!\\"}
+_ESCAPE = {"Markdown": r"_*\[`", "MarkdownV2": r"_*\[\]()~`>#+\-=|{}.!\\"}
 
 
 class SendError(Exception):
@@ -29,7 +29,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener = urllib.request.build_opener(_NoRedirect)
+# An empty ProxyHandler keeps proxy environment variables from rerouting LAN webhooks.
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
 
 
 def test_event(channel_name: str) -> Event:
@@ -119,9 +120,12 @@ def _post(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, bytes]
         with _opener.open(request, timeout=TIMEOUT) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
-    except ValueError:
-        # http.client's message quotes the offending header value, a secret.
+        try:
+            return e.code, e.read()
+        except (OSError, http.client.HTTPException):
+            return e.code, b""
+    except (ValueError, http.client.InvalidURL):
+        # Their messages quote the header value or the URL path, which hold secrets.
         raise SendError("the request could not be built") from None
     except (OSError, http.client.HTTPException) as e:
         reason = e.reason if isinstance(e, urllib.error.URLError) else e
