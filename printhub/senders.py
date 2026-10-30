@@ -66,9 +66,17 @@ def _email(channel: dict, event: Event, cfg: Config) -> None:
             **{k: channel[k] for k in ("smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from")},
         )
     subject = " ".join(p for p in (channel["subject_prefix"].strip(), event.title) if p)
-    body = render(channel["templates"][event.kind], event, _link(event, cfg), str)
+    link = _link(event, cfg)
+    template = channel["templates"][event.kind]
+    body, html_body = render(template, event, link, str), None
+    if channel["format"] == "html":
+        # The tags are the owner's; only the placeholder values need escaping.
+        rendered = render(template, event, link, lambda s: html.escape(s, quote=False))
+        html_body = f"<!doctype html><html><body>{rendered.replace(chr(10), '<br>' + chr(10))}</body></html>"
+        # Strip tags before unescaping, or a value like "<b>" would be taken for a tag.
+        body = html.unescape(re.sub(r"<[^>]+>", "", rendered))
     try:
-        mail.send(cfg, channel["to"], subject, [], body=body)
+        mail.send(cfg, channel["to"], subject, [], body=body, html=html_body)
     except (mail.MailError, mail.InvalidRecipient) as e:
         raise SendError(str(e)) from e
 

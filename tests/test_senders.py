@@ -389,7 +389,7 @@ def tls_mail(monkeypatch, smtp_server, server_tls, client_tls):
 def test_email_body_and_subject(tls_mail, cfg):
     rec, port = tls_mail
 
-    send(email(use_scan_server=True), event(title="Job\nfailed", doc_id="d1"), replace(cfg, smtp_port=port, smtp_user=""))
+    send(email(use_scan_server=True, format="text"), event(title="Job\nfailed", doc_id="d1"), replace(cfg, smtp_port=port, smtp_user=""))
 
     (env,) = rec.envelopes
     assert env.rcpt_tos == ["a@example.com"]
@@ -414,7 +414,7 @@ def test_email_subject_prefix_is_stripped_and_optional(tls_mail, cfg, prefix, su
 
 
 def test_email_body_comes_from_the_kinds_template_unescaped(tls_mail, cfg):
-    channel = email(templates={"printer": "{title} <{detail}> at {time}\n{link}"})
+    channel = email(format="text", templates={"printer": "{title} <{detail}> at {time}\n{link}"})
 
     msg = sent_message(tls_mail, cfg, channel, event(kind="printer", title="a&b", detail="c<d"))
 
@@ -441,3 +441,22 @@ def test_email_uses_scan_server_or_its_own(tls_mail, cfg):
 def test_email_failure_is_a_send_error(cfg):
     with pytest.raises(SendError):
         send(email(use_scan_server=True), event(), replace(cfg, smtp_port=1))
+
+
+def test_html_email_is_multipart_with_escaped_values_and_line_breaks(tls_mail, cfg):
+    channel = email(templates={"job": "<b>{title}</b>\n{detail}"})
+
+    msg = sent_message(tls_mail, cfg, channel, event(title="a <b> c", detail="Paper jam"))
+
+    assert msg.get_content_type() == "multipart/alternative"
+    text, html_part = msg.get_body(("plain",)), msg.get_body(("html",))
+    assert "<b>a &lt;b&gt; c</b><br>\nPaper jam" in html_part.get_content().replace("\r\n", "\n")
+    assert html_part.get_content().lstrip().lower().startswith("<!doctype html>")
+    assert text.get_content().replace("\r\n", "\n").strip() == "a <b> c\nPaper jam"
+
+
+def test_text_email_stays_a_single_plain_part(tls_mail, cfg):
+    msg = sent_message(tls_mail, cfg, email(format="text", templates={"job": "<b>{title}</b>"}))
+
+    assert msg.get_content_type() == "text/plain"
+    assert msg.get_content().strip() == "<b>Job failed</b>"

@@ -287,6 +287,16 @@ def test_a_stored_channel_without_message_fields_loads_with_the_defaults(tmp_pat
     assert public(channel)["templates"] == DEFAULT_TEMPLATES and public(channel)[field] == default
 
 
+def test_an_email_channel_without_a_format_is_html_and_a_bad_one_is_refused(tmp_path):
+    (tmp_path / "notifications.json").write_text(json.dumps({"channels": [email()], "silences": []}))
+
+    (channel,) = load(tmp_path)["channels"]
+
+    assert channel["format"] == "html" and validate_channel(email(format="text"))["format"] == "text"
+    with pytest.raises(ValueError, match="^format"):
+        validate_channel(email(format="rtf"))
+
+
 @pytest.mark.parametrize("make, field, default", MESSAGE_FIELDS)
 def test_missing_kinds_are_filled_from_the_defaults_and_the_rest_kept(make, field, default):
     channel = validate_channel(make(templates={"job": "{title}"}, **{field: ""}))

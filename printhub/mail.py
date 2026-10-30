@@ -48,6 +48,7 @@ def send(
     *,
     body: str = "Attached.",
     ssl_context: ssl.SSLContext | None = None,
+    html: str | None = None,
 ) -> None:
     if sum(len(a.data) for a in attachments) > MAX_ATTACHMENT_BYTES:
         raise AttachmentTooLarge(f"attachments exceed {MAX_ATTACHMENT_BYTES} bytes")
@@ -65,6 +66,8 @@ def send(
     # EmailMessage rejects CR/LF in headers; a newline here would also inject headers.
     msg["Subject"] = subject.replace("\r", " ").replace("\n", " ")
     msg.set_content(body)
+    if html is not None:
+        msg.add_alternative(html, subtype="html")
     for a in attachments:
         maintype, _, subtype = a.mime.partition("/")
         msg.add_attachment(a.data, maintype=maintype, subtype=subtype, filename=a.filename)

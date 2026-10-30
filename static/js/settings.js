@@ -40,10 +40,20 @@ const CHANNEL_FIELDS = {
     { key: "header_value", label: "Header value (optional)", type: "secret", placeholder: "Bearer …" },
   ],
 };
-// The message option each type with templates has, besides the per-kind templates.
+// What each type with templates has besides them: telegram a header, email a subject prefix and a format. Each has help per syntax.
+const TELEGRAM_SYNTAX = {
+  MarkdownV2: "MarkdownV2: *bold*, _italic_, __underline__, ~strikethrough~, *_bold italic_*, [text](url). Two asterisks are not bold. Escape these with a backslash when you mean them literally: _ * [ ] ( ) ~ ` > # + - = | { } . !",
+  HTML: 'HTML: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <a href="url">text</a>.',
+  Markdown: "Markdown (legacy): *bold*, _italic_, [text](url).",
+  "": "Plain text: no formatting.",
+};
+const EMAIL_SYNTAX = {
+  html: 'Use HTML tags such as <b>bold</b>, <i>italic</i> and <a href="…">links</a>; placeholder values are escaped.',
+  text: "",
+};
 const MESSAGE_HEAD = {
-  telegram: { key: "header", label: "Header", max: 200, help: "Your text is sent as typed in the chosen parse mode; the values of the placeholders are escaped. " },
-  email: { key: "subject_prefix", label: "Subject prefix", max: 100, help: "" },
+  telegram: { key: "header", label: "Header", max: 200, syntax: TELEGRAM_SYNTAX },
+  email: { key: "subject_prefix", label: "Subject prefix", max: 100, syntax: EMAIL_SYNTAX },
 };
 let editing = null; // the saved channel the form edits; null while it adds one
 let inputs = {}; // the open form's field inputs by key
@@ -221,6 +231,17 @@ function renderAdvanced(channel) {
   label.htmlFor = input.id;
   const first = el("div", "mb-3");
   first.append(label, input);
+  let format = null; // the email format select; the syntax help follows it, or Telegram's parse mode
+  if ($("channel-type").value === "email") {
+    format = el("select", "form-select");
+    format.id = "ch-format";
+    format.append(...[["html", "HTML"], ["text", "Plain text"]].map(([value, text]) => Object.assign(el("option", "", text), { value })));
+    const formatLabel = el("label", "form-label", "Format");
+    formatLabel.htmlFor = format.id;
+    const formatBox = el("div", "mb-3");
+    formatBox.append(formatLabel, format);
+    first.append(formatBox);
+  }
   const areas = {};
   const boxes = KINDS.map((k) => {
     const area = areas[k] = el("textarea", "form-control font-monospace");
@@ -235,15 +256,23 @@ function renderAdvanced(channel) {
   });
   const fillFrom = (source) => {
     input.value = source[head.key] ?? defaults[head.key];
+    if (format) format.value = source.format ?? "html";
     for (const k of KINDS) areas[k].value = source.templates?.[k] ?? defaults.templates[k];
+    showHelp();
   };
   const reset = button("Reset to defaults", "Reset to defaults", "refresh");
   reset.addEventListener("click", () => fillFrom(defaults));
-  const help = el("p", "form-text", `Placeholders: {title}, {detail}, {link}, {time}. ${head.help}Empty lines are dropped.`);
+  const help = el("p", "form-text");
+  const showHelp = () => {
+    const syntax = head.syntax[(format ?? inputs.parse_mode).value];
+    help.textContent = ["Placeholders: {title}, {detail}, {link}, {time}.", syntax, "Empty lines are dropped."].filter(Boolean).join(" ");
+  };
   const details = el("details", "mb-3");
   details.append(el("summary", "mb-2", "Advanced options"), first, ...boxes, help, reset);
   $("channel-advanced").replaceChildren(details);
-  message = { key: head.key, input, areas };
+  message = { key: head.key, input, areas, format };
+  inputs.parse_mode?.addEventListener("change", showHelp);
+  format?.addEventListener("change", showHelp);
   fillFrom(channel ?? defaults);
 }
 
@@ -297,6 +326,7 @@ function channelBody() {
   }
   if (message) {
     body[message.key] = message.input.value;
+    if (message.format) body.format = message.format.value;
     body.templates = Object.fromEntries(KINDS.map((k) => [k, message.areas[k].value]));
   }
   return body;

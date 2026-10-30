@@ -624,7 +624,7 @@ test("an email channel uses the scan email server or its own, and sends only wha
   await submit(document.getElementById("channel-form"));
   assert.deepEqual(posts(calls)[0].body, {
     name: "Mail", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com", "b@example.com"], use_scan_server: true,
-    subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
+    format: "html", subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
   });
   document.getElementById("channel-add").listeners.click();
   document.getElementById("channel-name").value = "Own";
@@ -638,7 +638,7 @@ test("an email channel uses the scan email server or its own, and sends only wha
   assert.deepEqual(posts(calls)[1].body, {
     name: "Own", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com"], use_scan_server: false,
     smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls", smtp_user: "", smtp_password: "", mail_from: "Hub <hub@example.com>",
-    subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
+    format: "html", subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
   });
 });
 
@@ -678,7 +678,7 @@ test("a new Telegram channel's Advanced options start from the server defaults; 
   document.getElementById("channel-add").listeners.click();
   chooseType(document, "telegram");
   const text = textOf(advanced(document));
-  for (const part of ["Advanced options", "Header", ...Object.values(KIND_LABELS), "Reset to defaults", "Placeholders: {title}, {detail}, {link}, {time}", "parse mode"]) {
+  for (const part of ["Advanced options", "Header", ...Object.values(KIND_LABELS), "Reset to defaults", "Placeholders: {title}, {detail}, {link}, {time}"]) {
     assert.ok(text.includes(part), part);
   }
   assert.ok(!find(advanced(document), (e) => e.tagName === "DETAILS").open, "closed by default");
@@ -720,6 +720,51 @@ test("an email channel has a subject prefix and no parse mode sentence; a webhoo
   await submit(document.getElementById("channel-form"));
   const body = posts(calls)[0].body;
   assert.equal("header" in body || "templates" in body || "subject_prefix" in body, false);
+});
+
+test("the email Format starts as HTML, is sent, and changes the help under the templates", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  const format = option(document, "ch-format");
+  assert.equal(format.value, "html");
+  assert.ok(textOf(advanced(document)).includes('Use HTML tags such as <b>bold</b>, <i>italic</i> and <a href="…">links</a>'));
+  format.value = "text";
+  format.listeners.change();
+  assert.equal(textOf(advanced(document)).includes("Use HTML tags"), false);
+  assert.ok(textOf(advanced(document)).includes("Placeholders: {title}, {detail}, {link}, {time}"));
+  document.getElementById("channel-name").value = "Mail";
+  field(document, "to").value = "a@example.com";
+  await submit(document.getElementById("channel-form"));
+  assert.equal(posts(calls)[0].body.format, "text");
+});
+
+test("editing an email channel shows its stored format", async () => {
+  const mail = { id: "m1", name: "Mail", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com"], use_scan_server: true,
+    format: "text", subject_prefix: "", templates: DEFAULTS.templates };
+  const { document, main } = settingsEnv([applied], [], { channels: [mail] });
+  await main();
+  buttonIn(document.getElementById("channels"), "Edit").listeners.click();
+  assert.equal(option(document, "ch-format").value, "text");
+});
+
+test("the Telegram help names the syntax of the chosen parse mode and follows a change", async () => {
+  const { document, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  chooseType(document, "telegram");
+  const help = () => textOf(advanced(document));
+  assert.ok(help().includes("HTML: <b>bold</b>"));
+  for (const [mode, part] of [["MarkdownV2", "MarkdownV2: *bold*"], ["Markdown", "Markdown (legacy): *bold*"], ["", "Plain text: no formatting."], ["HTML", "HTML: <b>bold</b>"]]) {
+    field(document, "parse_mode").value = mode;
+    field(document, "parse_mode").listeners.change();
+    assert.ok(help().includes(part), part);
+    assert.ok(help().includes("Placeholders: {title}, {detail}, {link}, {time}"));
+  }
+  field(document, "parse_mode").value = "MarkdownV2";
+  field(document, "parse_mode").listeners.change();
+  assert.ok(help().includes("Two asterisks are not bold."));
+  assert.equal(help().includes("HTML: <b>bold</b>"), false);
 });
 
 test("editing a channel shows its own header and templates", async () => {

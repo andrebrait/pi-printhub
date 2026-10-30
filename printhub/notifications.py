@@ -249,7 +249,13 @@ def _email(data: dict) -> dict:
         addresses = [Address(addr_spec=a).addr_spec for a in to]
     except (TypeError, ValueError, MessageError):
         raise ValueError(BAD_TO) from None
-    out = {"to": addresses, "use_scan_server": _flag(data, "use_scan_server"), "subject_prefix": _subject_prefix(data), "templates": _templates(data)}
+    out = {
+        "to": addresses,
+        "use_scan_server": _flag(data, "use_scan_server"),
+        "format": _choice(data, "format", ("html", "text"), "html"),
+        "subject_prefix": _subject_prefix(data),
+        "templates": _templates(data),
+    }
     if not out["use_scan_server"]:
         try:
             mail_from = sender(data.get("mail_from"))
