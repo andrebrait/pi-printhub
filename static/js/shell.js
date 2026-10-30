@@ -162,6 +162,10 @@ function buildBar(host) {
   collapse.id = "main-nav";
   const links = el("ul", "navbar-nav me-auto");
   const here = location.pathname === "/index.html" ? "/" : location.pathname;
+  if (here === cog.getAttribute("href")) {
+    cog.classList.add("active");
+    cog.setAttribute("aria-current", "page");
+  }
   for (const [href, label, icon] of PAGES) {
     const li = el("li", "nav-item");
     const a = el("a", `nav-link${href === here ? " active" : ""}`, label);

@@ -7,8 +7,8 @@ import { snapCrop } from "./crop.js";
 import { fakeDocument } from "./fake-dom.test-util.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
-const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [], dataset: {},
-  addEventListener(type, fn) { this.listeners[type] = fn; },
+const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [], dataset: {}, attributes: {},
+  addEventListener(type, fn) { this.listeners[type] = fn; }, setAttribute(name, value) { this.attributes[name] = value; },
   add(option) { this.options.push(option); }, replaceChildren() { this.options = []; }, contains: () => false,
 });
 const dom = () => {
@@ -358,7 +358,10 @@ function settingsEnv(systems) {
   const timers = [];
   const apiFetch = async (url, opts = {}) => {
     calls.push({ url, method: opts.method ?? "GET", body: opts.body });
-    if (url === "/api/settings/system" && opts.method !== "PUT") return reply(systems.length > 1 ? systems.shift() : systems[0]);
+    if (url === "/api/settings/system" && opts.method !== "PUT") {
+      const next = systems.length > 1 ? systems.shift() : systems[0];
+      return next instanceof Error ? reply(null, false) : reply(next);
+    }
     if (url === "/api/settings/system") return reply(pending); // 202: the request is written, not applied
     return reply(SETTINGS);
   };
@@ -380,6 +383,7 @@ test("settings fills the form without the stored password and keeps it when the 
   await main();
   assert.equal(document.getElementById("retention_days").value, 30);
   assert.equal(document.getElementById("smtp_host").value, "smtp.example");
+  assert.equal(document.getElementById("system-msg").textContent, "", "an old applied status is not announced on load");
   assert.equal(document.getElementById("smtp_password").value, "");
   assert.match(document.getElementById("smtp_password").placeholder, /saved/i);
   await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
@@ -432,4 +436,17 @@ test("a failed apply restores the switches to what is in force", async () => {
   assert.equal(document.getElementById("share").checked, true);
   assert.equal(document.getElementById("expose_usb").checked, false);
   assert.match(document.getElementById("system-msg").textContent, /cupsctl failed/);
+});
+
+test("a failed status poll replaces Applying with an error that is announced as an alert", async () => {
+  const { document, main, tick } = settingsEnv([applied, new Error("down")]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(msg.attributes.role, "status");
+  await tick();
+  await saved;
+  assert.equal(msg.textContent, "Rejected");
+  assert.equal(msg.attributes.role, "alert");
 });

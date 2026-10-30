@@ -9,12 +9,12 @@ const NUMBERS = new Set(["retention_days", "min_free_gb", "smtp_port"]); // the 
 
 const $ = (id) => document.getElementById(id);
 
-/** The card's inline line: a message of the given Bootstrap kind, or hidden for no text. */
+/** The card's inline line, or an empty one for no text. It stays rendered so screen readers announce text put into it later. */
 function note(card, text, kind = "danger") {
   const line = $(`${card}-msg`);
+  line.setAttribute("role", kind === "danger" ? "alert" : "status");
   line.textContent = text;
-  line.className = `alert alert-${kind} mb-0 mt-3`;
-  line.hidden = !text;
+  line.className = text ? `alert alert-${kind} mb-0 mt-3` : "";
 }
 
 async function call(path, opts) {
@@ -55,7 +55,7 @@ async function saveSettings(card, body) {
 }
 
 /** Shows the state of a sharing request; true while it is still waiting for the root script. */
-function show({ requested, status, pending }) {
+function show({ requested, status, pending }, announce) {
   if (pending) {
     note("system", "Applying…", "info");
     return true;
@@ -65,19 +65,25 @@ function show({ requested, status, pending }) {
   $("share").checked = inForce.share;
   $("expose_usb").checked = inForce.expose_usb;
   if (failed) note("system", `Not applied: ${status.error ?? "unknown error"}`);
-  else note("system", status ? "Applied" : "", "success");
+  else note("system", announce ? "Applied" : "", "success"); // an old status on load is not news
   return false;
 }
 
 let watch = 0;
 
-async function follow(system) {
+async function follow(system, saved = false) {
   const mine = ++watch;
+  let announce = saved;
   // shortcut: the 30 s is counted in poll intervals, so slow requests stretch it, upgrade: use Date.now() if that matters.
-  for (let waited = 0; show(system); waited += POLL_MS) {
+  for (let waited = 0; show(system, announce); waited += POLL_MS) {
     if (waited >= GIVE_UP_MS) return note("system", "Not applied yet: is printhub-apply.path running? Re-run the installer.", "warning");
+    announce = true; // a request that was waiting ends in a result worth stating
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-    system = await get("/api/settings/system");
+    try {
+      system = await get("/api/settings/system");
+    } catch (err) {
+      return note("system", err.message);
+    }
     if (mine !== watch) return; // a newer save took over
   }
 }
@@ -111,10 +117,10 @@ function main() {
   });
   wire("system", async () => {
     const body = { share: $("share").checked, expose_usb: $("expose_usb").checked };
-    await follow(await (await call("/api/settings/system", { method: "PUT", body })).json());
+    await follow(await (await call("/api/settings/system", { method: "PUT", body })).json(), true);
   });
 
-  return Promise.all([get("/api/settings").then(fill), get("/api/settings/system").then(follow)]).catch((e) => {
+  return Promise.all([get("/api/settings").then(fill), get("/api/settings/system").then((system) => follow(system))]).catch((e) => {
     $("load-error").textContent = `Could not load settings: ${e.message}`;
     $("load-error").hidden = false;
   });
