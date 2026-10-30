@@ -292,6 +292,7 @@ function channelRow(c) {
   const send = button("Send test", `Send a test to ${c.name}`, "send");
   send.type = "submit";
   test.append(send);
+  const result = el("div", "small text-body-secondary text-break", c.result ?? "Nothing sent yet");
   const line = el("div");
   line.setAttribute("role", "status");
   test.addEventListener("submit", async (e) => {
@@ -304,6 +305,12 @@ function channelRow(c) {
       setNote(line, `Test sent to ${c.name}`, "success");
     } catch (err) {
       setNote(line, err.message);
+    }
+    // The server records the outcome either way. The row stays put (the focus is on its button); only its result line changes.
+    try {
+      result.textContent = (await get("/api/notify/channels")).find((x) => x.id === c.id)?.result ?? result.textContent;
+    } catch {
+      // The line above already says how the test went.
     } finally {
       send.disabled = false;
       send.textContent = "Send test";
@@ -311,7 +318,7 @@ function channelRow(c) {
   });
   const actions = el("div", "d-flex flex-wrap gap-2 mt-2");
   actions.append(edit, remove, test);
-  row.append(head, el("div", "small text-body-secondary", events), el("div", "small text-body-secondary text-break", c.result ?? "Nothing sent yet"), actions, line);
+  row.append(head, el("div", "small text-body-secondary", events), result, actions, line);
   return row;
 }
 

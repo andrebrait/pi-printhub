@@ -370,6 +370,9 @@ function settingsEnv(systems, failing = [], notify = {}) {
       return next instanceof Error ? reply(null, false) : reply(next);
     }
     if (url === "/api/settings/system") return reply(pending); // 202: the request is written, not applied
+    const tested = url.match(/^\/api\/notify\/channels\/([^/]+)\/test$/);
+    // Like the server, a test records its outcome as the channel's last result.
+    if (tested) channels.find((c) => c.id === tested[1]).result = failing.includes(url) ? "Failed: Rejected" : "Delivered just now";
     if (failing.includes(url)) return reply(null, false);
     if (url === "/api/notify/channels" && method === "POST") {
       const { bot_token, ...rest } = opts.body;
@@ -693,8 +696,8 @@ test("the enabled switch saves at once and goes back when the server refuses", a
   }
 });
 
-test("a channel's test says it is sending, then the result, under its own button", async () => {
-  for (const [failing, result] of [[[], "Test sent to Phone"], [["/api/notify/channels/c1/test"], "Rejected"]]) {
+test("a channel's test says it is sending, then the result, under its own button, and the row shows the recorded result", async () => {
+  for (const [failing, result, recorded] of [[[], "Test sent to Phone", "Delivered just now"], [["/api/notify/channels/c1/test"], "Rejected", "Failed: Rejected"]]) {
     const { document, calls, main } = settingsEnv([applied], failing, { channels: [{ ...PHONE }, { ...PHONE, id: "c2", name: "Other" }] });
     await main();
     const [row, other] = document.getElementById("channels").children;
@@ -704,9 +707,12 @@ test("a channel's test says it is sending, then the result, under its own button
     assert.equal(button.textContent, "Sending…");
     assert.match(line.textContent, /Sending a test to Phone/);
     await sending;
-    assert.deepEqual([calls.at(-1).method, calls.at(-1).url], ["POST", "/api/notify/channels/c1/test"]);
+    assert.deepEqual(calls.slice(-2).map((c) => [c.method, c.url]), [["POST", "/api/notify/channels/c1/test"], ["GET", "/api/notify/channels"]]);
     assert.equal(line.textContent, result);
     assert.equal(line.attributes.role, failing.length ? "alert" : "status");
+    assert.equal(textOf(row.children[2]), recorded);
+    assert.equal(textOf(other.children[2]), PHONE.result, "the other channel keeps its own result");
+    assert.equal(document.getElementById("channels").children[0], row, "the row stays, so the focus stays on its button");
     assert.equal(other.children.at(-1).textContent, "", "the other channel's line stays empty");
     assert.equal(button.disabled, false);
     assert.equal(button.textContent, "Send test");

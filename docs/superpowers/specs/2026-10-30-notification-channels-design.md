@@ -35,8 +35,8 @@ The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/se
 
 ### 2.3 Webhook
 
-- URL: `http` or `https` only. Private addresses are allowed (the Pi is on the LAN; a self-hosted Apprise or ntfy usually is too).
-- Optional header name and value (for example `Authorization` / `Bearer …`); the value is a secret.
+- URL: `http` or `https` only, with no username or password in it (credentials go in the header). Private addresses are allowed (the Pi is on the LAN; a self-hosted Apprise or ntfy usually is too).
+- Optional header name and value (for example `Authorization` / `Bearer …`); the value is a secret and holds no control characters.
 - POST with `Content-Type: application/json`, body:
   `{"id", "at", "level", "kind", "title", "detail", "job_id", "doc_id", "url", "source": "printhub"}` where `url` is the related page under the configured origin, or the origin itself.
 - Timeout 10 s; redirects are not followed; any 2xx is success.
@@ -44,6 +44,7 @@ The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/se
 ### 2.4 Secrets and storage
 
 - Channels and silences live in `/var/lib/printhub/notifications.json`, mode 0600, written atomically like `settings.json`.
+- A file that cannot be read, or that holds a channel or silence that fails validation, is never overwritten: every save answers 409 naming the file until the owner fixes or removes it. The notifier keeps sending through the channels that are valid.
 - Secrets (bot token, SMTP password, webhook header value) are never returned by the API: `GET` reports `<field>_set: true`. A blank secret field on save keeps the stored value. Changing an email channel's own SMTP host, port, user or security, a Telegram channel's chat ID, or a webhook's URL requires re-entering its secret, as for the scan email.
 - Secrets never appear in events, logs or delivery results.
 

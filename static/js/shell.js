@@ -55,6 +55,7 @@ function silenceMenu(e, document, onSilence) {
   const summary = document.createElement("summary");
   summary.className = "btn btn-sm btn-outline-secondary";
   summary.textContent = "Silence";
+  summary.setAttribute("aria-label", `Silence ${e.title}`);
   menu.append(summary);
   for (const [label, match, value] of [["This alert", "title", e.title], [`All ${KIND_LABELS[e.kind] ?? e.kind}`, "kind", e.kind]]) {
     const group = document.createElement("div");
@@ -81,8 +82,8 @@ function silenceMenu(e, document, onSilence) {
   return menu;
 }
 
-/** One notification for the list: level in words (not only colour), text never parsed as HTML. With onSilence it gets a Silence menu, kept out of the link. */
-export function eventItem(e, document, onSilence) {
+/** One notification for the list: level in words (not only colour), text never parsed as HTML. With onSilence it gets a Silence menu, kept out of the link; onOpen runs when the notification itself, not that menu, is clicked. */
+export function eventItem(e, document, onSilence, onOpen) {
   const item = document.createElement("div");
   item.className = `list-group-item ${ITEM_CLASS[e.level] ?? ""}${e.read ? "" : " fw-semibold"}`;
   item.dataset.id = String(e.id);
@@ -111,6 +112,7 @@ export function eventItem(e, document, onSilence) {
     detail.textContent = e.detail;
     body.append(detail);
   }
+  if (onOpen) body.addEventListener("click", onOpen);
   item.append(body);
   if (onSilence) item.append(silenceMenu(e, document, onSilence));
   return item;
@@ -333,10 +335,8 @@ function init(host) {
       if (!res.ok) throw new Error(await errorMessage(res));
       const page = await res.json();
       const items = page.events.map((e) => {
-        const item = eventItem(e, document, silenceAlert);
         // keepalive: the item holds a link, so the page may unload before the request finishes.
-        if (!e.read) item.addEventListener("click", () => markRead({ ids: [e.id] }, { keepalive: true }).catch(() => {}));
-        return item;
+        return eventItem(e, document, silenceAlert, e.read ? undefined : () => markRead({ ids: [e.id] }, { keepalive: true }).catch(() => {}));
       });
       if (more) center.list.append(...items);
       else center.list.replaceChildren(...items);

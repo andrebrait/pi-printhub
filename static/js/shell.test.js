@@ -48,6 +48,7 @@ test("each notification offers Silence for this alert or all of its kind, from 1
   assert.deepEqual(findAll(item, (el) => el.attributes.role === "group").map((g) => g.attributes["aria-label"]), ["This alert", "All Print jobs"]);
   const buttons = findAll(item, (el) => el.tagName === "BUTTON");
   assert.deepEqual(buttons.map(textOf), ["1 hour", "8 hours", "1 day", "1 week", "1 hour", "8 hours", "1 day", "1 week"]);
+  assert.equal(find(item, (el) => el.tagName === "SUMMARY").attributes["aria-label"], "Silence Printer <b>not</b> answering");
   for (const button of buttons) button.listeners.click();
   assert.deepEqual(asked, [
     ...[1, 8, 24, 168].map((hours) => ({ match: "title", value: "Printer <b>not</b> answering", hours })),
@@ -62,6 +63,36 @@ test("a notification that links somewhere keeps its Silence menu outside the lin
   assert.equal(link.attributes.href, "/scan.html?doc=d1");
   assert.equal(find(link, (el) => el.tagName === "BUTTON"), null);
   assert.ok(find(item, (el) => el.tagName === "BUTTON"));
+});
+
+// A browser lets a click bubble from its target up through every ancestor.
+function click(root, target) {
+  const chain = [];
+  const visit = (el) => {
+    if (typeof el === "string") return false;
+    chain.push(el);
+    if (el === target || el.children.some(visit)) return true;
+    chain.pop();
+    return false;
+  };
+  visit(root);
+  for (const el of chain.reverse()) el.listeners.click?.();
+}
+
+test("opening a notification marks it read, but opening or using its Silence menu does not", () => {
+  for (const doc_id of ["d1", null]) {
+    const opened = [];
+    const asked = [];
+    const event = { id: 4, at: "2026-10-28T10:00:00+00:00", level: "info", kind: "scan", title: "x", detail: "", job_id: null, doc_id, read: false };
+    const item = eventItem(event, fakeDocument(), (body) => asked.push(body), () => opened.push(event.id));
+
+    click(item, find(item, (el) => el.tagName === "SUMMARY"));
+    click(item, find(item, (el) => el.tagName === "BUTTON"));
+    assert.deepEqual([opened, asked.length], [[], 1], `doc_id ${doc_id}`);
+
+    click(item, item.children[0]);
+    assert.deepEqual(opened, [4], `doc_id ${doc_id}`);
+  }
 });
 
 test("silencing posts the choice and says when it ends", async () => {
