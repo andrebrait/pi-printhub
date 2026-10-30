@@ -39,9 +39,9 @@ Not managed by the page: `origin`, `data_dir`, `printer_queue` and CUPS job-deta
 
 ### 5.1 Request and status files
 
-- The app writes the wanted state to `/var/lib/printhub/system-request.json`: exactly `{"share": <bool>, "expose_usb": <bool>}`.
+- The app writes the wanted state to `/var/lib/printhub/system-request.json`: exactly `{"share": <bool>, "expose_usb": <bool>, "at": <ISO time>}`. `at` identifies the request.
 - `printhub-apply.path` (`PathChanged=/var/lib/printhub/system-request.json`) starts `printhub-apply.service`, a root oneshot that runs `/usr/local/lib/printhub/apply-settings.sh`, installed next to `printer-setup.sh`. The installer installs the script and both units.
-- The script writes `/var/lib/printhub/system-status.json` (owner `printhub`): `{"state": "applied" | "failed", "share": <bool>, "expose_usb": <bool>, "error": <string or null>, "at": <ISO time>}`. `share` and `expose_usb` report the state actually in force after the run.
+- The script writes `/var/lib/printhub/system-status.json` (owner `printhub`): `{"state": "applied" | "failed", "share": <bool>, "expose_usb": <bool>, "error": <string or null>, "at": <ISO time>, "request_at": <the request's at, or null>}`. `share` and `expose_usb` report the state actually in force after the run. The page treats a request as pending until a status carries its `at`.
 
 ### 5.2 Validation in the root script
 
@@ -49,7 +49,7 @@ The script refuses the request and writes a failed status when the file:
 
 - is a symlink, is not a regular file, or is not owned by `printhub`;
 - is larger than 1 KB;
-- is not a JSON object with exactly the keys `share` and `expose_usb`, both booleans.
+- is not a JSON object with exactly the keys `share` and `expose_usb` (both booleans) and `at` (a string).
 
 It parses with `python3 -c` and `json`, never with `eval` or shell interpolation of file content, and runs only fixed commands with no arguments taken from the request.
 
