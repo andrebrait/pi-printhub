@@ -8,12 +8,13 @@ import pytest
 
 from printhub.events import Event
 from printhub.notifications import (
-    DEFAULT_HEADER,
     DEFAULT_SUBJECT_PREFIX,
-    DEFAULT_TEMPLATES,
     KINDS,
     StoreError,
     active_silences,
+    default_email_templates,
+    default_header,
+    default_templates,
     load,
     load_strict,
     merge_edit,
@@ -197,10 +198,40 @@ def test_changing_the_type_leaves_nothing_of_the_old_secret():
     assert merged["type"] == "webhook" and "bot_token" not in merged
 
 
-def test_telegram_parse_mode_defaults_to_html_but_may_be_plain():
+def test_a_new_telegram_channel_without_a_parse_mode_is_markdown_v2_with_its_defaults():
     without = {k: v for k, v in telegram().items() if k != "parse_mode"}
-    assert validate_channel(without)["parse_mode"] == "HTML"
+    channel = validate_channel(without)
+    assert channel["parse_mode"] == "MarkdownV2"
+    assert (channel["header"], channel["templates"]) == (default_header("MarkdownV2"), default_templates("MarkdownV2"))
     assert validate_channel(telegram(parse_mode=None))["parse_mode"] is None
+
+
+EMOJI = {"job": "🧾", "scan": "📄", "printer": "🔔", "conversion": "🔄", "settings": "⚙\ufe0f"}
+WRAP = {"MarkdownV2": ("*{}*", "🖨\ufe0f _*Print Hub*_"), "HTML": ("<b>{}</b>", "🖨\ufe0f <i><b>Print Hub</b></i>"),
+        "Markdown": ("*{}*", "🖨\ufe0f *Print Hub*"), None: ("{}", "🖨\ufe0f Print Hub")}
+
+
+@pytest.mark.parametrize("mode", WRAP)
+def test_each_parse_mode_has_its_formatted_header_and_templates(mode):
+    bold, header = WRAP[mode]
+    assert default_header(mode) == header
+    assert default_templates(mode) == {k: f"{EMOJI[k]} {bold.format('{title}')}\n{{detail}}\n{{link}}" for k in KINDS}
+
+
+def test_email_defaults_follow_the_format():
+    assert default_email_templates("html") == default_templates("HTML")
+    assert default_email_templates("text") == default_templates(None)
+    assert validate_channel(email(format="text"))["templates"] == default_templates(None)
+    assert validate_channel(email())["templates"] == default_templates("HTML")
+
+
+def test_the_markdown_v2_defaults_render_to_text_telegram_accepts():
+    from printhub.senders import _telegram_text
+
+    channel = validate_channel(telegram(parse_mode="MarkdownV2", header=default_header("MarkdownV2")) | {"templates": {}})
+    event = Event(id=1, at="2026-10-30T10:00:00+00:00", level="info", kind="job", title="a_b.pdf (2)", detail="ok", doc_id=None)
+    assert _telegram_text(channel, event, "https://x.example/a_b").split("\n") == [
+        "🖨\ufe0f _*Print Hub*_", "🧾 *a\\_b\\.pdf \\(2\\)*", "ok", "https://x\\.example/a\\_b"]
 
 
 def test_names_are_stripped_and_blank_ones_refused():
@@ -274,7 +305,7 @@ def test_strict_load_refuses_a_file_that_did_not_load_cleanly(tmp_path, content)
     assert "123:abc" not in str(e.value)
 
 
-MESSAGE_FIELDS = [(telegram, "header", DEFAULT_HEADER), (email, "subject_prefix", DEFAULT_SUBJECT_PREFIX)]
+MESSAGE_FIELDS = [(telegram, "header", default_header("HTML")), (email, "subject_prefix", DEFAULT_SUBJECT_PREFIX)]
 
 
 @pytest.mark.parametrize("make, field, default", MESSAGE_FIELDS)
@@ -283,8 +314,8 @@ def test_a_stored_channel_without_message_fields_loads_with_the_defaults(tmp_pat
 
     (channel,) = load(tmp_path)["channels"]
 
-    assert (channel[field], channel["templates"]) == (default, DEFAULT_TEMPLATES)
-    assert public(channel)["templates"] == DEFAULT_TEMPLATES and public(channel)[field] == default
+    assert (channel[field], channel["templates"]) == (default, default_templates("HTML"))
+    assert public(channel)["templates"] == default_templates("HTML") and public(channel)[field] == default
 
 
 def test_an_email_channel_without_a_format_is_html_and_a_bad_one_is_refused(tmp_path):
@@ -302,7 +333,7 @@ def test_missing_kinds_are_filled_from_the_defaults_and_the_rest_kept(make, fiel
     channel = validate_channel(make(templates={"job": "{title}"}, **{field: ""}))
 
     assert channel[field] == ""
-    assert channel["templates"] == DEFAULT_TEMPLATES | {"job": "{title}"}
+    assert channel["templates"] == default_templates("HTML") | {"job": "{title}"}
 
 
 @pytest.mark.parametrize(

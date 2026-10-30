@@ -351,8 +351,18 @@ test("another scan waits for queued page edits and does not start when one fails
 const SETTINGS = { retention_days: 30, min_free_gb: 2, smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls",
   smtp_user: "me", mail_from: "hub@example", smtp_password_set: true };
 const reply = (body, ok = true) => ({ ok, json: async () => body });
-const DEFAULTS = { header: "🖨️ Print Hub", subject_prefix: "[Print Hub]",
-  templates: Object.fromEntries(Object.keys(KIND_LABELS).map((k) => [k, `${k}: {title}\n{detail}\n{link}`])) };
+// Defaults per Telegram parse mode and email format; the markup around {title} makes each set tell itself apart.
+const defaultsOf = (open, close, extra) => ({ ...extra, templates: Object.fromEntries(Object.keys(KIND_LABELS).map((k) => [k, `${k}: ${open}{title}${close}\n{detail}\n{link}`])) });
+const DEFAULTS = {
+  telegram: {
+    MarkdownV2: defaultsOf("*", "*", { header: "🖨️ _*Print Hub*_" }),
+    HTML: defaultsOf("<b>", "</b>", { header: "🖨️ <i><b>Print Hub</b></i>" }),
+    Markdown: defaultsOf("*", "*", { header: "🖨️ *Print Hub*" }),
+    None: defaultsOf("", "", { header: "🖨️ Print Hub" }),
+  },
+  email: { html: defaultsOf("<b>", "</b>", { subject_prefix: "[Print Hub]" }), text: defaultsOf("", "", { subject_prefix: "[Print Hub]" }) },
+};
+const V2 = DEFAULTS.telegram.MarkdownV2;
 
 // A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
 // notify = { channels, silences, confirm } seeds what the notification API lists and answers the delete prompt; like the server it
@@ -594,7 +604,7 @@ test("adding a Telegram channel sends its fields, and the token never comes back
     assert.ok(fields.includes(label), label);
   }
   assert.equal(field(document, "bot_token").type, "password");
-  assert.equal(field(document, "parse_mode").value, "HTML");
+  assert.equal(field(document, "parse_mode").value, "MarkdownV2");
   field(document, "bot_token").value = "123:abc";
   field(document, "chat_id").value = "-1001";
   field(document, "message_thread_id").value = "7";
@@ -603,9 +613,9 @@ test("adding a Telegram channel sends its fields, and the token never comes back
   await submit(document.getElementById("channel-form"));
   assert.deepEqual(posts(calls)[0].body, {
     name: "Phone", type: "telegram", enabled: true, kinds: ["job", "scan", "printer", "conversion"],
-    bot_token: "123:abc", chat_id: "-1001", message_thread_id: 7, parse_mode: "HTML",
+    bot_token: "123:abc", chat_id: "-1001", message_thread_id: 7, parse_mode: "MarkdownV2",
     disable_notification: false, protect_content: true, disable_web_page_preview: false,
-    header: DEFAULTS.header, templates: DEFAULTS.templates,
+    header: V2.header, templates: V2.templates,
   });
   assert.equal(document.getElementById("channel-form").hidden, true);
   const list = textOf(document.getElementById("channels"));
@@ -624,7 +634,7 @@ test("an email channel uses the scan email server or its own, and sends only wha
   await submit(document.getElementById("channel-form"));
   assert.deepEqual(posts(calls)[0].body, {
     name: "Mail", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com", "b@example.com"], use_scan_server: true,
-    format: "html", subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
+    format: "html", subject_prefix: DEFAULTS.email.html.subject_prefix, templates: DEFAULTS.email.html.templates,
   });
   document.getElementById("channel-add").listeners.click();
   document.getElementById("channel-name").value = "Own";
@@ -638,7 +648,7 @@ test("an email channel uses the scan email server or its own, and sends only wha
   assert.deepEqual(posts(calls)[1].body, {
     name: "Own", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com"], use_scan_server: false,
     smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls", smtp_user: "", smtp_password: "", mail_from: "Hub <hub@example.com>",
-    format: "html", subject_prefix: DEFAULTS.subject_prefix, templates: DEFAULTS.templates,
+    format: "html", subject_prefix: DEFAULTS.email.html.subject_prefix, templates: DEFAULTS.email.html.templates,
   });
 });
 
@@ -682,8 +692,8 @@ test("a new Telegram channel's Advanced options start from the server defaults; 
     assert.ok(text.includes(part), part);
   }
   assert.ok(!find(advanced(document), (e) => e.tagName === "DETAILS").open, "closed by default");
-  assert.equal(option(document, "ch-header").value, DEFAULTS.header);
-  for (const k of KINDS) assert.equal(option(document, `ch-template-${k}`).value, DEFAULTS.templates[k]);
+  assert.equal(option(document, "ch-header").value, V2.header);
+  for (const k of KINDS) assert.equal(option(document, `ch-template-${k}`).value, V2.templates[k]);
   assert.equal(option(document, "ch-template-job").rows, 3);
   assert.equal(option(document, "ch-template-job").maxLength, 1000);
   assert.equal(option(document, "ch-header").maxLength, 200);
@@ -693,16 +703,16 @@ test("a new Telegram channel's Advanced options start from the server defaults; 
   option(document, "ch-template-job").value = "<b>{title}</b>";
   await submit(document.getElementById("channel-form"));
   const { header, templates } = posts(calls)[0].body;
-  assert.equal(header, DEFAULTS.header);
-  assert.deepEqual(templates, { ...DEFAULTS.templates, job: "<b>{title}</b>" });
+  assert.equal(header, V2.header);
+  assert.deepEqual(templates, { ...V2.templates, job: "<b>{title}</b>" });
 
   document.getElementById("channel-add").listeners.click();
   chooseType(document, "telegram");
   option(document, "ch-header").value = "mine";
   option(document, "ch-template-scan").value = "x";
   buttonIn(advanced(document), "Reset to defaults").listeners.click();
-  assert.equal(option(document, "ch-header").value, DEFAULTS.header);
-  assert.equal(option(document, "ch-template-scan").value, DEFAULTS.templates.scan);
+  assert.equal(option(document, "ch-header").value, V2.header);
+  assert.equal(option(document, "ch-template-scan").value, V2.templates.scan);
 });
 
 test("an email channel has a subject prefix and no parse mode sentence; a webhook has no Advanced options", async () => {
@@ -712,7 +722,7 @@ test("an email channel has a subject prefix and no parse mode sentence; a webhoo
   const text = textOf(advanced(document));
   assert.ok(text.includes("Subject prefix") && text.includes("Placeholders: {title}, {detail}, {link}, {time}"));
   assert.equal(text.includes("parse mode"), false);
-  assert.equal(option(document, "ch-subject_prefix").value, DEFAULTS.subject_prefix);
+  assert.equal(option(document, "ch-subject_prefix").value, DEFAULTS.email.html.subject_prefix);
   chooseType(document, "webhook");
   assert.equal(advanced(document).children.length, 0);
   document.getElementById("channel-name").value = "Hook";
@@ -742,7 +752,7 @@ test("the email Format starts as HTML, is sent, and changes the help under the t
 
 test("editing an email channel shows its stored format", async () => {
   const mail = { id: "m1", name: "Mail", type: "email", enabled: true, kinds: KINDS, to: ["a@example.com"], use_scan_server: true,
-    format: "text", subject_prefix: "", templates: DEFAULTS.templates };
+    format: "text", subject_prefix: "", templates: DEFAULTS.email.text.templates };
   const { document, main } = settingsEnv([applied], [], { channels: [mail] });
   await main();
   buttonIn(document.getElementById("channels"), "Edit").listeners.click();
@@ -755,7 +765,7 @@ test("the Telegram help names the syntax of the chosen parse mode and follows a 
   document.getElementById("channel-add").listeners.click();
   chooseType(document, "telegram");
   const help = () => textOf(advanced(document));
-  assert.ok(help().includes("HTML: <b>bold</b>"));
+  assert.ok(help().includes("MarkdownV2: *bold*"));
   for (const [mode, part] of [["MarkdownV2", "MarkdownV2: *bold*"], ["Markdown", "Markdown (legacy): *bold*"], ["", "Plain text: no formatting."], ["HTML", "HTML: <b>bold</b>"]]) {
     field(document, "parse_mode").value = mode;
     field(document, "parse_mode").listeners.change();
@@ -770,7 +780,7 @@ test("the Telegram help names the syntax of the chosen parse mode and follows a 
 });
 
 test("editing a channel shows its own header and templates", async () => {
-  const mine = { ...PHONE, header: "*Printer*", templates: { ...DEFAULTS.templates, job: "_{title}_" } };
+  const mine = { ...PHONE, header: "*Printer*", templates: { ...DEFAULTS.telegram.HTML.templates, job: "_{title}_" } };
   const { document, calls, main } = settingsEnv([applied], [], { channels: [mine] });
   await main();
   buttonIn(document.getElementById("channels"), "Edit").listeners.click();
@@ -857,4 +867,78 @@ test("active silences list what they match and until when, and Unsilence removes
   await buttonIn(list.children[0], "Unsilence").listeners.click();
   assert.equal(list.children.length, 0);
   assert.equal(document.getElementById("silences-empty").hidden, false);
+});
+
+const modeOf = (document, mode) => {
+  field(document, "parse_mode").value = mode;
+  field(document, "parse_mode").listeners.change();
+};
+const templatesOf = (document) => Object.fromEntries(KINDS.map((k) => [k, option(document, `ch-template-${k}`).value]));
+
+test("a new Telegram channel starts with MarkdownV2 and its formatted defaults", async () => {
+  const { document, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  chooseType(document, "telegram");
+  assert.equal(field(document, "parse_mode").value, "MarkdownV2");
+  assert.equal(option(document, "ch-header").value, "🖨️ _*Print Hub*_");
+  assert.deepEqual(templatesOf(document), V2.templates);
+});
+
+test("changing the parse mode swaps the fields still at the old default and keeps an edited one", async () => {
+  const { document, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  chooseType(document, "telegram");
+  option(document, "ch-template-job").value = "my {title}";
+  modeOf(document, "HTML");
+  assert.equal(option(document, "ch-header").value, DEFAULTS.telegram.HTML.header);
+  assert.deepEqual(templatesOf(document), { ...DEFAULTS.telegram.HTML.templates, job: "my {title}" });
+  option(document, "ch-header").value = "mine";
+  modeOf(document, "");
+  assert.equal(option(document, "ch-header").value, "mine");
+  assert.deepEqual(templatesOf(document), { ...DEFAULTS.telegram.None.templates, job: "my {title}" });
+  modeOf(document, "Markdown");
+  assert.deepEqual(templatesOf(document), { ...DEFAULTS.telegram.Markdown.templates, job: "my {title}" });
+});
+
+test("Reset to defaults uses the current parse mode", async () => {
+  const { document, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  chooseType(document, "telegram");
+  modeOf(document, "HTML");
+  option(document, "ch-header").value = "mine";
+  option(document, "ch-template-scan").value = "x";
+  buttonIn(advanced(document), "Reset to defaults").listeners.click();
+  assert.equal(field(document, "parse_mode").value, "HTML");
+  assert.equal(option(document, "ch-header").value, DEFAULTS.telegram.HTML.header);
+  assert.deepEqual(templatesOf(document), DEFAULTS.telegram.HTML.templates);
+});
+
+test("editing a stored channel keeps its text and swaps only what equals its mode's default", async () => {
+  const stored = { ...PHONE, header: "*Printer*", templates: { ...DEFAULTS.telegram.HTML.templates, job: "_{title}_" } };
+  const { document, main } = settingsEnv([applied], [], { channels: [stored] });
+  await main();
+  buttonIn(document.getElementById("channels"), "Edit").listeners.click();
+  modeOf(document, "MarkdownV2");
+  assert.equal(option(document, "ch-header").value, "*Printer*");
+  assert.deepEqual(templatesOf(document), { ...V2.templates, job: "_{title}_" });
+});
+
+test("the email Format switch swaps untouched fields, keeps edited ones, and Reset uses the current format", async () => {
+  const { document, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("channel-add").listeners.click();
+  const format = option(document, "ch-format");
+  option(document, "ch-template-scan").value = "mine";
+  format.value = "text";
+  format.listeners.change();
+  assert.deepEqual(templatesOf(document), { ...DEFAULTS.email.text.templates, scan: "mine" });
+  buttonIn(advanced(document), "Reset to defaults").listeners.click();
+  assert.equal(format.value, "text");
+  assert.deepEqual(templatesOf(document), DEFAULTS.email.text.templates);
+  format.value = "html";
+  format.listeners.change();
+  assert.deepEqual(templatesOf(document), DEFAULTS.email.html.templates);
 });

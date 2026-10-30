@@ -114,7 +114,7 @@ def test_telegram_request_shape(http_server, monkeypatch, cfg):
     assert headers["Content-Type"] == "application/json"
     assert body == {
         "chat_id": "-100123",
-        "text": "🖨\ufe0f Print Hub\n🧾 Job failed\nPaper jam\nhttps://print.example.com/print.html?doc=d1",
+        "text": "🖨\ufe0f <i><b>Print Hub</b></i>\n🧾 <b>Job failed</b>\nPaper jam\nhttps://print.example.com/print.html?doc=d1",
         "message_thread_id": 42,
         "parse_mode": "HTML",
         "disable_notification": True,
@@ -164,7 +164,8 @@ def test_a_long_detail_is_cut_so_the_message_fits_telegrams_limit(http_server, m
     link = "https://print.example.com/print.html?doc=d1" if mode != "MarkdownV2" else "https://print\\.example\\.com/print\\.html?doc\\=d1"
     lines = text.split("\n")
     assert len(text) <= 4096
-    assert lines[0] == "🖨\ufe0f Print Hub" and lines[1] == "🧾 Job failed" and lines[-1] == link
+    header, title = {"MarkdownV2": ("_*Print Hub*_", "*Job failed*"), "HTML": ("<i><b>Print Hub</b></i>", "<b>Job failed</b>"), None: ("Print Hub", "Job failed")}[mode]
+    assert lines[0] == f"🖨\ufe0f {header}" and lines[1] == f"🧾 {title}" and lines[-1] == link
     assert lines[2].endswith("…")
 
 

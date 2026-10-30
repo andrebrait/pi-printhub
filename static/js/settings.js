@@ -29,7 +29,7 @@ const CHANNEL_FIELDS = {
     { key: "bot_token", label: "Bot token", type: "secret" },
     { key: "chat_id", label: "Chat ID", required: true, help: "A number, or @channelname." },
     { key: "message_thread_id", label: "Message thread ID", type: "number", help: "Optional; for forum topics." },
-    { key: "parse_mode", label: "Parse mode", type: "select", default: "HTML", options: [["", "None"], ["HTML", "HTML"], ["Markdown", "Markdown"], ["MarkdownV2", "MarkdownV2"]] },
+    { key: "parse_mode", label: "Parse mode", type: "select", default: "MarkdownV2", options: [["", "None"], ["HTML", "HTML"], ["Markdown", "Markdown"], ["MarkdownV2", "MarkdownV2"]] },
     { key: "disable_notification", label: "Send silently", type: "switch" },
     { key: "protect_content", label: "Protect content", type: "switch" },
     { key: "disable_web_page_preview", label: "Disable link preview", type: "switch" },
@@ -58,7 +58,7 @@ const MESSAGE_HEAD = {
 let editing = null; // the saved channel the form edits; null while it adds one
 let inputs = {}; // the open form's field inputs by key
 let kindBoxes = {};
-let defaults = null; // what GET /api/notify/defaults gave: the message options of a new channel
+let defaults = null; // what GET /api/notify/defaults gave: the message options per Telegram parse mode and email format
 let message = null; // the open form's message option inputs: { key, input, areas: { kind: textarea } }; null when the type has none
 
 const $ = (id) => document.getElementById(id);
@@ -236,6 +236,7 @@ function renderAdvanced(channel) {
     format = el("select", "form-select");
     format.id = "ch-format";
     format.append(...[["html", "HTML"], ["text", "Plain text"]].map(([value, text]) => Object.assign(el("option", "", text), { value })));
+    format.value = "html";
     const formatLabel = el("label", "form-label", "Format");
     formatLabel.htmlFor = format.id;
     const formatBox = el("div", "mb-3");
@@ -254,14 +255,26 @@ function renderAdvanced(channel) {
     box.append(areaLabel, area);
     return box;
   });
+  // The defaults for the parse mode or email format now chosen, in the shape of a channel's message options.
+  const modeDefaults = () => (format ? defaults.email[format.value] : defaults.telegram[inputs.parse_mode.value || "None"]);
+  let shown; // the defaults the fields were last filled from or swapped to
   const fillFrom = (source) => {
-    input.value = source[head.key] ?? defaults[head.key];
-    if (format) format.value = source.format ?? "html";
-    for (const k of KINDS) areas[k].value = source.templates?.[k] ?? defaults.templates[k];
+    if (format) format.value = source.format ?? format.value;
+    shown = modeDefaults();
+    input.value = source[head.key] ?? shown[head.key];
+    for (const k of KINDS) areas[k].value = source.templates?.[k] ?? shown.templates[k];
+    showHelp();
+  };
+  // A field still holding the old mode's default takes the new mode's; one the owner edited stays.
+  const swapDefaults = () => {
+    const next = modeDefaults();
+    if (input.value === shown[head.key]) input.value = next[head.key];
+    for (const k of KINDS) if (areas[k].value === shown.templates[k]) areas[k].value = next.templates[k];
+    shown = next;
     showHelp();
   };
   const reset = button("Reset to defaults", "Reset to defaults", "refresh");
-  reset.addEventListener("click", () => fillFrom(defaults));
+  reset.addEventListener("click", () => fillFrom(modeDefaults()));
   const help = el("p", "form-text");
   const showHelp = () => {
     const mode = (format ?? inputs.parse_mode).value;
@@ -272,9 +285,9 @@ function renderAdvanced(channel) {
   details.append(el("summary", "mb-2", "Advanced options"), first, ...boxes, help, reset);
   $("channel-advanced").replaceChildren(details);
   message = { key: head.key, input, areas, format };
-  inputs.parse_mode?.addEventListener("change", showHelp);
-  format?.addEventListener("change", showHelp);
-  fillFrom(channel ?? defaults);
+  inputs.parse_mode?.addEventListener("change", swapDefaults);
+  format?.addEventListener("change", swapDefaults);
+  fillFrom(channel ?? modeDefaults());
 }
 
 function openChannel(channel = null) {

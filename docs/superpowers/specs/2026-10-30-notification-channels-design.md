@@ -29,12 +29,12 @@ The fields of Grafana's Telegram contact point:
 | Bot token | Secret. |
 | Chat ID | A number, or `@channelname`. |
 | Message thread ID | Optional; for forum topics. |
-| Parse mode | `None`, `HTML` (default), `Markdown` or `MarkdownV2`. |
+| Parse mode | `None`, `HTML`, `Markdown` or `MarkdownV2` (default for a new channel). |
 | Send silently | Telegram `disable_notification`. |
 | Protect content | Telegram `protect_content`. |
 | Disable link preview | Telegram `link_preview_options.is_disabled`. |
 
-The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/sendMessage`: the **header** (default `🖨️ Print Hub`, 0–200 characters; no header line when empty) followed by the template of the event's kind (section 2.5). Header and template text are sent as typed, so the owner's HTML, Markdown or MarkdownV2 formatting works; the placeholder values are escaped for the chosen parse mode (the link too in HTML and MarkdownV2, so `.` and `-` in the URL are valid; Markdown and None leave it plain). The title is no longer bold on its own: bold it in the template.
+The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/sendMessage`: the **header** (default per parse mode, see section 2.5; 0–200 characters; no header line when empty) followed by the template of the event's kind (section 2.5). Header and template text are sent as typed, so the owner's HTML, Markdown or MarkdownV2 formatting works; the placeholder values are escaped for the chosen parse mode (the link too in HTML and MarkdownV2, so `.` and `-` in the URL are valid; Markdown and None leave it plain). The title is not bold on its own: the default templates bold it in each mode's markup.
 
 ### 2.3 Webhook
 
@@ -53,10 +53,19 @@ The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/se
 
 ### 2.5 Templates (email and Telegram)
 
-- One template per event kind (`job`, `scan`, `printer`, `conversion`, `settings`), 1–1000 characters each. A channel stored without them, or without some kinds, uses the defaults; an unknown kind or an empty or over-long template is refused. The defaults are the same for both types: `🧾 {title}\n{detail}\n{link}` for jobs, `📄` for scans, `🔔` for printer status, `🔄` for file conversions and `⚙️` for settings changes.
+- One template per event kind (`job`, `scan`, `printer`, `conversion`, `settings`), 1–1000 characters each. A channel stored without them, or without some kinds, uses the defaults for its parse mode (Telegram) or format (email); an unknown kind or an empty or over-long template is refused. The emoji by kind are 🧾 jobs, 📄 scans, 🔔 printer status, 🔄 file conversions and ⚙️ settings changes. The template is `<emoji> <title>\n{detail}\n{link}` with the title in the mode's bold, and the Telegram header is `🖨️ ` and the name in the mode's markup:
+
+  | Parse mode | Header | Title in the template |
+  |---|---|---|
+  | `MarkdownV2` (default for a new channel) | `🖨️ _*Print Hub*_` | `*{title}*` |
+  | `HTML` | `🖨️ <i><b>Print Hub</b></i>` | `<b>{title}</b>` |
+  | `Markdown` | `🖨️ *Print Hub*` | `*{title}*` |
+  | `None` | `🖨️ Print Hub` | `{title}` |
+
+  An email channel's templates are the HTML ones for format `html` and the `None` ones for `text`; its subject prefix default stays `[Print Hub]`. A channel keeps whatever parse mode, header and templates it was stored with.
 - Placeholders: `{title}`, `{detail}`, `{link}`, `{time}` (the event's time as local `YYYY-MM-DD HH:MM`). Only these four are replaced, everything else, other braces included, stays as typed. Lines left empty or blank after the replacement are dropped.
 - **Send test** is a `settings` event, so it shows the Settings changes template.
-- The settings page keeps all of this under **Advanced options** (closed by default) in the channel form, with **Reset to defaults**; the defaults come from `GET /api/notify/defaults`.
+- The settings page keeps all of this under **Advanced options** (closed by default) in the channel form, with **Reset to defaults**; the defaults come from `GET /api/notify/defaults`. A new Telegram channel starts with MarkdownV2 and its defaults; changing the parse mode (or an email channel's Format) replaces each field that still equals the previous mode's default with the new mode's and leaves edited fields alone; Reset uses the current mode.
 
 ## 3. Event types
 
@@ -113,7 +122,7 @@ All under the session router; state-changing calls pass the Origin check.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/notify/defaults` | `{header, subject_prefix, templates}`: the message options of a new channel |
+| `GET /api/notify/defaults` | The message options of a new channel: `{telegram: {MarkdownV2\|HTML\|Markdown\|None: {header, templates}}, email: {html\|text: {subject_prefix, templates}}}` |
 | `GET /api/notify/channels` | Channels without secrets (their header, subject prefix and templates included), with last results |
 | `POST /api/notify/channels` | Add a channel; 400 on invalid fields |
 | `PUT /api/notify/channels/{id}` | Edit; secrets as in 2.4 |

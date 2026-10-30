@@ -856,10 +856,13 @@ def create_app(
 
     @api.get("/notify/defaults")
     def get_notify_defaults():
+        ns = notification_store
         return {
-            "header": notification_store.DEFAULT_HEADER,
-            "subject_prefix": notification_store.DEFAULT_SUBJECT_PREFIX,
-            "templates": notification_store.DEFAULT_TEMPLATES,
+            # The plain parse mode is None in the store and "None" as a JSON key.
+            "telegram": {str(m): {"header": ns.default_header(m), "templates": ns.default_templates(m)} for m in ns.PARSE_MODES},
+            "email": {
+                f: {"subject_prefix": ns.DEFAULT_SUBJECT_PREFIX, "templates": ns.default_email_templates(f)} for f in ns.EMAIL_FORMATS
+            },
         }
 
     @api.get("/notify/channels")
