@@ -73,3 +73,8 @@ def test_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("PRINTHUB_CONFIG", str(write(tmp_path, REQUIRED)))
 
     assert load_config().smtp_user == "printhub"
+
+
+def test_config_toml_out_of_range_is_an_error(tmp_path):
+    with pytest.raises(ConfigError, match="retention_days"):
+        load_config(write(tmp_path, REQUIRED + "retention_days = 0\n"))

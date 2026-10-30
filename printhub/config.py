@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import logging
 import os
 import tomllib
 from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
 from typing import Literal
+
+log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -27,6 +30,19 @@ class Config:
     data_dir: Path = Path("/var/lib/printhub")
 
 
+def validate(cfg: Config) -> None:
+    _check(cfg.retention_days, "retention_days", int, 1, 365)
+    _check(cfg.min_free_gb, "min_free_gb", (int, float), 0.5, 1000)
+    _check(cfg.smtp_port, "smtp_port", int, 1, 65535)
+    if cfg.smtp_security not in ("starttls", "tls"):
+        raise ConfigError(f'smtp_security must be "starttls" or "tls", got {cfg.smtp_security!r}')
+
+
+def _check(value, key: str, kinds: type | tuple[type, ...], lo, hi) -> None:
+    if isinstance(value, bool) or not isinstance(value, kinds) or not lo <= value <= hi:
+        raise ConfigError(f"{key} must be between {lo} and {hi}, got {value!r}")
+
+
 def load_config(path: Path | None = None) -> Config:
     if path is None:
         path = Path(os.environ.get("PRINTHUB_CONFIG", "/etc/printhub/config.toml"))
@@ -45,6 +61,9 @@ def load_config(path: Path | None = None) -> Config:
             raise ConfigError(f"missing required key: {f.name}")
     if "data_dir" in values:
         values["data_dir"] = Path(values["data_dir"])
-    if values["smtp_security"] not in ("starttls", "tls"):
-        raise ConfigError(f'smtp_security must be "starttls" or "tls", got {values["smtp_security"]!r}')
-    return Config(**values)
+    cfg = Config(**values)
+    validate(cfg)
+    # settings imports this module, so load it lazily
+    from printhub.settings import apply_overlay
+
+    return apply_overlay(cfg)
