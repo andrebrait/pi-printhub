@@ -19,6 +19,10 @@ Run on the Pi with the OfficeJet Pro 6970 attached, before release.
 - [ ] Powering the printer off mid-job and back on completes the job on `<model> @ raspberrypi`
 - [ ] Image Capture or Windows Scan scans through both the AirSane and the `(USB)` scanner; the web app still scans
 - [ ] Confirm whether the ADF is single-sided
-- [ ] Settings page: toggling sharing off removes `printer-is-shared=true` from `lpoptions -p OfficeJet`, deletes `/etc/avahi/services/printhub-*.service` and stops `airsaned`; toggling it on restores all three
+- [ ] Settings page: toggling sharing off removes `printer-is-shared=true` from `lpoptions -p OfficeJet`, moves `/etc/avahi/services/printhub-*.service` to `/var/lib/printhub-system/avahi-off` and stops `airsaned`; toggling it on restores all three, and works with the printer off
 - [ ] Settings page: with "Expose the printer directly" off, `curl -m5 http://<pi address>:60000/ipp/print` from another machine is dropped (curl times out), while the web app still prints and scans; the `(USB)` adverts change after a printer power cycle, and `systemctl status ipp-usb` shows no restart
 - [ ] Reinstalling and replugging the printer keep the sharing and exposure choices
+- [ ] Notifications: a Telegram channel's test message reaches the chat
+- [ ] Notifications: a real print and a real scan arrive on each enabled channel
+- [ ] Notifications: silencing "Print jobs" for 1 hour stops job messages on every channel, and the bell still shows them
+- [ ] Notifications: powering the printer off (or unplugging it) for over 2 minutes sends "Printer not answering over USB"; powering it back on sends "Printer answering over USB again"

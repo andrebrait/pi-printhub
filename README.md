@@ -74,6 +74,22 @@ Changing the SMTP server, port, user or security needs the SMTP password typed a
 A forgotten web password: as root, delete `password_hash` and `session_secret` from `/var/lib/printhub/settings.json` and restart printhub. The password the installer wrote to `/etc/printhub/config.toml` applies again.
 
 
+### Notifications
+
+The settings page's Notifications card sends the Print Hub's events to any number of channels. Each channel has a name, an on/off switch, the event types it receives, a **Send test** button and its last result (`Delivered <time>` or `Failed: <reason>`).
+
+- **Email**: one or more comma-separated addresses. **Use the scan email server** (on by default) sends through the SMTP settings of the scan email. Turn it off to give the channel its own server, port, security, user, password and sender.
+- **Telegram**: the fields of Grafana's Telegram contact point: bot token, chat ID (a number or `@channelname`), optional message thread ID, parse mode, send silently, protect content and disable link preview.
+- **Webhook**: a JSON POST to an `http` or `https` URL, with an optional header such as `Authorization`. The body has `id`, `at`, `level`, `kind`, `title`, `detail`, `job_id`, `doc_id`, `url` and `source` (`printhub`). It suits a self-hosted Apprise or ntfy. Redirects are not followed; any 2xx response counts as delivered.
+
+Each channel takes any of five event types: **Print jobs**, **Scans**, **Printer status**, **File conversions** and **Settings changes**. All are on for a new channel.
+
+To silence an alert from the bell, choose **Silence** on it and pick "this alert" (same title) or "all" of its type, for 1 hour, 8 hours, 1 day or 1 week. A silence stops messages on every channel; the bell still records the event. The settings page lists active silences, and **Unsilence** ends one early.
+
+Secrets (bot token, SMTP password, webhook header value) are stored in `/var/lib/printhub/notifications.json`, mode 0600, and are never shown again; leave a secret field blank on save to keep it. A failed send is retried after 1, 5 and 15 minutes, then dropped. Retries are kept in memory, so a restart drops them.
+
+If the printer stops answering over USB for 2 minutes, a **Printer status** error "Printer not answering over USB" is sent, with a notice when it answers again. Power-cycle the printer if it lasts.
+
 ## Document safety
 
 Cleanup skips documents used by conversions, scans, exports, downloads, email or print submission. Cross-process locks live under `data_dir/docs/.locks`; do not remove these files while either the app or retention timer is running. Metadata transactions are atomic and serialized. Interrupted scans recover on startup with completed pages intact and a Retry message.
