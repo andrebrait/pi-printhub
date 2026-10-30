@@ -110,6 +110,7 @@
 - [ ] **Step 2:** Run; expect failures.
 - [ ] **Step 3:** Implement `settings.request_system(data_dir, share, expose_usb) -> dict` and `settings.read_system(data_dir) -> dict` and the two routes.
 - [ ] **Step 4:** Run the Python suite; expect all pass.
+- [ ] **Step 5:** Commit: `feat(settings): system sharing switches API`.
 
 ### Task 4: Root apply script and units
 
