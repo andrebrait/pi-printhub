@@ -26,6 +26,7 @@ from printhub.events import EventLog
 from printhub.mail import MailError
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
+from printhub.senders import SendError
 from printhub.settings import apply_overlay
 
 ORIGIN = "https://print.example.com"
@@ -990,3 +991,121 @@ def test_test_email_reports_smtp_errors(client, monkeypatch):
 
 def test_test_email_rejects_an_invalid_address(client):
     assert client.post("/api/settings/test-email", json={"to": "not-an-address"}).status_code == 400
+
+
+# Notification channels and silences
+
+
+TOKEN = "123:secret-token"
+HOOK = {"type": "webhook", "name": "Ntfy", "enabled": True, "kinds": ["job"], "url": "https://ntfy.example.com/hub", "header_name": "Authorization", "header_value": "Bearer tok"}
+CHAT = {"type": "telegram", "name": "Phone", "enabled": True, "kinds": ["job", "printer"], "bot_token": TOKEN, "chat_id": "-100123", "message_thread_id": None, "parse_mode": "HTML", "disable_notification": False, "protect_content": False, "disable_web_page_preview": False}
+
+
+def add_channel(client, body=CHAT):
+    r = client.post("/api/notify/channels", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def event_titles(client):
+    return [e["title"] for e in client.get("/api/notifications").json()["events"]]
+
+
+def test_channels_need_a_session(make_client):
+    assert make_client(login=False).get("/api/notify/channels").status_code == 401
+
+
+def test_channel_crud_never_returns_secrets(client):
+    created = add_channel(client)
+    assert created["id"] and created["bot_token_set"] is True and "bot_token" not in created
+    client.app.state.notifier.results[created["id"]] = "Delivered 12:00"
+
+    listed = client.get("/api/notify/channels").json()
+    assert listed == [{**created, "result": "Delivered 12:00"}]
+
+    r = client.put(f"/api/notify/channels/{created['id']}", json={**CHAT, "name": "Phone 2", "bot_token": ""})
+    assert (r.status_code, r.json()["name"], r.json()["id"]) == (200, "Phone 2", created["id"])
+
+    assert client.delete(f"/api/notify/channels/{created['id']}").status_code == 204
+    assert client.get("/api/notify/channels").json() == []
+    assert TOKEN not in json.dumps(client.get("/api/notifications").json())
+
+
+def test_editing_the_name_keeps_the_secret(client, cfg):
+    created = add_channel(client)
+    r = client.put(f"/api/notify/channels/{created['id']}", json={"name": "Renamed"})
+
+    assert r.status_code == 200
+    stored = json.loads((cfg.data_dir / "notifications.json").read_text())["channels"][0]
+    assert (stored["name"], stored["bot_token"]) == ("Renamed", TOKEN)
+
+
+def test_repointing_a_guarded_edit_needs_the_secret_again(client):
+    created = add_channel(client)
+    r = client.put(f"/api/notify/channels/{created['id']}", json={"chat_id": "-100999"})
+
+    assert r.status_code == 400
+    assert "again to change chat_id" in r.json()["error"]
+
+
+def test_bad_channel_is_a_400_and_unknown_id_a_404(client):
+    assert client.post("/api/notify/channels", json={**HOOK, "url": "ftp://x"}).status_code == 400
+    assert "url" in client.post("/api/notify/channels", json={**HOOK, "url": "ftp://x"}).json()["error"]
+    assert client.put("/api/notify/channels/nope", json=HOOK).status_code == 404
+    assert client.delete("/api/notify/channels/nope").status_code == 404
+    assert client.post("/api/notify/channels/nope/test").status_code == 404
+
+
+def test_the_server_assigns_the_id(client):
+    created = add_channel(client, {**HOOK, "id": "mine"})
+    assert created["id"] != "mine"
+
+
+def test_channel_test_sends_synchronously_and_reports_failures(client, monkeypatch):
+    created = add_channel(client)
+    sent = []
+    monkeypatch.setattr("printhub.app.senders.send", lambda channel, event, cfg: sent.append((channel["name"], event.title)))
+
+    assert client.post(f"/api/notify/channels/{created['id']}/test").status_code == 204
+    assert sent == [("Phone", "Test notification")]
+
+    def refuse(channel, event, cfg):
+        raise SendError("chat not found")
+
+    monkeypatch.setattr("printhub.app.senders.send", refuse)
+    r = client.post(f"/api/notify/channels/{created['id']}/test")
+    assert (r.status_code, r.json()) == (502, {"error": "chat not found"})
+
+
+def test_channel_changes_become_events_without_secrets(client):
+    created = add_channel(client)
+    client.put(f"/api/notify/channels/{created['id']}", json={**CHAT, "name": "Phone 2", "bot_token": ""})
+    client.delete(f"/api/notify/channels/{created['id']}")
+
+    titles = event_titles(client)
+    assert titles[:3] == ["Notification channel Phone 2 removed", "Notification channel Phone 2 changed", "Notification channel Phone added"]
+    assert TOKEN not in json.dumps(client.get("/api/notifications").json())
+
+
+def test_silences_create_list_expire_and_delete(client, cfg):
+    r = client.post("/api/notify/silences", json={"match": "kind", "value": "job", "hours": 1})
+    assert r.status_code == 201
+    silence = r.json()
+    assert set(silence) == {"id", "match", "value", "until"}
+    assert client.get("/api/notify/silences").json() == [silence]
+
+    path = cfg.data_dir / "notifications.json"
+    state = json.loads(path.read_text())
+    state["silences"][0]["until"] = "2000-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(state))
+    assert client.get("/api/notify/silences").json() == []
+
+    again = client.post("/api/notify/silences", json={"match": "title", "value": "Paper jam", "hours": 8}).json()
+    assert client.delete(f"/api/notify/silences/{again['id']}").status_code == 204
+    assert client.delete(f"/api/notify/silences/{again['id']}").status_code == 404
+    assert client.get("/api/notify/silences").json() == []
+
+
+def test_bad_silences_are_refused(client):
+    for body in ({"match": "kind", "value": "job", "hours": 2}, {"match": "kind", "value": "bogus", "hours": 1}, {"match": "x", "value": "a", "hours": 1}):
+        assert client.post("/api/notify/silences", json=body).status_code == 400, body

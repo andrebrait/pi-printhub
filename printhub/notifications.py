@@ -67,7 +67,7 @@ def validate_channel(data: dict) -> dict:
         raise ValueError("type must be email, telegram or webhook")
     channel = {
         "id": _text(data, "id", 1, 100),
-        "name": _text(data, "name", 1, 60),
+        "name": _text(data, "name", 1, 60, strip=True),
         "type": kind,
         "enabled": _flag(data, "enabled"),
         "kinds": _kinds(data),
@@ -91,9 +91,10 @@ def public(channel: dict) -> dict:
 def merge_edit(stored: dict, edit: dict) -> dict:
     kind = stored["type"]
     secret = SECRETS[kind]
-    merged = {**edit, "id": stored["id"]}
-    # A blank secret keeps the stored one, but only when the type is unchanged.
-    kept = edit.get("type") == kind and _blank(edit.get(secret)) and bool(stored.get(secret))
+    # Fields the edit leaves out keep their stored values.
+    merged = {**stored, **edit, "id": stored["id"]}
+    # A missing or blank secret keeps the stored one, but only when the type is unchanged.
+    kept = merged["type"] == kind and _blank(edit.get(secret)) and bool(stored.get(secret))
     if kept:
         merged[secret] = stored[secret]
     channel = validate_channel(merged)
@@ -151,8 +152,10 @@ def _blank(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
-def _text(data: dict, field: str, lo: int, hi: int) -> str:
+def _text(data: dict, field: str, lo: int, hi: int, strip: bool = False) -> str:
     value = data.get(field)
+    if strip and isinstance(value, str):
+        value = value.strip()
     if not isinstance(value, str) or not lo <= len(value) <= hi:
         raise ValueError(f"{field} must be text of {lo} to {hi} characters")
     return value
@@ -172,10 +175,11 @@ def _int(data: dict, field: str, lo: int, hi: int) -> int:
     return value
 
 
-def _choice(data: dict, field: str, options: tuple):
-    if data.get(field) not in options:
+def _choice(data: dict, field: str, options: tuple, default=None):
+    value = data.get(field, default)
+    if value not in options:
         raise ValueError(f"{field} must be one of {list(options)}")
-    return data[field]
+    return value
 
 
 def _kinds(data: dict) -> list[str]:
@@ -224,7 +228,7 @@ def _telegram(data: dict) -> dict:
         "bot_token": token,
         "chat_id": chat,
         "message_thread_id": thread,
-        "parse_mode": _choice(data, "parse_mode", PARSE_MODES),
+        "parse_mode": _choice(data, "parse_mode", PARSE_MODES, "HTML"),
         "disable_notification": _flag(data, "disable_notification"),
         "protect_content": _flag(data, "protect_content"),
         "disable_web_page_preview": _flag(data, "disable_web_page_preview"),

@@ -141,6 +141,34 @@ def test_changing_guarded_field_without_secret_is_refused(make, secret, change):
     assert merged[secret] == "new-secret"
 
 
+@pytest.mark.parametrize("make, secret", SECRET_CASES)
+def test_edit_may_send_only_the_changed_fields(make, secret):
+    stored = validate_channel(make())
+    merged = merge_edit(stored, {"name": "Renamed"})
+    assert merged == {**stored, "name": "Renamed"}
+
+
+@pytest.mark.parametrize(
+    "make, change",
+    [(own_email, {"smtp_host": "other.example.com"}), (telegram, {"chat_id": "-100999"}), (webhook, {"url": "https://elsewhere.example.com/hook"})],
+)
+def test_partial_edit_cannot_repoint_a_stored_secret(make, change):
+    with pytest.raises(ValueError, match="again to change"):
+        merge_edit(validate_channel(make()), change)
+
+
+def test_telegram_parse_mode_defaults_to_html_but_may_be_plain():
+    without = {k: v for k, v in telegram().items() if k != "parse_mode"}
+    assert validate_channel(without)["parse_mode"] == "HTML"
+    assert validate_channel(telegram(parse_mode=None))["parse_mode"] is None
+
+
+def test_names_are_stripped_and_blank_ones_refused():
+    assert validate_channel(email(name="  Owner  "))["name"] == "Owner"
+    with pytest.raises(ValueError, match="^name"):
+        validate_channel(email(name="   "))
+
+
 def test_silence_by_title_and_kind_and_expiry():
     silences = [new_silence("title", "Paper jam", 1, NOW), new_silence("kind", "scan", 8, NOW)]
 

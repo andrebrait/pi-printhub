@@ -23,7 +23,8 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
 from starlette.background import BackgroundTask
 
-from printhub import convert, edits, printing, scanning
+from printhub import convert, edits, printing, scanning, senders
+from printhub import notifications as notification_store
 from printhub.auth import (
     COOKIE,
     LoginLimiter,
@@ -242,6 +243,7 @@ def create_app(
     job_docs_stamp = [None]
     free_bytes = free_bytes or (lambda: shutil.disk_usage(cfg.data_dir).free)
     settings_lock = threading.Lock()
+    notify_lock = threading.Lock()
     limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
     recipients = RecentRecipients(cfg.data_dir / "recipients.json")
 
@@ -824,6 +826,89 @@ def create_app(
                 title = "Direct printer exposure turned on" if body.expose_usb else "Direct printer exposure turned off"
                 notify("info", "settings", title)
             return read_system(cfg.data_dir)
+
+    def channel_at(state: dict, channel_id: str) -> int:
+        for i, channel in enumerate(state["channels"]):
+            if channel["id"] == channel_id:
+                return i
+        raise ApiError(404, "No such channel")
+
+    @api.get("/notify/channels")
+    def get_channels():
+        return [
+            notification_store.public(c) | {"result": app.state.notifier.results.get(c["id"])}
+            for c in notification_store.load(cfg.data_dir)["channels"]
+        ]
+
+    @api.post("/notify/channels", status_code=201)
+    def add_channel(body: dict):
+        with notify_lock:
+            state = notification_store.load(cfg.data_dir)
+            try:
+                channel = notification_store.validate_channel({**body, "id": secrets.token_urlsafe(8)})
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            state["channels"].append(channel)
+            notification_store.save(cfg.data_dir, state)
+            notify("info", "settings", f"Notification channel {channel['name']} added")
+            return notification_store.public(channel)
+
+    @api.put("/notify/channels/{channel_id}")
+    def change_channel(channel_id: str, body: dict):
+        with notify_lock:
+            state = notification_store.load(cfg.data_dir)
+            i = channel_at(state, channel_id)
+            try:
+                channel = state["channels"][i] = notification_store.merge_edit(state["channels"][i], body)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            notification_store.save(cfg.data_dir, state)
+            notify("info", "settings", f"Notification channel {channel['name']} changed")
+            return notification_store.public(channel)
+
+    @api.delete("/notify/channels/{channel_id}", status_code=204)
+    def remove_channel(channel_id: str):
+        with notify_lock:
+            state = notification_store.load(cfg.data_dir)
+            channel = state["channels"].pop(channel_at(state, channel_id))
+            notification_store.save(cfg.data_dir, state)
+            notify("info", "settings", f"Notification channel {channel['name']} removed")
+
+    @api.post("/notify/channels/{channel_id}/test", status_code=204)
+    def test_channel(channel_id: str):
+        state = notification_store.load(cfg.data_dir)
+        channel = state["channels"][channel_at(state, channel_id)]
+        try:
+            senders.send(channel, senders.test_event(channel["name"]), app.state.cfg)
+        except senders.SendError as e:
+            raise ApiError(502, str(e)) from None
+
+    @api.get("/notify/silences")
+    def get_silences():
+        return notification_store.active_silences(notification_store.load(cfg.data_dir)["silences"], datetime.now(timezone.utc))
+
+    @api.post("/notify/silences", status_code=201)
+    def add_silence(body: dict):
+        now = datetime.now(timezone.utc)
+        with notify_lock:
+            state = notification_store.load(cfg.data_dir)
+            try:
+                silence = notification_store.new_silence(body.get("match"), body.get("value"), body.get("hours"), now)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from None
+            state["silences"] = [*notification_store.active_silences(state["silences"], now), silence]
+            notification_store.save(cfg.data_dir, state)
+            return silence
+
+    @api.delete("/notify/silences/{silence_id}", status_code=204)
+    def remove_silence(silence_id: str):
+        with notify_lock:
+            state = notification_store.load(cfg.data_dir)
+            live = notification_store.active_silences(state["silences"], datetime.now(timezone.utc))
+            state["silences"] = [s for s in live if s.get("id") != silence_id]
+            if len(state["silences"]) == len(live):
+                raise ApiError(404, "No such silence")
+            notification_store.save(cfg.data_dir, state)
 
     app.include_router(api)
     app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")
