@@ -4,6 +4,15 @@
 # Run by install.sh and, on plug, by printhub-printer.service.
 set -euo pipefail
 
+# apply_share and read_request: next to this script, which is where install.sh puts both.
+# shellcheck source=deploy/apply-settings.sh
+source "$(dirname "${BASH_SOURCE[0]}")/apply-settings.sh"
+
+# request_or_default: "share expose_usb" from read_request; an unreadable request is logged and means the defaults.
+request_or_default() {
+    read_request || { echo "ignoring the unreadable system request; using the defaults" >&2; echo "true true"; }
+}
+
 # ipp_usb_port STATE_DIR USB_SYSFS: the local port ipp-usb serves the attached device on.
 # ipp-usb keeps one <vid>-<pid>[-<serial>]-<model>.state file per device it has seen, attached or not; it maps
 # serial characters outside [0-9A-Za-z_-] to "-". One printer at a time: the first attached match wins.
@@ -100,7 +109,7 @@ apply_printer() {
     local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
     local avahi=${AVAHI_DIR:-/etc/avahi/services}
-    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp attrs kind
+    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp attrs kind share
     # ipp-usb writes the state file before it serves the device (and keeps it from earlier plugs), so wait until
     # the printer itself answers.
     for ((i = 0; i < 30; i++)); do
@@ -116,7 +125,7 @@ apply_printer() {
 
     # Location: the hostname, which AirSane's scanner also shows.
     lpadmin -p "$queue" -E -v "$uri" -m "driverless:$uri" -D "$model" -L "$(hostname)" \
-        -o printer-is-shared=true -o printer-error-policy=retry-job
+        -o printer-error-policy=retry-job
     install -d -m 0755 "$avahi"
     attrs=$(ipptool -tv "ipp://localhost:631/printers/$queue" get-printer-attributes.test) || true
     for kind in airprint generic; do
@@ -125,7 +134,7 @@ apply_printer() {
         chmod 0644 "$tmp" # avahi-daemon reads it
         mv "$tmp" "$avahi/printhub-$kind.service"
     done
-    # Shared, but announced by the files above instead of by CUPS, which always names it "<info> @ <host>".
+    # Announced by the files above instead of by CUPS, which always names it "<info> @ <host>".
     # After reading the queue: cupsctl restarts cupsd.
     cupsctl --share-printers BrowseLocalProtocols=none
     tmp=$(mktemp "$sane/airscan.conf.XXXXXX")
@@ -136,6 +145,9 @@ apply_printer() {
     systemctl daemon-reload
     # Missing on a first install, before install.sh installs them; it starts them itself.
     systemctl try-restart printhub airsaned || true
+    # Last, and after the announcements exist: sharing on starts AirSane, off removes the files again.
+    read -r share _ < <(request_or_default)
+    apply_share "$share"
 }
 
 # Sourcing the file (for install.sh and tests) must not change anything.
