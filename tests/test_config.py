@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from printhub.config import ConfigError, load_config
+from printhub.config import ConfigError, load_config, validate
 
 REQUIRED = """\
 password_hash = "$argon2id$hash"
@@ -73,3 +75,39 @@ def test_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("PRINTHUB_CONFIG", str(write(tmp_path, REQUIRED)))
 
     assert load_config().smtp_user == "printhub"
+
+
+def test_config_toml_out_of_range_is_an_error(tmp_path):
+    with pytest.raises(ConfigError, match="retention_days"):
+        load_config(write(tmp_path, REQUIRED + "retention_days = 0\n"))
+
+
+def test_config_toml_may_use_a_sender_that_is_not_an_address(tmp_path):
+    # Many SMTP services log in as "apikey" or an access key id, and the installer used to default the sender to it.
+    assert load_config(write(tmp_path, REQUIRED.replace("printhub@example.com", "apikey"))).mail_from == "apikey"
+
+
+def test_config_toml_sender_with_a_line_break_is_refused(tmp_path):
+    text = REQUIRED.replace("printhub@example.com", "a@example.com\\nBcc: x@example.com")  # a TOML \n escape
+    with pytest.raises(ConfigError, match="mail_from"):
+        load_config(write(tmp_path, text))
+
+
+@pytest.mark.parametrize("value", ["a@example.com\nBcc: x@example.com", "a@example.com\r", 5])
+def test_mail_from_must_be_one_line_of_text(cfg, value):
+    with pytest.raises(ConfigError, match="mail_from"):
+        validate(replace(cfg, mail_from=value))
+
+
+def test_min_free_gb_must_be_below_the_data_disk(cfg, monkeypatch):
+    cfg.data_dir.mkdir()
+    monkeypatch.setattr("printhub.config.shutil.disk_usage", lambda path: SimpleNamespace(total=10 * 1024**3))
+    validate(replace(cfg, min_free_gb=9.5))
+    for value in (10, 11):
+        with pytest.raises(ConfigError, match="min_free_gb"):
+            validate(replace(cfg, min_free_gb=value))
+
+
+def test_min_free_gb_is_not_compared_to_a_disk_that_is_not_there_yet(cfg, monkeypatch):
+    monkeypatch.setattr("printhub.config.shutil.disk_usage", lambda path: SimpleNamespace(total=1024**3))
+    validate(replace(cfg, min_free_gb=100))  # data_dir does not exist

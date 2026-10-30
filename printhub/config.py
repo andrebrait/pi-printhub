@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import os
+import shutil
 import tomllib
 from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
@@ -27,6 +28,28 @@ class Config:
     data_dir: Path = Path("/var/lib/printhub")
 
 
+def validate(cfg: Config) -> None:
+    _check(cfg.retention_days, "retention_days", int, 1, 365)
+    _check(cfg.min_free_gb, "min_free_gb", (int, float), 0.5, 1000)
+    _check(cfg.smtp_port, "smtp_port", int, 1, 65535)
+    if cfg.smtp_security not in ("starttls", "tls"):
+        raise ConfigError(f'smtp_security must be "starttls" or "tls", got {cfg.smtp_security!r}')
+    # Only the header injection is refused here: config.toml may name a sender that is not an address (an SMTP
+    # service's "apikey"). The settings page demands an address of its own (settings.save).
+    if not isinstance(cfg.mail_from, str) or "\r" in cfg.mail_from or "\n" in cfg.mail_from:
+        raise ConfigError(f"mail_from must be text without line breaks, got {cfg.mail_from!r}")
+    # Skipped while the directory is missing (first start: it is created on the first save).
+    if cfg.data_dir.exists():
+        total = shutil.disk_usage(cfg.data_dir).total / 1024**3
+        if cfg.min_free_gb >= total:
+            raise ConfigError(f"min_free_gb must be below the {total:.3g} GB of the data disk, got {cfg.min_free_gb!r}")
+
+
+def _check(value, key: str, kinds: type | tuple[type, ...], lo, hi) -> None:
+    if isinstance(value, bool) or not isinstance(value, kinds) or not lo <= value <= hi:
+        raise ConfigError(f"{key} must be between {lo} and {hi}, got {value!r}")
+
+
 def load_config(path: Path | None = None) -> Config:
     if path is None:
         path = Path(os.environ.get("PRINTHUB_CONFIG", "/etc/printhub/config.toml"))
@@ -45,6 +68,9 @@ def load_config(path: Path | None = None) -> Config:
             raise ConfigError(f"missing required key: {f.name}")
     if "data_dir" in values:
         values["data_dir"] = Path(values["data_dir"])
-    if values["smtp_security"] not in ("starttls", "tls"):
-        raise ConfigError(f'smtp_security must be "starttls" or "tls", got {values["smtp_security"]!r}')
-    return Config(**values)
+    cfg = Config(**values)
+    validate(cfg)
+    # settings imports this module, so load it lazily
+    from printhub.settings import apply_overlay
+
+    return apply_overlay(cfg)

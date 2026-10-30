@@ -20,7 +20,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
 from starlette.background import BackgroundTask
 
 from printhub import convert, edits, printing, scanning
@@ -28,13 +28,14 @@ from printhub.auth import (
     COOKIE,
     LoginLimiter,
     PendingShares,
+    hash_password,
     issue_session,
     require_session,
     session_valid,
     set_session_cookie,
     verify_password,
 )
-from printhub.config import Config, load_config
+from printhub.config import Config, ConfigError, load_config
 from printhub.documents import Crop, Doc, DocBusy, DocNotFound, DocStore, MailRecord, Page, PrintRecord
 from printhub.events import EventLog
 from printhub.mail import (
@@ -50,6 +51,7 @@ from printhub.middleware import MAX_BODY, MAX_UPLOAD, Guard
 from printhub.printing import PrintOptions
 from printhub.retention import DiskFull, busy_policy, ensure_free_space
 from printhub.scanning import Scanner, ScannerBusy, ScannerUnavailable, ScanSettings
+from printhub.settings import read_system, request_system, save as save_settings
 from printhub.watcher import Watcher
 
 THUMB_PX = 400
@@ -71,6 +73,36 @@ class ApiError(Exception):
 
 class Login(BaseModel):
     password: str
+
+
+class SettingsPatch(BaseModel):
+    # Strict types keep "30" from becoming 30; a null or absent key means "leave as is".
+    model_config = ConfigDict(extra="forbid")
+    retention_days: StrictInt | None = None
+    min_free_gb: StrictInt | StrictFloat | None = None
+    smtp_host: StrictStr | None = None
+    smtp_port: StrictInt | None = None
+    smtp_security: StrictStr | None = None
+    smtp_user: StrictStr | None = None
+    smtp_password: StrictStr | None = None
+    mail_from: StrictStr | None = None
+
+
+class PasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current: StrictStr
+    new: StrictStr
+
+
+class SendTestEmail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    to: StrictStr
+
+
+class SystemSwitches(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    share: StrictBool
+    expose_usb: StrictBool
 
 
 class PageEdit(BaseModel):
@@ -98,6 +130,27 @@ class EmailRequest(BaseModel):
 class MarkRead(BaseModel):
     up_to: int | None = None
     ids: list[int] | None = None
+
+
+EMAIL_KEYS = {"smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from"}
+SMTP_SERVER_KEYS = {"smtp_host", "smtp_port", "smtp_security", "smtp_user"}
+
+
+def public_settings(cfg: Config) -> dict:
+    keys = ("retention_days", "min_free_gb", "smtp_host", "smtp_port", "smtp_security", "smtp_user", "mail_from")
+    return {k: getattr(cfg, k) for k in keys} | {"smtp_password_set": bool(cfg.smtp_password)}
+
+
+def describe_changes(old: Config, changes: dict) -> str:
+    """Event title naming what changed, never a secret."""
+    parts = []
+    if "retention_days" in changes:
+        parts.append(f"Retention changed from {old.retention_days} to {changes['retention_days']} days")
+    if "min_free_gb" in changes:
+        parts.append(f"Minimum free space changed from {old.min_free_gb:g} to {changes['min_free_gb']:g} GB")
+    if changes.keys() & EMAIL_KEYS:
+        parts.append("Email settings changed")
+    return "; ".join(parts)
 
 
 def _now() -> str:
@@ -187,9 +240,12 @@ def create_app(
     job_docs: dict[int, str] = {}
     job_docs_stamp = [None]
     free_bytes = free_bytes or (lambda: shutil.disk_usage(cfg.data_dir).free)
-    min_free = int(cfg.min_free_gb * 1024**3)
+    settings_lock = threading.Lock()
     limiter, shares, share_lock = LoginLimiter(), PendingShares(), threading.Lock()
     recipients = RecentRecipients(cfg.data_dir / "recipients.json")
+
+    def min_free() -> int:
+        return int(app.state.cfg.min_free_gb * 1024**3)
 
     def admit_share():
         if not share_lock.acquire(blocking=False):
@@ -198,7 +254,7 @@ def create_app(
             pending = shares.paths(time.monotonic())
             if len(pending) >= PENDING_MAX_COUNT or sum(p.stat().st_size for p in pending if p.exists()) + MAX_UPLOAD > PENDING_MAX_BYTES:
                 denied = JSONResponse({"error": "Too many pending shares"}, 429)
-            elif free_bytes() < min_free + MAX_BODY:
+            elif free_bytes() < min_free() + MAX_BODY:
                 denied = JSONResponse({"error": "Disk full"}, 507)
             else:
                 return None
@@ -220,7 +276,8 @@ def create_app(
             stop.set()
 
     app = FastAPI(openapi_url=None, lifespan=lifespan)
-    app.add_middleware(Guard, cfg=cfg, admit_share=admit_share, release_share=share_lock.release)
+    app.state.cfg = cfg
+    app.add_middleware(Guard, current=lambda: app.state.cfg, admit_share=admit_share, release_share=share_lock.release)
 
     def using_document(fn=None, *, exclusive=False):
         def decorate(fn):
@@ -247,6 +304,10 @@ def create_app(
     async def doc_busy(request, exc):
         return JSONResponse({"error": "Document is busy"}, 409)
 
+    @app.exception_handler(ConfigError)
+    async def invalid_setting(request, exc: ConfigError):
+        return JSONResponse({"error": str(exc)}, 400)
+
     @app.exception_handler(RequestValidationError)
     async def invalid(request, exc: RequestValidationError):
         msg = "; ".join(f"{'.'.join(map(str, e['loc'][1:]))}: {e['msg']}" for e in exc.errors())
@@ -256,7 +317,7 @@ def create_app(
 
     def make_room() -> None:
         try:
-            ensure_free_space(store, min_free, busy, free_bytes)
+            ensure_free_space(store, min_free(), busy, free_bytes)
         except DiskFull:
             raise ApiError(507, "Disk full") from None
 
@@ -358,13 +419,13 @@ def create_app(
     def login(body: Login, request: Request, response: Response):
         if not limiter.allow(request.client.host, time.monotonic()):
             raise ApiError(429, "Too many attempts; wait a minute")
-        if not verify_password(cfg.password_hash, body.password):
+        if not verify_password(app.state.cfg.password_hash, body.password):
             raise ApiError(401, "Wrong password")
-        set_session_cookie(response, issue_session(cfg))
+        set_session_cookie(response, issue_session(app.state.cfg))
 
     @app.post("/share")
     def share(request: Request, file: UploadFile):
-        if session_valid(cfg, request.cookies.get(COOKIE)):
+        if session_valid(app.state.cfg, request.cookies.get(COOKIE)):
             with ingest(file.file, file.filename or "") as doc_id:
                 conversion_error(doc_id)  # print.html shows the failure and offers Retry
                 return RedirectResponse(f"/print.html?doc={doc_id}", 303)
@@ -381,7 +442,7 @@ def create_app(
 
     # Session routes
 
-    api = APIRouter(prefix="/api", dependencies=[Depends(require_session(cfg))])
+    api = APIRouter(prefix="/api", dependencies=[Depends(require_session(lambda: app.state.cfg))])
 
     @api.post("/logout", status_code=204)
     def logout(response: Response):
@@ -682,7 +743,7 @@ def create_app(
                 Attachment(filename, path.read_bytes(), mime) for filename, path, mime in exports
             ]
         try:
-            send(cfg, body.to, body.subject, attachments)
+            send(app.state.cfg, body.to, body.subject, attachments)
         except InvalidRecipient as e:
             raise ApiError(400, f"Invalid recipient: {e}") from None
         except AttachmentTooLarge:
@@ -696,6 +757,70 @@ def create_app(
     @api.get("/recipients")
     def get_recipients():
         return recipients.list()
+
+    @api.get("/settings")
+    def get_settings():
+        return public_settings(app.state.cfg)
+
+    @api.put("/settings")
+    def put_settings(body: SettingsPatch):
+        sent = body.model_dump(exclude_none=True)
+        if not sent.get("smtp_password"):  # blank keeps the stored password
+            sent.pop("smtp_password", None)
+        with settings_lock:
+            old = app.state.cfg
+            changes = {k: v for k, v in sent.items() if getattr(old, k) != v}
+            if changes.keys() & SMTP_SERVER_KEYS and "smtp_password" not in sent:
+                # Else a changed host would send the stored password to wherever it points.
+                raise ApiError(400, "Enter the SMTP password again to change the server settings")
+            if changes:
+                app.state.cfg = save_settings(old, changes)
+                notify("info", "settings", describe_changes(old, changes))
+            return public_settings(app.state.cfg)
+
+    @api.post("/settings/password", status_code=204)
+    def change_password(body: PasswordChange, request: Request, response: Response):
+        # The same limit as login: the session alone must not allow guessing the current password.
+        if not limiter.allow(request.client.host, time.monotonic()):
+            raise ApiError(429, "Too many attempts; wait a minute")
+        with settings_lock:
+            old = app.state.cfg
+            if not verify_password(old.password_hash, body.current):
+                raise ApiError(403, "Wrong current password")
+            if len(body.new) < 8:
+                raise ApiError(400, "New password must be at least 8 characters")
+            # A new secret signs out every other session.
+            app.state.cfg = save_settings(
+                old, {"password_hash": hash_password(body.new), "session_secret": secrets.token_urlsafe(32)}
+            )
+            set_session_cookie(response, issue_session(app.state.cfg))
+            notify("info", "settings", "Web password changed")
+
+    @api.post("/settings/test-email", status_code=204)
+    def test_email(body: SendTestEmail):
+        try:
+            send(app.state.cfg, [body.to], "Print Hub test email", [])
+        except InvalidRecipient as e:
+            raise ApiError(400, f"Invalid recipient: {e}") from None
+        except MailError as e:
+            raise ApiError(502, str(e)) from None
+
+    @api.get("/settings/system")
+    def get_system():
+        return read_system(cfg.data_dir)
+
+    @api.put("/settings/system", status_code=202)
+    def put_system(body: SystemSwitches):
+        with settings_lock:
+            before = read_system(cfg.data_dir)["requested"]
+            request_system(cfg.data_dir, body.share, body.expose_usb)
+            if before["share"] != body.share:
+                title = "Sharing turned on" if body.share else "Sharing turned off"
+                notify("info", "settings", title)
+            if before["expose_usb"] != body.expose_usb:
+                title = "Direct printer exposure turned on" if body.expose_usb else "Direct printer exposure turned off"
+                notify("info", "settings", title)
+            return read_system(cfg.data_dir)
 
     app.include_router(api)
     app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")

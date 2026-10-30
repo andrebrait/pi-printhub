@@ -7,8 +7,8 @@ import { snapCrop } from "./crop.js";
 import { fakeDocument } from "./fake-dom.test-util.js";
 
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8").replace(/^import .*;$/gm, "");
-const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [], dataset: {},
-  addEventListener(type, fn) { this.listeners[type] = fn; },
+const element = () => ({ hidden: true, textContent: "", value: "", listeners: {}, options: [], dataset: {}, attributes: {},
+  addEventListener(type, fn) { this.listeners[type] = fn; }, setAttribute(name, value) { this.attributes[name] = value; },
   add(option) { this.options.push(option); }, replaceChildren() { this.options = []; }, contains: () => false,
 });
 const dom = () => {
@@ -344,5 +344,180 @@ test("another scan waits for queued page edits and does not start when one fails
       assert.deepEqual(order, ["patch"]);
       assert.match(document.getElementById("scan-error").textContent, /not scanned/i);
     }
+  }
+});
+
+const SETTINGS = { retention_days: 30, min_free_gb: 2, smtp_host: "smtp.example", smtp_port: 587, smtp_security: "starttls",
+  smtp_user: "me", mail_from: "hub@example", smtp_password_set: true };
+const reply = (body, ok = true) => ({ ok, json: async () => body });
+
+// A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
+function settingsEnv(systems, failing = []) {
+  const document = dom();
+  const calls = [];
+  const timers = [];
+  const apiFetch = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method ?? "GET", body: opts.body });
+    if (url === "/api/settings/system" && opts.method !== "PUT") {
+      const next = systems.length > 1 ? systems.shift() : systems[0];
+      return next instanceof Error ? reply(null, false) : reply(next);
+    }
+    if (url === "/api/settings/system") return reply(pending); // 202: the request is written, not applied
+    if (failing.includes(url)) return reply(null, false);
+    return reply(SETTINGS);
+  };
+  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout",
+    `${source("settings.js").replace(/main\(\);\s*$/, "")} return { main };`)(
+    document, apiFetch, async () => "Rejected", (fn) => timers.push(fn));
+  const tick = async () => { // let pending promises settle, then fire the timers that were waiting
+    await new Promise((r) => setImmediate(r));
+    timers.splice(0).forEach((fn) => fn());
+    await new Promise((r) => setImmediate(r));
+  };
+  return { document, calls, main, tick };
+}
+const applied = { requested: { share: true, expose_usb: true }, status: { state: "applied", share: true, expose_usb: true, error: null }, pending: false };
+const pending = { requested: { share: false, expose_usb: true }, status: null, pending: true };
+
+test("settings fills the form without the stored password and keeps it when the field is left blank", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  assert.equal(document.getElementById("retention_days").value, 30);
+  assert.equal(document.getElementById("smtp_host").value, "smtp.example");
+  assert.equal(document.getElementById("system-msg").textContent, "", "an old applied status is not announced on load");
+  assert.equal(document.getElementById("smtp_password").value, "");
+  assert.match(document.getElementById("smtp_password").placeholder, /saved/i);
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  const put = calls.find((c) => c.method === "PUT" && c.url === "/api/settings");
+  assert.equal(put.body.smtp_port, 587); // a number: the server rejects "587"
+  assert.equal(put.body.smtp_host, "smtp.example");
+  assert.equal("smtp_password" in put.body, false);
+  document.getElementById("smtp_password").value = "hunter22";
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  assert.equal(calls.filter((c) => c.method === "PUT").at(-1).body.smtp_password, "hunter22");
+});
+
+test("a sharing change shows Applying until the status catches up, then the applied state", async () => {
+  const { document, main, tick } = settingsEnv([applied, pending, { ...applied, requested: pending.requested }]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  document.getElementById("share").checked = false;
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  assert.match(msg.textContent, /Applying/);
+  await tick();
+  assert.match(msg.textContent, /Applying/);
+  await tick();
+  await saved;
+  assert.match(msg.textContent, /Applied/);
+  assert.equal(document.getElementById("system-save").disabled, false);
+});
+
+test("a page loaded during a pending sharing change shows the requested switches", async () => {
+  const requested = { share: true, expose_usb: true };
+  const { document, main, tick } = settingsEnv([{ requested, status: null, pending: true }]);
+  main(); // the wait for the apply goes on in the background; tick fires its poll
+  await tick();
+  assert.equal(document.getElementById("share").checked, true);
+  assert.equal(document.getElementById("expose_usb").checked, true);
+});
+
+test("a sharing change that never applies says so after 120 seconds", async () => {
+  const { document, main, tick } = settingsEnv([applied, pending]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  for (let i = 0; i < 59; i++) await tick();
+  assert.match(msg.textContent, /Applying/, "still waiting at the poll before 120 seconds");
+  await tick();
+  await saved;
+  assert.match(msg.textContent, /Not applied after 2 minutes: is printhub-apply\.path running\? Re-run the installer\./);
+});
+
+test("a failed apply restores the switches to what is in force", async () => {
+  const failed = { requested: { share: false, expose_usb: false },
+    status: { state: "failed", share: true, expose_usb: false, error: "cupsctl failed" }, pending: false };
+  const { document, main, tick } = settingsEnv([applied, failed]);
+  await main();
+  document.getElementById("share").checked = false;
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  await tick();
+  await saved;
+  assert.equal(document.getElementById("share").checked, true);
+  assert.equal(document.getElementById("expose_usb").checked, false);
+  assert.match(document.getElementById("system-msg").textContent, /cupsctl failed/);
+});
+
+test("a failed status poll does not end the wait", async () => {
+  const { document, main, tick } = settingsEnv([applied, new Error("down"), { ...applied, requested: pending.requested }]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  await tick(); // the poll fails
+  assert.match(msg.textContent, /Applying/);
+  await tick(); // the next one succeeds
+  await saved;
+  assert.match(msg.textContent, /Applied/);
+});
+
+test("status polls that keep failing end with the not-applied message and the last error", async () => {
+  const { document, main, tick } = settingsEnv([applied, new Error("down")]);
+  await main();
+  const msg = document.getElementById("system-msg");
+  const saved = document.getElementById("system-form").listeners.submit({ preventDefault() {} });
+  for (let i = 0; i < 59; i++) await tick();
+  assert.match(msg.textContent, /Applying/, "still waiting before 2 minutes");
+  await tick();
+  await saved;
+  assert.match(msg.textContent, /Not applied after 2 minutes: is printhub-apply\.path running\?/);
+  assert.match(msg.textContent, /Rejected/);
+});
+
+test("changing the SMTP server without typing the password again says so inline and sends nothing", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  const sent = () => calls.filter((c) => c.method === "PUT" && c.url === "/api/settings");
+  for (const [field, value] of [["smtp_host", "smtp.other"], ["smtp_port", "465"], ["smtp_user", "you"], ["smtp_security", "tls"]]) {
+    document.getElementById(field).value = value;
+    await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+    assert.equal(sent().length, 0, field);
+    assert.equal(document.getElementById("email-msg").textContent, "Enter the SMTP password again to change the server settings");
+    assert.equal(document.getElementById("email-save").disabled, false);
+    document.getElementById(field).value = SETTINGS[field];
+  }
+  document.getElementById("smtp_host").value = "smtp.other";
+  document.getElementById("smtp_password").value = "hunter22";
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].body.smtp_host, "smtp.other");
+});
+
+test("changing only the sender needs no SMTP password", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  document.getElementById("mail_from").value = "other@example";
+  await document.getElementById("email-form").listeners.submit({ preventDefault() {} });
+  assert.equal(calls.filter((c) => c.method === "PUT" && c.url === "/api/settings").length, 1);
+  assert.match(document.getElementById("email-msg").textContent, /Saved/);
+});
+
+test("a test email says it is sending, then the result, next to its own button", async () => {
+  for (const [failing, result] of [[[], "Test email sent to me@example.com"], [["/api/settings/test-email"], "Rejected"]]) {
+    const { document, calls, main } = settingsEnv([applied], failing);
+    await main();
+    const button = document.getElementById("test-email"), line = document.getElementById("test-msg");
+    document.getElementById("test-to").value = "me@example.com";
+    const sending = document.getElementById("test-form").listeners.submit({ preventDefault() {} });
+    assert.equal(button.disabled, true);
+    assert.equal(button.textContent, "Sending…");
+    assert.match(line.textContent, /Sending a test email to me@example\.com/);
+    await sending;
+    assert.equal(calls.at(-1).body.to, "me@example.com");
+    assert.equal(line.textContent, result);
+    assert.equal(line.attributes.role, failing.length ? "alert" : "status");
+    assert.equal(document.getElementById("email-msg").textContent, "", "the Save line stays for saves");
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, "Send test email");
   }
 });

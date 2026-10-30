@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+from collections.abc import Callable
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -21,9 +23,9 @@ class Guard:
     checks cannot live in dependencies.
     """
 
-    def __init__(self, app, cfg: Config, admit_share=None, release_share=None):
+    def __init__(self, app, current: Callable[[], Config], admit_share=None, release_share=None):
         self.app = app
-        self.cfg = cfg
+        self.current = current
         self.admit_share, self.release_share = admit_share, release_share
 
     async def __call__(self, scope, receive, send):
@@ -33,7 +35,7 @@ class Guard:
         method, path = scope["method"], scope["path"]
         if denied := self._deny(request, method, path):
             return await denied(scope, receive, send)
-        reserved = method == "POST" and path == "/share" and not session_valid(self.cfg, request.cookies.get(COOKIE))
+        reserved = method == "POST" and path == "/share" and not session_valid(self.current(), request.cookies.get(COOKIE))
         if reserved and self.admit_share:
             if denied := self.admit_share():
                 return await denied(scope, receive, send)
@@ -69,14 +71,15 @@ class Guard:
                 self.release_share()
 
     def _deny(self, request: Request, method: str, path: str) -> JSONResponse | None:
+        cfg = self.current()  # one snapshot per request, so a concurrent save cannot split the checks
         if not (method == "POST" and path == "/share") and not origin_ok(
-            method, request.headers.get("origin"), self.cfg
+            method, request.headers.get("origin"), cfg
         ):
             return _error(403, "Forbidden origin")
         if (
             path.startswith("/api/")
             and not (method == "POST" and path == "/api/login")
-            and not session_valid(self.cfg, request.cookies.get(COOKIE))
+            and not session_valid(cfg, request.cookies.get(COOKIE))
         ):
             return _error(401, "Not logged in")
         length = request.headers.get("content-length")

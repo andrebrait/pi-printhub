@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import json
+import os
+import pwd
 import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).parent.parent / "deploy" / "printer-setup.sh"
+OWNER = pwd.getpwuid(os.getuid()).pw_name
 
 
 def sh(expr: str, *args: str, **env: str) -> subprocess.CompletedProcess:
@@ -78,7 +82,9 @@ def test_scanner_pin_escapes_systemd_specials(tmp_path):
 IPPTOOL_OK = 'ipptool() { echo "        printer-make-and-model (textWithoutLanguage) = HP OfficeJet Pro 6970"; }'
 
 
-def apply(tmp_path: Path, stubs: str, attached: bool = True, state: bool = True) -> tuple[subprocess.CompletedProcess, str]:
+def apply(
+    tmp_path: Path, stubs: str, attached: bool = True, state: bool = True, env: dict[str, str] | None = None
+) -> tuple[subprocess.CompletedProcess, str]:
     """Run apply_printer with CUPS, systemd and sleep stubbed; returns the result and the command log."""
     sysfs, statedir, log = tmp_path / "sysfs", tmp_path / "state", tmp_path / "log"
     sysfs.mkdir(exist_ok=True)
@@ -90,11 +96,14 @@ def apply(tmp_path: Path, stubs: str, attached: bool = True, state: bool = True)
     base = (
         f'log() {{ echo "$*" >>{log}; }}; lpadmin() {{ log "lpadmin $*"; }}; cupsctl() {{ log "cupsctl $*"; }}; '
         f'systemctl() {{ log "systemctl $*"; }}; sleep() {{ log "sleep $*"; }}; hostname() {{ echo testhost; }}; '
+        # The queue exists once lpadmin has made it.
+        'lpstat() { [[ $1 == -v ]] && echo "device for $2: ipp://localhost:60000/ipp/print"; return 0; }; '
     )
     r = sh(
         f"{base}{stubs}; apply_printer",
         STATE_DIR=str(statedir), USB_SYSFS=str(sysfs), SANE_DIR=str(tmp_path / "sane"),
         DROPIN_DIR=str(tmp_path / "dropin"), AVAHI_DIR=str(tmp_path / "avahi"),
+        **{"DATA_DIR": str(tmp_path / "nodata"), "OWNER": OWNER, **(env or {})},
     )
     return r, log.read_text() if log.exists() else ""
 
@@ -104,7 +113,7 @@ def test_apply_points_queue_scanner_and_pin_at_the_device(tmp_path):
     assert r.returncode == 0, r.stderr
     assert (
         "lpadmin -p OfficeJet -E -v ipp://localhost:60000/ipp/print -m driverless:ipp://localhost:60000/ipp/print "
-        "-D HP OfficeJet Pro 6970 -L testhost -o printer-is-shared=true -o printer-error-policy=retry-job"
+        "-D HP OfficeJet Pro 6970 -L testhost -o printer-error-policy=retry-job"
     ) in log
     assert "lpadmin -x" not in log  # queued jobs survive a replug
     assert '"HP OfficeJet Pro 6970" = http://localhost:60000/eSCL' in (tmp_path / "sane" / "airscan.conf").read_text()
@@ -147,6 +156,20 @@ def test_first_install_without_printhub_units_succeeds(tmp_path):
     r, log = apply(tmp_path, IPPTOOL_OK + '; systemctl() { log "systemctl $*"; [[ $1 != try-restart ]]; }')
     assert r.returncode == 0, r.stderr
     assert "systemctl try-restart printhub airsaned" in log
+
+
+def test_printhub_and_airsane_restart_only_when_the_scanner_files_change(tmp_path):
+    # A re-share runs apply_printer with the same device; the web app that asked for it must not be restarted.
+    first, log = apply(tmp_path, IPPTOOL_OK)
+    assert first.returncode == 0, first.stderr
+    assert log.count("systemctl try-restart printhub airsaned") == 1
+    for stale in (tmp_path / "sane" / "airscan.conf", tmp_path / "dropin" / "scanner.conf", None):
+        (tmp_path / "log").unlink()
+        if stale:
+            stale.write_text("stale\n")
+        again, log = apply(tmp_path, IPPTOOL_OK, attached=False, state=False)
+        assert again.returncode == 0, again.stderr
+        assert log.count("systemctl try-restart") == (1 if stale else 0), stale
 
 
 def test_serial_is_sanitized_like_ipp_usb_does(tmp_path):
@@ -247,7 +270,7 @@ def test_apply_announces_both_entries_instead_of_cups(tmp_path):
     assert "<name>HP OfficeJet Pro 6970 (Pi)</name>" in (avahi / "printhub-airprint.service").read_text()
     assert "<name>HP OfficeJet Pro 6970 (Pi) (Generic)</name>" in (avahi / "printhub-generic.service").read_text()
     assert (avahi / "printhub-generic.service").stat().st_mode & 0o777 == 0o644
-    assert "cupsctl --share-printers BrowseLocalProtocols=none" in log
+    assert "cupsctl BrowseLocalProtocols=none" in log
 
 
 def test_location_is_the_hostname_on_the_queue_and_both_adverts(tmp_path):
@@ -262,3 +285,38 @@ def test_location_is_the_hostname_on_the_queue_and_both_adverts(tmp_path):
     assert "-D HP OfficeJet Pro 6970 -L printpi" in log
     for kind in ("airprint", "generic"):
         assert "<txt-record>note=printpi</txt-record>" in (tmp_path / "avahi" / f"printhub-{kind}.service").read_text()
+
+
+def request(tmp_path: Path, **values: bool) -> dict[str, str]:
+    """Env for a system-request.json owned by the current user (as the app user's file would be)."""
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    (data / "system-request.json").write_text(json.dumps({"share": True, "expose_usb": True, "at": "t", **values}))
+    return {"DATA_DIR": str(data), "OWNER": OWNER}
+
+
+def test_replug_keeps_sharing_off(tmp_path):
+    r, log = apply(tmp_path, IPPTOOL_OK, env=request(tmp_path, share=False))
+    assert r.returncode == 0, r.stderr
+    assert "printer-is-shared=false" in log and "printer-is-shared=true" not in log
+    assert "cupsctl --no-share-printers" in log
+    assert list((tmp_path / "avahi").glob("printhub-*.service")) == []
+    assert "cupsctl --share-printers" not in log  # not even briefly shared
+    assert "systemctl disable --now airsaned" in log
+
+
+def test_replug_shares_by_default(tmp_path):
+    r, log = apply(tmp_path, IPPTOOL_OK)
+    assert r.returncode == 0, r.stderr
+    assert "lpadmin -p OfficeJet -o printer-is-shared=true" in log
+    assert (tmp_path / "avahi" / "printhub-airprint.service").exists()
+    assert "systemctl enable --now airsaned" in log
+
+
+def test_replug_with_an_unreadable_request_logs_it_and_shares(tmp_path):
+    env = request(tmp_path)
+    (tmp_path / "data" / "system-request.json").write_text("not json")
+    r, log = apply(tmp_path, IPPTOOL_OK, env=env)
+    assert r.returncode == 0, r.stderr
+    assert "not JSON" in r.stderr
+    assert "printer-is-shared=true" in log

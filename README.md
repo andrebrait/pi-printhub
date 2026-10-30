@@ -34,6 +34,8 @@ Any printer with an IPP-over-USB interface works; others fall back to HPLIP, whi
 - `<model> (Pi)` and `<model> (Pi) (Generic)` (printers) and the AirSane scanner: CUPS and AirSane on the Pi accept the job or scan, render it, and talk to the printer themselves. Use these by default. Both printers are the same CUPS queue, announced by `/etc/avahi/services/printhub-*.service` instead of by CUPS (which would name it `<model> @ <host>`): `(Pi)` like a native AirPrint printer, which macOS sets up as AirPrint; `(Pi) (Generic)` the way CUPS announces it, which macOS sets up as a shared CUPS printer with Generic PostScript. Their location is the Pi's hostname, as for the AirSane scanner.
 - `<printer name> (USB)`: ipp-usb passes the printer's own IPP and eSCL services through, with every native option.
 
+The settings page can turn each of these off and back on; see [Settings](#settings).
+
 Keep IPP enabled in the printer's own settings: on the OfficeJet Pro 6970 that switch also controls IPP-over-USB. Logs: `journalctl -u printhub-printer -u ipp-usb`. Design: [`docs/superpowers/specs/2026-10-26-network-sharing-design.md`](docs/superpowers/specs/2026-10-26-network-sharing-design.md).
 
 Before the web app is reachable:
@@ -51,6 +53,26 @@ Before a release, work through [`docs/hardware-checklist.md`](docs/hardware-chec
 Every page has a top bar with the printer's status (ready, printing, or its problems such as low ink or a paper jam) and a bell for notifications. The Jobs page lists every job on the queue, including jobs sent from phones and laptops, and cancels any of them. A background watcher in printhub records finished, failed and held jobs, printer problems, and failed scans or conversions in `data_dir/events.jsonl` (newest 500); the read state is shared by every device. The installer sets `JobPrivateValues none` in CUPS's default policy so the Jobs page can show job names and senders; anyone who can query the shared printer on the LAN can see them too.
 
 Print shows Paper, Color, Sides, Copies and Pages; Layout and quality holds the other options. The crop dialog also works from the keyboard: arrow keys move the crop, Shift + arrow keys resize it.
+
+### Settings
+
+The cog in the header opens `/settings.html`. It changes:
+
+- Storage: how many days documents are kept, and the minimum free space.
+- Email: the SMTP server and sender. **Send test email** checks the values against a real address.
+- Web password: changing it logs out every other session.
+- Network sharing: whether the Pi's printer and scanner are shared on the network, and whether the printer is exposed directly (the `(USB)` entries).
+
+App values are saved to `/var/lib/printhub/settings.json`, override `/etc/printhub/config.toml`, and apply immediately. Saved values survive reinstalls, reboots and printer replugs.
+
+The two network switches are applied as root by `printhub-apply.path` and `printhub-apply.service`, which run `/usr/local/lib/printhub/apply-settings.sh`. The page shows Applying, then Applied or the error. With none saved, the printer is shared and exposed, as before.
+
+With **Expose the printer directly** off, an nftables rule (`printhub-firewall.service` restores it at boot) drops new connections from other machines to ipp-usb's ports (60000 and up), so a LAN client's connection times out. The `(USB)` entries stop or start being advertised the next time the printer is powered on or the Pi restarts; ipp-usb is never restarted by the settings. If the printer stops answering over USB, power-cycle it.
+
+Changing the SMTP server, port, user or security needs the SMTP password typed again; the other fields keep the stored one when it is left blank.
+
+A forgotten web password: as root, delete `password_hash` and `session_secret` from `/var/lib/printhub/settings.json` and restart printhub. The password the installer wrote to `/etc/printhub/config.toml` applies again.
+
 
 ## Document safety
 

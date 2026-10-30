@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Re-creates the nftables rule that hides the printer's own IPP port range from the LAN, as the saved settings say.
+[Unit]
+Description=Apply the pi-printhub USB exposure firewall rule
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/printhub/apply-settings.sh firewall
+
+[Install]
+WantedBy=multi-user.target

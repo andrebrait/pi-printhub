@@ -1,0 +1,137 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings – Print Hub</title>
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header id="shell"></header>
+<main class="container-lg pb-4">
+  <h1 class="h3 mb-3">Settings</h1>
+  <div id="load-error" class="alert alert-danger" role="alert" hidden></div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <form id="storage-form" class="card h-100">
+        <div class="card-body">
+          <h2 class="h5 card-title mb-3">Storage</h2>
+          <div class="mb-3">
+            <label for="retention_days" class="form-label">Keep documents for (days)</label>
+            <input id="retention_days" class="form-control" type="number" min="1" max="365" step="1" required>
+          </div>
+          <div class="mb-3">
+            <label for="min_free_gb" class="form-label">Minimum free space (GB)</label>
+            <input id="min_free_gb" class="form-control" type="number" min="0.5" max="1000" step="any" required>
+          </div>
+          <button id="storage-save" class="btn btn-primary" type="submit">Save</button>
+          <div id="storage-msg" role="status"></div>
+        </div>
+      </form>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <h2 class="h5 card-title mb-3">Email</h2>
+          <form id="email-form">
+          <div class="row g-2 mb-3">
+            <div class="col-8">
+              <label for="smtp_host" class="form-label">SMTP host</label>
+              <input id="smtp_host" class="form-control" type="text" autocomplete="off">
+            </div>
+            <div class="col-4">
+              <label for="smtp_port" class="form-label">Port</label>
+              <input id="smtp_port" class="form-control" type="number" min="1" max="65535" step="1" required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="smtp_security" class="form-label">Security</label>
+            <select id="smtp_security" class="form-select">
+              <option value="starttls">STARTTLS</option>
+              <option value="tls">SSL/TLS</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="smtp_user" class="form-label">User</label>
+            <input id="smtp_user" class="form-control" type="text" autocomplete="off">
+          </div>
+          <div class="mb-3">
+            <label for="smtp_password" class="form-label">Password</label>
+            <input id="smtp_password" class="form-control" type="password" autocomplete="new-password">
+          </div>
+          <div class="mb-3">
+            <label for="mail_from" class="form-label">From</label>
+            <input id="mail_from" class="form-control" type="text" autocomplete="off" aria-describedby="mail_from-help" placeholder="Printer &lt;print@example.com&gt;">
+            <div id="mail_from-help" class="form-text">An address, or a name and an address, as recipients see it.</div>
+          </div>
+          <button id="email-save" class="btn btn-primary" type="submit">Save</button>
+          </form>
+          <div id="email-msg" role="status"></div>
+          <hr>
+          <form id="test-form">
+            <label for="test-to" class="form-label">Send a test email with the saved values</label>
+            <div class="input-group">
+              <input id="test-to" class="form-control" type="email" autocomplete="email" placeholder="you@example.com" required>
+              <button id="test-email" class="btn btn-outline-primary" type="submit" data-icon="send">Send test email</button>
+            </div>
+          </form>
+          <div id="test-msg" role="status"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <form id="password-form" class="card h-100">
+        <div class="card-body">
+          <h2 class="h5 card-title mb-3">Web password</h2>
+          <div class="mb-3">
+            <label for="current_password" class="form-label">Current password</label>
+            <input id="current_password" class="form-control" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="mb-3">
+            <label for="new_password" class="form-label">New password (at least 8 characters)</label>
+            <input id="new_password" class="form-control" type="password" autocomplete="new-password" minlength="8" required>
+          </div>
+          <div class="mb-3">
+            <label for="repeat_password" class="form-label">Repeat new password</label>
+            <input id="repeat_password" class="form-control" type="password" autocomplete="new-password" minlength="8" required>
+          </div>
+          <button id="password-save" class="btn btn-primary" type="submit">Save</button>
+          <div id="password-msg" role="status"></div>
+        </div>
+      </form>
+    </div>
+
+    <div class="col-lg-6">
+      <form id="system-form" class="card h-100">
+        <div class="card-body">
+          <h2 class="h5 card-title mb-3">Network sharing</h2>
+          <div class="form-check form-switch mb-3">
+            <input id="share" class="form-check-input" type="checkbox" role="switch">
+            <label for="share" class="form-check-label">Share the Pi's printer and scanner on the network</label>
+          </div>
+          <div class="form-check form-switch mb-3">
+            <input id="expose_usb" class="form-check-input" type="checkbox" role="switch" aria-describedby="expose_usb_help">
+            <label for="expose_usb" class="form-check-label">Expose the printer directly (the "(USB)" entries)</label>
+            <div id="expose_usb_help" class="form-text">Off blocks other devices at once. The "(USB)" entries stop or start being advertised the next time the printer or the Pi restarts.</div>
+          </div>
+          <button id="system-save" class="btn btn-primary" type="submit">Save</button>
+          <div id="system-msg" role="status"></div>
+        </div>
+      </form>
+    </div>
+  </div>
+</main>
+<script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script type="module" src="/js/shell.js"></script>
+<script type="module" src="/js/settings.js"></script>
+<script type="module" src="/js/sw-register.js"></script>
+</body>
+</html>

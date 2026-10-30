@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import json
+import os
+import pwd
 import subprocess
 from pathlib import Path
 
 INSTALL = Path(__file__).parent.parent / "deploy" / "install.sh"
+OWNER = pwd.getpwuid(os.getuid()).pw_name
 
 
 def make_device(root: Path, name: str, vid: str, pid: str, ifaces: list[tuple[str, str, str]]) -> None:
@@ -49,12 +53,67 @@ def test_no_printer(tmp_path):
     assert ipp_usb_dev(tmp_path) is None
 
 
-def test_ipp_usb_listens_on_all_interfaces(tmp_path):
-    f = tmp_path / "ipp-usb.conf"
-    f.write_text("[network]\n  http-min-port = 60000\n  interface = loopback # all | loopback\n")
-    for _ in range(2):
-        assert sh(f"ipp_usb_listen_all {f}").returncode == 0
-    assert f.read_text() == "[network]\n  http-min-port = 60000\n  interface = all # all | loopback\n"
+def write_request(data: Path, **request: bool) -> None:
+    data.mkdir()
+    (data / "system-request.json").write_text(json.dumps({"share": True, "expose_usb": True, "at": "t", **request}))
+
+
+def ipp_usb_step(tmp_path: Path, expose_usb: bool | None, listen: str) -> str:
+    """The ipp-usb.conf interface after setup_ipp_usb with the request's expose_usb (None: no request file)."""
+    conf, data = tmp_path / "ipp-usb.conf", tmp_path / "data"
+    conf.write_text(f"[network]\n  http-min-port = 60000\n  interface = {listen} # all | loopback\n")
+    if expose_usb is None:
+        data.mkdir()
+    else:
+        write_request(data, expose_usb=expose_usb)
+    stubs = (
+        'apt-get() { :; }; install() { :; }; udevadm() { :; }; systemctl() { :; }; '
+        'cupsctl() { :; }; lpadmin() { :; }; nft() { :; }'
+    )
+    r = sh(f"{stubs}; setup_ipp_usb '' 0", DATA_DIR=str(data), IPP_USB_CONF=str(conf))
+    assert r.returncode == 0, r.stderr
+    return conf.read_text().split("interface = ")[1].split()[0]
+
+
+def test_install_respects_expose_off(tmp_path):
+    assert ipp_usb_step(tmp_path, False, "loopback") == "loopback"
+
+
+def test_install_turns_expose_off_on_a_reinstall(tmp_path):
+    assert ipp_usb_step(tmp_path, False, "all") == "loopback"
+
+
+def test_install_exposes_usb_by_default(tmp_path):
+    assert ipp_usb_step(tmp_path, None, "loopback") == "all"
+
+
+def test_ipp_usb_is_never_restarted_by_the_installer(tmp_path):
+    conf, data = tmp_path / "ipp-usb.conf", tmp_path / "data"
+    conf.write_text("[network]\n  interface = loopback # all | loopback\n")
+    data.mkdir()
+    stubs = 'apt-get() { :; }; install() { :; }; udevadm() { :; }; nft() { :; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    r = sh(f"{stubs}; setup_ipp_usb '' 0", DATA_DIR=str(data), IPP_USB_CONF=str(conf))
+    assert r.returncode == 0, r.stderr
+    assert "ipp-usb" not in r.stdout
+
+
+def test_nftables_is_installed_and_the_firewall_unit_installed_and_enabled():
+    r = sh('apt-get() { echo "APT $*"; }; install_packages')
+    assert " nftables" in r.stdout
+    stubs = 'show_job_details() { return 1; }; install() { echo "INSTALL $*"; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    r = sh(f"{stubs}; start_services", APPLY_SETTINGS="/bin/true")
+    install = next(line for line in r.stdout.splitlines() if line.startswith("INSTALL"))
+    assert "/deploy/systemd/printhub-firewall.service" in install
+    enable = next(line for line in r.stdout.splitlines() if line.startswith("SYSTEMCTL enable --now"))
+    assert "printhub-firewall.service" in enable
+
+
+def test_apply_settings_is_installed_executable_for_root(tmp_path):
+    target = tmp_path / "apply-settings.sh"
+    r = sh('install() { printf "%s\\n" "$@"; }; install_apply_settings', APPLY_SETTINGS=str(target))
+    args = r.stdout.split()
+    assert args[args.index("-m") + 1] == "0755" and args[args.index("-o") + 1] == "root"
+    assert args[-2].endswith("/deploy/apply-settings.sh") and args[-1] == str(target)
 
 
 def test_airsane_ignores_hpaio_network_devices(tmp_path):
@@ -74,23 +133,25 @@ def test_hplip_rerun_leaves_ipp_usb_alone(tmp_path):
     stubs = (
         'lpstat() { [[ $1 == -v ]] && echo "device for OfficeJet: hp:/usb/OfficeJet_Pro_6970?serial=X"; return 0; }; '
         'lpadmin() { :; }; cupsctl() { echo "CUPSCTL $*"; }; configure_dll_conf() { :; }; '
-        'apply_printer() { echo APPLY; }; ipp_usb_listen_all() { echo LISTEN; }; apt-get() { echo APT "$*"; }'
+        'apply_printer() { echo APPLY; }; apply_expose() { echo EXPOSE; }; apt-get() { echo APT "$*"; }; '
+        'systemctl() { :; }'
     )
     r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path), SANE_DIR=str(sane), DROPIN_DIR=str(dropin),
            AVAHI_DIR=str(avahi))
     assert r.returncode == 0, r.stderr
-    assert "APPLY" not in r.stdout and "LISTEN" not in r.stdout and "ipp-usb" not in r.stdout
+    assert "APPLY" not in r.stdout and "EXPOSE" not in r.stdout and "ipp-usb" not in r.stdout
     assert "[devices]" not in (sane / "airscan.conf").read_text()
     assert not (dropin / "scanner.conf").exists()
     # The printhub announcements belong to the ipp-usb queue; CUPS announces the HPLIP one itself.
     assert not (avahi / "printhub-airprint.service").exists()
-    assert "CUPSCTL --share-printers BrowseLocalProtocols=dnssd" in r.stdout
+    assert "CUPSCTL BrowseLocalProtocols=dnssd" in r.stdout
+    assert "CUPSCTL --share-printers" in r.stdout  # sharing is on by default
 
 
 def sh(expr: str, *args: str, input: str | None = None, **env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", "-c", f'source "{INSTALL}"; {expr}', "_", *args],
-        env={"PATH": "/usr/bin:/bin", **env},
+        env={"PATH": "/usr/bin:/bin", "DATA_DIR": "/nonexistent", "OWNER": OWNER, **env},
         input=input,
         capture_output=True,
         text=True,
@@ -111,6 +172,24 @@ def test_smtp_port_prompt_retries_invalid_input():
     )
     assert r.returncode == 0, r.stderr
     assert r.stdout == "587"
+
+
+def test_mail_from_validation_accepts_a_plain_address_only():
+    for ok in ("printhub@example.com", "a@b"):
+        assert sh(f"valid_mail_from {ok}").returncode == 0, ok
+    for bad in ("", "apikey", "AKIAXXXXXXXX", "a@", "@b.com", "a@b@c", "a b@c.com", "Hub <a@b.com>", "a@b.com\nBcc: x@y.com"):
+        assert sh('valid_mail_from "$1"', bad).returncode != 0, repr(bad)
+
+
+def test_first_install_asks_again_when_the_smtp_user_is_not_an_address(tmp_path):
+    # The prompt defaults to the SMTP user, which is often an API key id.
+    answers = ["print.example.com", "web-password", "web-password", "smtp.example.com", "", "", "apikey", "smtp-secret", "",
+               "printhub@example.com"]
+    r = sh("install() { :; }; write_secret() { cat; }; write_config", input="\n".join(answers) + "\n")
+    assert r.returncode == 0, r.stderr
+    assert 'mail_from = "printhub@example.com"' in r.stdout
+    assert 'smtp_user = "apikey"' in r.stdout
+    assert "invalid value: apikey" in r.stderr
 
 
 def test_traefik_yml_gets_the_email():
@@ -188,7 +267,7 @@ def test_setup_printer_defers_when_printer_absent(tmp_path):
 
 
 IPP_USB_STUBS = (
-    'apt-get() { echo "APT $*"; }; ipp_usb_listen_all() { echo "LISTEN $*"; }; install() { echo "INSTALL $*"; }; '
+    'apt-get() { echo "APT $*"; }; apply_expose() { echo "EXPOSE $*"; }; install() { echo "INSTALL $*"; }; '
     'udevadm() { echo "UDEVADM $*"; }; configure_dll_conf() { :; }; lpadmin() { echo "LPADMIN $*"; }; '
 )
 
@@ -198,7 +277,7 @@ def test_attached_ipp_usb_printer_is_set_up_through_the_hotplug_service(tmp_path
     stubs = IPP_USB_STUBS + 'lpstat() { return 1; }; systemctl() { echo "SYSTEMCTL $*"; }'
     r = sh(f"{stubs}; setup_printer; echo pending=${{PRINTER_PENDING:-0}}", USB_SYSFS=str(tmp_path))
     assert r.returncode == 0, r.stderr
-    assert "LISTEN /etc/ipp-usb/ipp-usb.conf" in r.stdout
+    assert "EXPOSE true" in r.stdout
     assert "/usr/local/lib/printhub/printer-setup.sh" in r.stdout
     assert "/etc/udev/rules.d/70-printhub-printer.rules" in r.stdout
     assert "/etc/systemd/system/printhub-printer.service" in r.stdout
@@ -222,7 +301,7 @@ def test_ipp_usb_rerun_with_printer_unplugged_keeps_the_queue(tmp_path):
     )
     r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path))
     assert r.returncode == 0, r.stderr
-    assert "LISTEN" in r.stdout  # still the ipp-usb install
+    assert "EXPOSE" in r.stdout  # still the ipp-usb install
     assert "start printhub-printer.service" not in r.stdout and "LPADMIN" not in r.stdout
     assert "keeping the existing queue" in r.stdout
 
@@ -236,7 +315,7 @@ def test_a_cups_url_is_not_mistaken_for_ipp_usb(tmp_path):
     )
     r = sh(f"{stubs}; setup_printer", USB_SYSFS=str(tmp_path), SANE_DIR=str(sane), DROPIN_DIR=str(tmp_path / "d"))
     assert r.returncode == 0, r.stderr
-    assert "LISTEN" not in r.stdout
+    assert "EXPOSE" not in r.stdout
 
 
 def test_udev_rule_starts_the_unit_that_runs_the_installed_script():
@@ -331,3 +410,39 @@ def test_origin_is_added_at_the_top_level_of_an_existing_config(tmp_path):
     data = tomllib.loads(r.stdout)
     assert data["origin"] == "https://print.example.com"
     assert data["mail_from"] == "x@example.com" and data["extra"] == {"key": 1}
+
+
+def test_apply_script_and_airsane_are_installed_before_the_printer_setup_runs_sharing():
+    order = (
+        'install_packages() { :; }; install_airsane() { echo airsane; }; install_traefik() { :; }; install_app() { :; }; '
+        'write_config() { :; }; write_traefik_env() { :; }; install_traefik_config() { :; }; start_services() { :; }; '
+        'print_network_todo() { :; }; install_apply_settings() { echo apply-settings; }; setup_printer() { echo printer; }'
+    )
+    r = sh(f"{order}; die() {{ :; }}; main")  # die: main insists on root
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["apply-settings", "airsane", "printer"]
+
+
+def test_services_follow_the_switches_instead_of_forcing_airsane(tmp_path):
+    stubs = 'show_job_details() { return 1; }; install() { :; }; systemctl() { echo "SYSTEMCTL $*"; }'
+    ran = tmp_path / "ran"
+    script = tmp_path / "apply-settings.sh"
+    script.write_text(f"#!/bin/sh\ntouch {ran}\n")
+    script.chmod(0o755)
+    r = sh(f"{stubs}; start_services", APPLY_SETTINGS=str(script))
+    assert ran.exists()  # the current switches are applied once at the end
+    assert r.stdout.count("SYSTEMCTL enable --now") == 1
+    enable = next(line for line in r.stdout.splitlines() if line.startswith("SYSTEMCTL enable --now"))
+    assert "printhub-apply.path" in enable and "airsaned" not in enable
+    assert "SYSTEMCTL try-restart printhub traefik airsaned" in r.stdout
+
+
+def test_a_failing_final_apply_only_warns_and_shows_why(tmp_path):
+    stubs = 'show_job_details() { return 1; }; install() { :; }; systemctl() { :; }'
+    script = tmp_path / "apply-settings.sh"
+    script.write_text("#!/bin/sh\necho 'lpadmin failed (exit 1)' >&2\nexit 1\n")
+    script.chmod(0o755)
+    r = sh(f"{stubs}; start_services", APPLY_SETTINGS=str(script))
+    assert r.returncode == 0
+    assert "warning: the sharing settings were not applied" in r.stdout
+    assert "lpadmin failed (exit 1)" in r.stderr

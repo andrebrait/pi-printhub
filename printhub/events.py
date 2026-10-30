@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 Level = Literal["info", "warning", "error"]
-Kind = Literal["job", "printer", "scan", "conversion"]
+Kind = Literal["job", "printer", "scan", "conversion", "settings"]
 
 
 @dataclass

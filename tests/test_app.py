@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import asyncio
 import io
+import json
+import stat
 import tempfile
 import threading
 import time
@@ -21,8 +23,10 @@ from printhub.app import MAX_UPLOAD, create_app
 from printhub.auth import COOKIE, issue_session
 from printhub.documents import Crop, DocStore, Page, PrintRecord
 from printhub.events import EventLog
+from printhub.mail import MailError
 from printhub.middleware import MAX_BODY
 from printhub.scanning import Scanner
+from printhub.settings import apply_overlay
 
 ORIGIN = "https://print.example.com"
 PLENTY = 10**15
@@ -808,3 +812,178 @@ def test_orientation_auto_lets_cups_rotate_and_explicit_orientation_does_not(cli
     assert (auto["orientation-requested"], "pdfAutoRotate" in auto) == ("3", False)
     assert (portrait["orientation-requested"], portrait["pdfAutoRotate"]) == ("3", "false")
     assert (landscape["orientation-requested"], landscape["pdfAutoRotate"]) == ("4", "false")
+
+
+# Settings
+
+
+def latest_event_title(client):
+    return client.get("/api/notifications").json()["events"][0]["title"]
+
+
+def test_settings_get_never_returns_secrets(client):
+    body = client.get("/api/settings").json()
+
+    assert body["smtp_password_set"] is True
+    assert not {"smtp_password", "password_hash", "session_secret"} & body.keys()
+
+
+def test_saving_retention_applies_without_restart_and_logs_an_event(client):
+    r = client.put("/api/settings", json={"retention_days": 14})
+
+    assert r.status_code == 200
+    assert client.get("/api/settings").json()["retention_days"] == 14
+    assert "14" in latest_event_title(client)
+
+
+def test_blank_smtp_password_keeps_the_stored_one(client, cfg):
+    r = client.put("/api/settings", json={"mail_from": "hub@example.com", "smtp_password": ""})
+
+    assert r.status_code == 200
+    saved = apply_overlay(cfg)
+    assert (saved.mail_from, saved.smtp_password) == ("hub@example.com", "smtp-secret")
+
+
+def test_changing_the_smtp_server_needs_the_password_again(client, cfg):
+    message = {"error": "Enter the SMTP password again to change the server settings"}
+    for change in ({"smtp_host": "smtp.example.com"}, {"smtp_port": 465}, {"smtp_user": "other"}, {"smtp_security": "tls"}):
+        for password in ({}, {"smtp_password": ""}):
+            r = client.put("/api/settings", json={**change, **password})
+            assert (r.status_code, r.json()) == (400, message), change
+    assert not (cfg.data_dir / "settings.json").exists()
+    ok = client.put("/api/settings", json={"smtp_host": "smtp.example.com", "smtp_password": "new-secret"})
+    assert ok.status_code == 200
+    assert (apply_overlay(cfg).smtp_host, apply_overlay(cfg).smtp_password) == ("smtp.example.com", "new-secret")
+
+
+def test_saving_unchanged_server_fields_or_other_settings_needs_no_password(client):
+    # The page sends every email field on each save.
+    same = {"smtp_host": "127.0.0.1", "smtp_port": 8025, "smtp_security": "starttls", "smtp_user": "printhub"}
+    assert client.put("/api/settings", json={**same, "mail_from": "hub@example.com"}).status_code == 200
+    assert client.put("/api/settings", json={"retention_days": 14}).status_code == 200
+
+
+def test_settings_rejects_bad_values(client):
+    before = client.get("/api/settings").json()
+
+    assert client.put("/api/settings", json={"smtp_port": 70000}).status_code == 400
+    assert client.put("/api/settings", json={"smtp_host": 5}).status_code == 400
+    assert client.put("/api/settings", json={"password_hash": "x"}).status_code == 400
+    assert client.get("/api/settings").json() == before
+
+
+def test_the_settings_page_refuses_a_sender_that_is_not_an_address(client, cfg):
+    r = client.put("/api/settings", json={"mail_from": "apikey"})
+
+    assert r.status_code == 400
+    assert "mail_from" in r.json()["error"]
+    assert client.get("/api/settings").json()["mail_from"] == "printhub@example.com"
+    assert not (cfg.data_dir / "settings.json").exists()
+
+
+def test_system_defaults_to_shared_and_exposed(client):
+    body = client.get("/api/settings/system").json()
+
+    assert body == {"requested": {"share": True, "expose_usb": True}, "status": None, "pending": False}
+
+
+def test_system_request_is_written_and_pending_until_applied(client, cfg):
+    r = client.put("/api/settings/system", json={"share": False, "expose_usb": True})
+
+    assert r.status_code == 202
+    path = cfg.data_dir / "system-request.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    request = json.loads(path.read_text())
+    assert (request["share"], request["expose_usb"]) == (False, True)
+    assert r.json()["pending"] is True
+
+    status = {
+        "state": "applied", "share": False, "expose_usb": True, "error": None,
+        "at": "2026-10-30T10:00:01+00:00", "request_at": request["at"],
+    }
+    (cfg.data_dir / "system-status.json").write_text(json.dumps(status))
+
+    body = client.get("/api/settings/system").json()
+    assert (body["pending"], body["status"]) == (False, status)
+
+
+def test_system_request_rejects_non_booleans(client, cfg):
+    assert client.put("/api/settings/system", json={"share": "no", "expose_usb": True}).status_code == 400
+    assert client.put("/api/settings/system", json={"share": True, "expose_usb": True, "extra": 1}).status_code == 400
+    assert not (cfg.data_dir / "system-request.json").exists()
+
+
+@pytest.mark.parametrize("request_text", ["{not json", '{"share": "no", "expose_usb": true, "at": "x"}'])
+def test_system_malformed_files_read_as_absent(client, cfg, request_text):
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.data_dir / "system-request.json").write_text(request_text)
+    (cfg.data_dir / "system-status.json").write_text("[1, 2]")
+
+    r = client.get("/api/settings/system")
+
+    assert r.status_code == 200
+    assert r.json() == {"requested": {"share": True, "expose_usb": True}, "status": None, "pending": False}
+
+
+def test_system_switches_log_one_event_per_change(client):
+    client.put("/api/settings/system", json={"share": False, "expose_usb": True})
+    client.put("/api/settings/system", json={"share": False, "expose_usb": True})
+    client.put("/api/settings/system", json={"share": False, "expose_usb": False})
+
+    titles = [e["title"] for e in client.get("/api/notifications").json()["events"]]
+    assert titles[:2] == ["Direct printer exposure turned off", "Sharing turned off"]
+
+
+
+def test_password_change_logs_out_other_sessions(cfg, fake_cups, space):
+    app = create_app(cfg, cups_conn_factory=lambda: fake_cups, scanner=Scanner(), free_bytes=lambda: space["free"]())
+
+    def session():
+        c = TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}, follow_redirects=False)
+        assert c.post("/api/login", json={"password": "secret"}).status_code == 204
+        return c
+
+    a, b = session(), session()
+
+    r = a.post("/api/settings/password", json={"current": "secret", "new": "a-new-password"})
+
+    assert r.status_code == 204
+    assert a.get("/api/settings").status_code == 200
+    assert b.get("/api/settings").status_code == 401
+    fresh = TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}, follow_redirects=False)
+    assert fresh.post("/api/login", json={"password": "secret"}).status_code == 401
+    assert fresh.post("/api/login", json={"password": "a-new-password"}).status_code == 204
+    assert latest_event_title(a) == "Web password changed"  # never the password itself
+
+
+def test_password_change_needs_the_current_password(client):
+    wrong = client.post("/api/settings/password", json={"current": "nope", "new": "a-new-password"})
+    short = client.post("/api/settings/password", json={"current": "secret", "new": "short"})
+
+    assert (wrong.status_code, short.status_code) == (403, 400)
+
+
+def test_password_change_is_rate_limited_like_login(make_client, cfg):
+    client = make_client(login=False)  # no login, so the limiter has seen nothing yet
+    cookie = {"Cookie": f"{COOKIE}={issue_session(cfg)}"}
+    for _ in range(5):
+        wrong = client.post("/api/settings/password", json={"current": "nope", "new": "a-new-password"}, headers=cookie)
+        assert wrong.status_code == 403
+    right = client.post("/api/settings/password", json={"current": "secret", "new": "a-new-password"}, headers=cookie)
+    assert (right.status_code, right.json()) == (429, {"error": "Too many attempts; wait a minute"})
+
+
+def test_test_email_reports_smtp_errors(client, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise MailError("refused")
+
+    monkeypatch.setattr("printhub.app.send", refuse)
+
+    r = client.post("/api/settings/test-email", json={"to": "me@example.com"})
+
+    assert r.status_code == 502
+    assert "refused" in r.json()["error"]
+
+
+def test_test_email_rejects_an_invalid_address(client):
+    assert client.post("/api/settings/test-email", json={"to": "not-an-address"}).status_code == 400

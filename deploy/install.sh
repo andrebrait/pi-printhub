@@ -8,6 +8,7 @@ AIRSANE_TAG=v0.4.15
 TRAEFIK_VERSION=v3.7.16
 PRINTER_QUEUE=OfficeJet
 USB_SYSFS=${USB_SYSFS:-/sys/bus/usb/devices}
+APPLY_SETTINGS=${APPLY_SETTINGS:-/usr/local/lib/printhub/apply-settings.sh}
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=deploy/printer-setup.sh
 source "$REPO/deploy/printer-setup.sh"
@@ -44,9 +45,6 @@ ipp_usb_dev() {
     return 1
 }
 
-# ipp_usb_listen_all FILE: ipp-usb publishes the device's own IPP and eSCL services on the LAN, not only to the Pi.
-ipp_usb_listen_all() { sed -i 's/^\([[:space:]]*interface[[:space:]]*=[[:space:]]*\)loopback/\1all/' "$1"; }
-
 # airsane_ignore_hpaio_net FILE: AirSane must not republish HPLIP's view of a printer's own network scanner.
 airsane_ignore_hpaio_net() { grep -qxF 'hpaio:/net/.*' "$1" || echo 'hpaio:/net/.*' >>"$1"; }
 
@@ -66,6 +64,9 @@ show_job_details() {
 
 valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_security() { [[ $1 == starttls || $1 == tls ]]; }
+# A plain address: one @, something on both sides, no whitespace (so no CR or LF). The prompt's default, the SMTP
+# user, is often not one (SendGrid's "apikey", SES access key ids), and a mail server rejects it as a sender.
+valid_mail_from() { [[ $1 =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]]; }
 valid_hostname() { [[ ${#1} -le 253 && $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$ ]]; }
 
 # ask_host: WEB_HOST from the user, lowercased (local -l) because browsers send the Origin host in lowercase.
@@ -148,23 +149,31 @@ install_packages() {
     apt-get install -y curl cups avahi-daemon sane-utils sane-airscan libsane-dev libjpeg-dev \
         libpng-dev libavahi-client-dev libusb-1.0-0-dev cmake g++ git python3-fastapi \
         python3-uvicorn python3-python-multipart python3-argon2 python3-itsdangerous \
-        python3-img2pdf python3-pil python3-magic python3-cups \
+        python3-img2pdf python3-pil python3-magic python3-cups nftables \
         libjpeg-turbo-progs poppler-utils libheif-examples libreoffice-nogui
+}
+
+# printer-setup.sh sources apply-settings.sh from its own directory, and printhub-apply.service runs it. Installed
+# before anything starts printhub-printer.service.
+install_apply_settings() {
+    install -D -m 0755 -o root -g root "$REPO/deploy/apply-settings.sh" "$APPLY_SETTINGS"
 }
 
 # The queue, sane-airscan and printhub follow whichever IPP-over-USB printer is attached: printhub-printer.service
 # runs printer-setup.sh now and, through the udev rule, on every plug. ipp-usb also publishes the device natively.
 # setup_ipp_usb QUEUE_URI ATTACHED: the existing queue's device line (empty without a queue), and 1 when an
-# IPP-over-USB printer is attached. Detected before the restarts below, which briefly hide its USB interfaces.
+# IPP-over-USB printer is attached. Detected before the udev trigger, which briefly hides its USB interfaces.
+# ipp-usb is never restarted here: that can wedge the printer's USB interface until it is power-cycled.
 setup_ipp_usb() {
+    local expose
     apt-get install -y ipp-usb
-    ipp_usb_listen_all /etc/ipp-usb/ipp-usb.conf
+    read -r _ expose < <(request_or_default)
+    apply_expose "$expose"
     install -D -m 0755 "$REPO/deploy/printer-setup.sh" /usr/local/lib/printhub/printer-setup.sh
     install -m 0644 "$REPO/deploy/systemd/printhub-printer.service" /etc/systemd/system/printhub-printer.service
     install -D -m 0644 "$REPO/deploy/udev/70-printhub-printer.rules" /etc/udev/rules.d/70-printhub-printer.rules
     systemctl daemon-reload
     udevadm control --reload
-    systemctl try-restart ipp-usb
     # ipp-usb is started by udev on plug; the printer may have been plugged in before ipp-usb was installed.
     udevadm trigger --action=add --subsystem-match=usb
     if ((!$2)); then
@@ -189,7 +198,7 @@ create_hplip_queue() { # create_hplip_queue USB_SYSFS_DIR
 
 setup_printer() {
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
-    local avahi=${AVAHI_DIR:-/etc/avahi/services} dev uri=""
+    local avahi=${AVAHI_DIR:-/etc/avahi/services} dev share uri=""
     if lpstat -p "$PRINTER_QUEUE" &>/dev/null; then
         uri=$(lpstat -v "$PRINTER_QUEUE")
     fi
@@ -209,8 +218,9 @@ setup_printer() {
         pin_scanner "$dropin"
         # printer-setup.sh's announcements belong to an ipp-usb queue; CUPS announces this one itself.
         rm -f "$avahi/printhub-airprint.service" "$avahi/printhub-generic.service"
-        cupsctl --share-printers BrowseLocalProtocols=dnssd
-        lpadmin -p "$PRINTER_QUEUE" -o printer-is-shared=true
+        cupsctl BrowseLocalProtocols=dnssd
+        read -r share _ < <(request_or_default)
+        apply_share "$share"
     else
         PRINTER_PENDING=1
         log "No printer connected; skipping the print queue and scanner setup. Re-run this script after plugging it in."
@@ -312,7 +322,7 @@ write_config() {
     ask security "SMTP security (starttls or tls)" starttls valid_security
     ask user "SMTP user"
     ask_secret smtp_pw "SMTP password"
-    ask from "Mail From address" "$user"
+    ask from "Mail From address" "$user" valid_mail_from
 
     content=$(PASSWORD_HASH=$hash SESSION_SECRET=$secret SMTP_HOST=$host SMTP_PORT=$port \
         SMTP_SECURITY=$security SMTP_USER=$user SMTP_PASSWORD=$smtp_pw MAIL_FROM=$from WEB_HOST=$WEB_HOST python3 -c '
@@ -345,11 +355,17 @@ start_services() {
     if show_job_details /etc/cups/cupsd.conf; then
         systemctl restart cups
     fi
-    install -m 0644 "$REPO"/deploy/systemd/*.service "$REPO"/deploy/systemd/*.timer /etc/systemd/system/
+    install -m 0644 "$REPO"/deploy/systemd/*.service "$REPO"/deploy/systemd/*.timer "$REPO"/deploy/systemd/*.path \
+        /etc/systemd/system/
     systemctl daemon-reload
-    # Pick up new code and config on re-runs; enable --now then starts whatever was not running.
+    # Pick up new code and config on re-runs; enable --now then starts whatever was not running. AirSane is
+    # started or stopped by the sharing switch below, so it is only restarted when already running.
     systemctl try-restart printhub traefik airsaned
-    systemctl enable --now printhub traefik airsaned printhub-retention.timer
+    systemctl enable --now printhub traefik printhub-retention.timer printhub-apply.path \
+        printhub-firewall.service
+    # The switches the owner chose before (or the defaults), through the installed script, which also writes the status.
+    "$APPLY_SETTINGS" ||
+        log "warning: the sharing settings were not applied; see error in /var/lib/printhub/system-status.json"
 }
 
 print_network_todo() {
@@ -371,8 +387,9 @@ MSG
 main() {
     [[ $EUID -eq 0 ]] || die "run as root (sudo deploy/install.sh)"
     install_packages
+    install_apply_settings
+    install_airsane # before setup_printer: its sharing step starts the unit
     setup_printer
-    install_airsane
     install_traefik
     install_app
     write_config
