@@ -20,6 +20,8 @@ JOB_EVENTS = {"completed": "info", "canceled": "info", "aborted": "error", "held
 USB_URI = re.compile(r"ipp://localhost:6\d{4}/")
 USB_PROBE_EVERY = 15.0
 USB_SILENT_FOR = 120.0
+# cupsctl and the installer restart cupsd, which refuses connections for a second or two: not worth a notification.
+CUPS_DOWN_FOR = 30.0
 
 
 class Watcher:
@@ -36,12 +38,18 @@ class Watcher:
         # None until CUPS first answers: that tick is a baseline, so restarts do not replay history.
         self.jobs: dict[int, str] | None = None
         self.problems: dict[str, str] | None = None
-        self.down = False
+        self.down = False  # "Printer status unavailable" was reported
+        self.down_since: float | None = None
         self.usb_probed_at: float | None = None
         self.usb_silent_since: float | None = None
         self.usb_reported = False
         # None until the first tick: a failure already on disk then is a baseline, so restarts do not re-announce it.
         self.sharing_reported: set[str] | None = None
+
+    @property
+    def usb_answering(self) -> bool | None:
+        """None while the USB check has not run (no ipp-usb queue, or no tick yet); False once the printer stayed silent past USB_SILENT_FOR."""
+        return None if self.usb_probed_at is None else not self.usb_reported
 
     def tick(self) -> None:
         self._check_sharing()
@@ -51,10 +59,14 @@ class Watcher:
             info = printing.printer_info(conn, self.queue)
             problems = printing.problems(info.state_reasons)
         except (cups.IPPError, RuntimeError, OSError) as e:
-            if not self.down:
+            now = self.clock()
+            if self.down_since is None:
+                self.down_since = now
+            if not self.down and now - self.down_since >= CUPS_DOWN_FOR:
                 self.down = True
                 self.events.append("error", "printer", "Printer status unavailable", str(e))
             return
+        self.down_since = None
         if self.down:
             self.down = False
             self.events.append("info", "printer", "Printer status available again")
@@ -77,6 +89,9 @@ class Watcher:
 
     def _check_usb(self, device_uri: str) -> None:
         if not USB_URI.match(device_uri):
+            # No longer an ipp-usb queue (HPLIP now): nothing is probed, so what was learned about the old one is stale.
+            self.usb_probed_at = self.usb_silent_since = None
+            self.usb_reported = False
             return
         now = self.clock()
         if self.usb_probed_at is not None and now - self.usb_probed_at < USB_PROBE_EVERY:

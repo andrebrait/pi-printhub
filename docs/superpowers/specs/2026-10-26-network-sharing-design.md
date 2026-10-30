@@ -37,7 +37,7 @@ The installer sets `interface = all` in `/etc/ipp-usb/ipp-usb.conf` and restarts
 
 - A udev rule matches a USB device with an IPP-over-USB interface (`ID_USB_INTERFACES` contains `:070104:`, as ipp-usb's own rule does) and starts `printhub-printer.service`. The installer runs the same service once.
 - The service runs `deploy/printer-setup.sh`:
-  1. Reads the device's local port from ipp-usb's state file for it (`/var/ipp-usb/dev/<vid>-<pid>[-<serial>]-<model>.state`, `http-port`; the first device gets 60000, another may not) and waits up to 30 s until the printer answers IPP there. ipp-usb writes the file before it serves the device.
+  1. Reads the device's local port from ipp-usb's state file for it (`/var/ipp-usb/dev/<vid>-<pid>[-<serial>]-<model>.state`, `http-port`; the first device gets 60000, another may not) and waits up to 3 minutes (180 one-second tries, `IPP_WAIT_TRIES`) until the printer answers IPP there, so a power-cycled printer is set up when it comes back. ipp-usb writes the file before it serves the device.
   2. Modifies the queue `OfficeJet` in place with `lpadmin -m driverless:ipp://localhost:<port>/ipp/print`, sets `printer-info` to the reported `printer-make-and-model`, shares it, and sets `printer-error-policy=retry-job`. A printer that does not answer IPP changes nothing.
   3. Writes `/etc/sane.d/airscan.conf` for `http://localhost:<port>/eSCL` and the printhub `scanner.conf` drop-in, then restarts printhub and AirSane.
 - The queue name stays `OfficeJet`, the web app's configured `printer_queue`; clients see `printer-info`.

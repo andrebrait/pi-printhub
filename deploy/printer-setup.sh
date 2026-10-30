@@ -109,10 +109,11 @@ apply_printer() {
     local state=${STATE_DIR:-/var/ipp-usb/dev} sysfs=${USB_SYSFS:-/sys/bus/usb/devices}
     local sane=${SANE_DIR:-/etc/sane.d} dropin=${DROPIN_DIR:-/etc/systemd/system/printhub.service.d}
     local avahi=${AVAHI_DIR:-/etc/avahi/services} off=${OFF_DIR:-/var/lib/printhub-system/avahi-off}
-    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp attrs kind share before after
+    local queue=${PRINTER_QUEUE:-OfficeJet} port="" uri="" model="" i tmp attrs kind share before after tries=${IPP_WAIT_TRIES:-180}
     # ipp-usb writes the state file before it serves the device (and keeps it from earlier plugs), so wait until
-    # the printer itself answers.
-    for ((i = 0; i < 30; i++)); do
+    # the printer itself answers. A power-cycled printer needs a while to bring IPP back: 180 one-second tries by
+    # default, IPP_WAIT_TRIES overrides (tests). printhub-printer.service is Type=oneshot, which has no start timeout.
+    for ((i = 0; i < tries; i++)); do
         if port=$(ipp_usb_port "$state" "$sysfs"); then
             uri=ipp://localhost:$port/ipp/print
             model=$(ipptool -tv "$uri" get-printer-attributes.test |

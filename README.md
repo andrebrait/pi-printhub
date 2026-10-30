@@ -16,6 +16,28 @@ It appears to every client on the LAN as a standard network printer and scanner.
 
 Runtime dependencies come from Debian Trixie apt packages only. There is no pip or venv on the Pi.
 
+## Screenshots
+
+The home page with the printer widget in the header and the printer card (supplies, status, low-ink warning), in the light and dark themes:
+
+<p align="center">
+  <img src="docs/screenshots/home-light.png" alt="Home page, light theme: print a file, new scan, the printer card with ink levels and recent documents" width="49%">
+  <img src="docs/screenshots/home-dark.png" alt="Home page, dark theme" width="49%">
+</p>
+
+Printing a file, with the sheet preview and print settings:
+
+<p align="center">
+  <img src="docs/screenshots/print-light.png" alt="Print page: a three-page preview next to the print settings" width="80%">
+</p>
+
+On a phone, the same pages stack into one column; the header keeps the ink levels and status:
+
+<p align="center">
+  <img src="docs/screenshots/home-mobile.png" alt="Home page on a phone" width="32%">
+  <img src="docs/screenshots/print-mobile.png" alt="Print page on a phone" width="32%">
+</p>
+
 ## Install
 
 On a fresh Raspberry Pi OS Lite 64-bit (Debian Trixie) with the printer plugged in and powered on:
@@ -50,7 +72,7 @@ Before a release, work through [`docs/hardware-checklist.md`](docs/hardware-chec
 
 ## Web app
 
-Every page has a top bar with the printer's status (ready, printing, or its problems such as low ink or a paper jam) and a bell for notifications. The Jobs page lists every job on the queue, including jobs sent from phones and laptops, and cancels any of them. A background watcher in printhub records finished, failed and held jobs, printer problems, finished and failed scans, and failed conversions in `data_dir/events.jsonl` (newest 500); the read state is shared by every device. The installer sets `JobPrivateValues none` in CUPS's default policy so the Jobs page can show job names and senders; anyone who can query the shared printer on the LAN can see them too.
+Every page has a top bar with a compact printer widget and a bell for notifications. The widget links to Jobs and shows the printer's name (from tablet width up), one thin bar per ink or toner supply in its colour (the bar's height is the level; a hatched bar means the printer does not report that level, a red outline means low; a waste container is never marked low) and a status icon: a check for ready, a printer while printing, a warning for a problem such as low ink, an error for a stopped printer or a paper jam, and a broken link when the printer is unreachable or has not answered over USB for 2 minutes. Hover it, or press and hold for half a second on a touch screen, for the full text, for example "HP OfficeJet Pro 6970: Ready · Magenta ink 60% · Cyan ink 20% (low) · Yellow ink 60% · Black ink 30%"; screen readers announce changes to it. The Home page also has a **Printers** card with the state in words, the problems, every supply as a labelled bar with its percentage and a "low" badge, a Jobs button and, when the printer reports a supply page (`printer-supply-info-uri`), **Open printer page**. That link is left out when the address has credentials or points at this machine (`localhost`, `127.0.0.1`), because it would not open from another device; CUPS's own `printer-more-info` page is never used. Both refresh every 5 seconds from `/api/status`. The Jobs page lists every job on the queue, including jobs sent from phones and laptops, and cancels any of them. A background watcher in printhub records finished, failed and held jobs, printer problems, finished and failed scans, and failed conversions in `data_dir/events.jsonl` (newest 500); the read state is shared by every device. The installer sets `JobPrivateValues none` in CUPS's default policy so the Jobs page can show job names and senders; anyone who can query the shared printer on the LAN can see them too.
 
 Print shows Paper, Color, Sides, Copies and Pages; Layout and quality holds the other options. The crop dialog also works from the keyboard: arrow keys move the crop, Shift + arrow keys resize it.
 

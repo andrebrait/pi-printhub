@@ -283,6 +283,7 @@ def create_app(
         notifier = None
         if watch:
             watcher = Watcher(cups_conn_factory, cfg.printer_queue, events, data_dir=cfg.data_dir)
+            app.state.watcher = watcher
             threading.Thread(target=watcher.run, args=(stop, WATCH_INTERVAL), name="watcher", daemon=True).start()
             notifier = threading.Thread(target=app.state.notifier.run, args=(stop,), name="notifier", daemon=True)
             notifier.start()
@@ -297,6 +298,7 @@ def create_app(
     app = FastAPI(openapi_url=None, lifespan=lifespan)
     app.state.cfg = cfg
     app.state.notifier = Notifier(events, cfg.data_dir, lambda: app.state.cfg)
+    app.state.watcher = None
     app.add_middleware(Guard, current=lambda: app.state.cfg, admit_share=admit_share, release_share=share_lock.release)
 
     def using_document(fn=None, *, exclusive=False):
@@ -470,19 +472,29 @@ def create_app(
 
     @api.get("/printer")
     def get_printer():
-        return {k: v for k, v in asdict(printer_info(cups_conn())).items() if k != "device_uri"}
+        hidden = {"device_uri", "name", "model", "web_page", "supplies"}  # the first is private; the rest are in /api/status
+        return {k: v for k, v in asdict(printer_info(cups_conn())).items() if k not in hidden}
 
     @api.get("/status")
     def status():
         out = {"printer": None, "error": None, "unread": events.unread(), "latest_event": events.latest()}
+        watcher = app.state.watcher
+        printer = {
+            "name": cfg.printer_queue, "model": "", "state": "unreachable", "problems": [], "supplies": [],
+            "web_page": "", "usb_answering": watcher and watcher.usb_answering,
+        }
         try:
             info = printer_info(cups_conn())
         except ApiError as e:
-            return out | {"error": e.error}
+            return out | {"error": e.error, "printers": [printer]}
+        problems = [{"label": label, "level": level} for label, level in printing.problems(info.state_reasons).items()]
         out["printer"] = {
-            "state": info.state, "state_reasons": info.state_reasons, "accepting": info.accepting,
-            "problems": [{"label": label, "level": level} for label, level in printing.problems(info.state_reasons).items()],
+            "state": info.state, "state_reasons": info.state_reasons, "accepting": info.accepting, "problems": problems,
         }
+        out["printers"] = [printer | {
+            "name": info.name, "model": info.model, "state": info.state, "problems": problems,
+            "supplies": [asdict(s) for s in info.supplies], "web_page": info.web_page,
+        }]
         return out
 
     def queue_jobs(conn) -> list[printing.JobInfo]:

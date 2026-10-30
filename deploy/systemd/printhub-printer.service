@@ -7,3 +7,5 @@ After=ipp-usb.service cups.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/printhub/printer-setup.sh
+# No TimeoutStartSec: a oneshot service has none (infinity) and printer-setup.sh waits up to 3 minutes for a
+# power-cycled printer to answer IPP. Never set one below 200 s.

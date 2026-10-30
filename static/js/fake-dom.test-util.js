@@ -12,7 +12,7 @@ class FakeElement {
     this._text = "";
     this.hidden = false;
     this.disabled = false;
-    this.style = { setProperty() {} };
+    this.style = { props: {}, setProperty(name, value) { this.props[name] = value; } };
   }
   get textContent() {
     return this._text + this.children.map((c) => (typeof c === "string" ? c : c.textContent)).join("");
