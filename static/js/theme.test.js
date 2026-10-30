@@ -63,6 +63,12 @@ test("set stores and applies the choice; Auto goes back to the system", () => {
   assert.deepEqual([theme.get(), page.saved, page.theme], ["auto", "auto", "dark"]);
 });
 
+test("set with garbage stores and applies Auto", () => {
+  const { page, theme } = load({ systemDark: true, stored: "light" });
+  theme.set("garbage");
+  assert.deepEqual([theme.get(), page.saved, page.theme], ["auto", "auto", "dark"]);
+});
+
 test("blocked storage does not break reading or switching", () => {
   const { page, theme } = load({ systemDark: false, stored: "throws" });
   assert.equal(page.theme, "light");

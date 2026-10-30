@@ -124,7 +124,8 @@ test("every page gets one GitHub footer link, even without the header host", () 
   assert.equal(link.attributes.target, "_blank");
   assert.equal(link.attributes.rel, "noopener");
   assert.equal(link.dataset.icon, "github");
-  assert.equal(textOf(footers[0]), "Print Hub is open source on GitHub");
+  assert.equal(textOf(footers[0]), "Print Hub is open source on GitHub (opens in a new tab)");
+  assert.equal(find(link, (el) => el.className === "visually-hidden").textContent, " (opens in a new tab)");
 });
 
 test("the theme button shows the current choice and a click cycles Auto, Light, Dark", () => {

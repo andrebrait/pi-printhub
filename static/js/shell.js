@@ -230,7 +230,9 @@ function buildBar(host) {
   toggler.setAttribute("aria-expanded", "false");
   toggler.setAttribute("aria-label", "Menu");
   toggler.append(el("span", "navbar-toggler-icon"));
-  tools.append(themeButton(document, window.printhubTheme), cog, bell, toggler);
+  // A stale cached theme.js may not define it yet: the header must still render.
+  const theme = window.printhubTheme ?? { get: () => "auto", set() {} };
+  tools.append(themeButton(document, theme), cog, bell, toggler);
 
   const collapse = el("div", "collapse navbar-collapse order-3 order-md-0");
   collapse.id = "main-nav";
@@ -404,6 +406,10 @@ export function mountFooter(document) {
   link.setAttribute("rel", "noopener");
   link.dataset.icon = "github";
   link.textContent = "Print Hub is open source on GitHub";
+  const hint = document.createElement("span");
+  hint.className = "visually-hidden";
+  hint.textContent = " (opens in a new tab)";
+  link.append(hint);
   footer.append(link);
   document.body.append(footer);
 }

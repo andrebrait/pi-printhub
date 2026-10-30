@@ -62,7 +62,7 @@ The message is one `sendMessage` call to `https://api.telegram.org/bot<token>/se
   | `Markdown` | `🖨️ *Print Hub*` | `*{title}*` |
   | `None` | `🖨️ Print Hub` | `{title}` |
 
-  An email channel's templates are the HTML ones for format `html` and the `None` ones for `text`; its subject prefix default stays `[Print Hub]`. A channel keeps whatever parse mode, header and templates it was stored with.
+  An email channel's templates are the HTML ones for format `html` and the `None` ones for `text`; its subject prefix default stays `[Print Hub]`. A channel keeps whatever parse mode, header and templates it was stored with; one stored without a `parse_mode` is treated as MarkdownV2.
 - Placeholders: `{title}`, `{detail}`, `{link}`, `{time}` (the event's time as local `YYYY-MM-DD HH:MM`). Only these four are replaced, everything else, other braces included, stays as typed. Lines left empty or blank after the replacement are dropped.
 - **Send test** is a `settings` event, so it shows the Settings changes template.
 - The settings page keeps all of this under **Advanced options** (closed by default) in the channel form, with **Reset to defaults**; the defaults come from `GET /api/notify/defaults`. A new Telegram channel starts with MarkdownV2 and its defaults; changing the parse mode (or an email channel's Format) replaces each field that still equals the previous mode's default with the new mode's and leaves edited fields alone; Reset uses the current mode.
