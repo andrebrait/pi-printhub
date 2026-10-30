@@ -88,7 +88,7 @@ Each channel has a checkbox per kind; all on for a new channel.
 
 ### 6.3 Sharing without the printer
 
-- `apply_share false` moves the AirPrint announcement files to `/var/lib/printhub/avahi-off/` instead of deleting them; `apply_share true` moves them back when the queue is an IPP-over-USB queue and they exist, and only starts `printhub-printer.service` when there is no copy.
+- `apply_share false` moves the AirPrint announcement files to `/var/lib/printhub-system/avahi-off/` (created root-owned, mode 0700; never under `/var/lib/printhub`, which the web app's user controls) instead of deleting them; `apply_share true` moves them back when the queue is an IPP-over-USB queue and they exist, and only starts `printhub-printer.service` when there is no copy. `apply_printer` writes fresh announcements and removes any stale copy.
 - Turning sharing on therefore works while the printer is off or not answering.
 
 ## 7. API
@@ -101,7 +101,7 @@ All under the session router; state-changing calls pass the Origin check.
 | `POST /api/notify/channels` | Add a channel; 400 on invalid fields |
 | `PUT /api/notify/channels/{id}` | Edit; secrets as in 2.4 |
 | `DELETE /api/notify/channels/{id}` | Delete |
-- `apply_share false` moves the AirPrint announcement files to `/var/lib/printhub-system/avahi-off/` (created root-owned, mode 0700; never under `/var/lib/printhub`, which the web app's user controls) instead of deleting them; `apply_share true` moves them back when the queue is an IPP-over-USB queue and they exist, and only starts `printhub-printer.service` when there is no copy. `apply_printer` writes fresh announcements and removes any stale copy.
+| `POST /api/notify/channels/{id}/test` | Send a test notification now; 502 with the reason on failure |
 | `GET /api/notify/silences` | Active silences |
 | `POST /api/notify/silences` | `{match: "title" \| "kind", value, hours: 1 \| 8 \| 24 \| 168}` |
 | `DELETE /api/notify/silences/{id}` | Unsilence |
