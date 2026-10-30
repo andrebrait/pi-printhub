@@ -30,6 +30,7 @@ const PRECACHE = [
   ...["arrow_forward", "cancel", "check", "close", "crop", "delete", "description", "document_scanner", "done_all", "edit",
     "home", "image", "list_alt", "login", "logout", "notifications", "picture_as_pdf", "print", "refresh", "restart_alt",
     "rotate_left", "rotate_right", "scanner", "send", "settings", "upload_file"].map((name) => `/vendor/material-symbols/${name}.svg`),
+  "/vendor/simple-icons/github.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/maskable-512.png",

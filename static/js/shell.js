@@ -372,8 +372,24 @@ function init(host) {
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && poll());
 }
 
+/** A small centred footer linking to the project, on every page including the headerless login. */
+export function mountFooter(document) {
+  const footer = document.createElement("footer");
+  footer.className = "text-center small text-body-secondary py-3 mt-auto";
+  const link = document.createElement("a");
+  link.className = "link-secondary";
+  link.href = "https://github.com/andrebrait/pi-printhub";
+  link.setAttribute("target", "_blank");
+  link.setAttribute("rel", "noopener");
+  link.dataset.icon = "github";
+  link.textContent = "Print Hub is open source on GitHub";
+  footer.append(link);
+  document.body.append(footer);
+}
+
 // Under node --test there is no page: only the helpers above are used.
 if (typeof document !== "undefined") {
+  mountFooter(document);
   const host = document.getElementById("shell");
   if (host) init(host);
 }

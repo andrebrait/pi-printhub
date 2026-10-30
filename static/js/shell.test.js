@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import test from "node:test";
 import assert from "node:assert/strict";
-import { eventItem, silence, statusPill, when } from "./shell.js";
+import { eventItem, mountFooter, silence, statusPill, when } from "./shell.js";
 import { fakeDocument, textOf, find, findAll } from "./fake-dom.test-util.js";
 
 const printer = (state, problems = []) => ({ printer: { state, problems }, error: null });
@@ -111,4 +111,18 @@ test("silencing posts the choice and says when it ends", async () => {
   } finally {
     globalThis.fetch = real;
   }
+});
+
+test("every page gets one GitHub footer link, even without the header host", () => {
+  const document = fakeDocument();
+  document.body = document.createElement("body");
+  mountFooter(document);
+  const footers = findAll(document.body, (el) => el.tagName === "FOOTER");
+  assert.equal(footers.length, 1);
+  const link = find(footers[0], (el) => el.tagName === "A");
+  assert.equal(link.attributes.href, "https://github.com/andrebrait/pi-printhub");
+  assert.equal(link.attributes.target, "_blank");
+  assert.equal(link.attributes.rel, "noopener");
+  assert.equal(link.dataset.icon, "github");
+  assert.equal(textOf(footers[0]), "Print Hub is open source on GitHub");
 });

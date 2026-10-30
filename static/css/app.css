@@ -7,6 +7,8 @@
 [data-bs-theme="dark"] { --sheet-shadow: rgb(0 0 0 / 0.6); }
 
 [hidden] { display: none !important; }
+/* The footer sits at the bottom even on short pages. */
+body { min-height: 100vh; display: flex; flex-direction: column; }
 p:empty { display: none; }
 /* Messages often carry paths and URLs without spaces. */
 .error { color: var(--bs-danger-text-emphasis); overflow-wrap: anywhere; }
@@ -31,6 +33,7 @@ p:empty { display: none; }
 [data-icon="document_scanner"] { --icon: url(/vendor/material-symbols/document_scanner.svg); }
 [data-icon="done_all"] { --icon: url(/vendor/material-symbols/done_all.svg); }
 [data-icon="edit"] { --icon: url(/vendor/material-symbols/edit.svg); }
+[data-icon="github"] { --icon: url(/vendor/simple-icons/github.svg); }
 [data-icon="home"] { --icon: url(/vendor/material-symbols/home.svg); }
 [data-icon="image"] { --icon: url(/vendor/material-symbols/image.svg); }
 [data-icon="list_alt"] { --icon: url(/vendor/material-symbols/list_alt.svg); }
