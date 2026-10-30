@@ -135,13 +135,15 @@ except BaseException:
 }
 
 # current_share, current_expose: what the system is set to now, for the status after a failure.
+# CUPS 2.4's lpstat prints no sharing flag; lpoptions does, as the token printer-is-shared=true. Quoted values
+# (description, location) are dropped first so their text cannot match.
 current_share() {
     local out
-    out=$(lpstat -l -p "${PRINTER_QUEUE:-OfficeJet}" 2>/dev/null) || out=""
-    [[ $out == *shared* && ${out,,} != *"not shared"* ]] && echo true || echo false
+    out=$(lpoptions -p "${PRINTER_QUEUE:-OfficeJet}" 2>/dev/null | sed "s/'[^']*'//g") || out=""
+    [[ $out =~ (^|[[:space:]])printer-is-shared=true([[:space:]]|$) ]] && echo true || echo false
 }
 current_expose() {
-    grep -q '^[[:space:]]*interface[[:space:]]*=[[:space:]]*all' "${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf}" 2>/dev/null &&
+    grep -q '^[[:space:]]*interface[[:space:]]*=[[:space:]]*all[[:space:]]*$' "${IPP_USB_CONF:-/etc/ipp-usb/ipp-usb.conf}" 2>/dev/null &&
         echo true || echo false
 }
 
@@ -156,7 +158,13 @@ apply_request() {
 run_apply() {
     local errf error
     REQ_AT=""
-    errf=$(mktemp)
+    if ! errf=$(mktemp); then
+        _load_request 2>/dev/null || true
+        write_status failed "$(current_share)" "$(current_expose)" "mktemp failed" "$REQ_AT"
+        return 1
+    fi
+    # shellcheck disable=SC2064 # errf is local and gone when the trap fires, so expand it now
+    trap "rm -f '$errf'" EXIT
     if apply_request 2>"$errf"; then
         write_status applied "$REQ_SHARE" "$REQ_EXPOSE" "" "$REQ_AT"
         rm -f "$errf"

@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import json
 import os
+import pwd
 import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).parent.parent / "deploy" / "apply-settings.sh"
 REQUEST = {"share": False, "expose_usb": True, "at": "2026-10-29T10:00:00+00:00"}
+OWNER = pwd.getpwuid(os.getuid()).pw_name
 
 
 class Box:
@@ -18,6 +20,13 @@ class Box:
             d.mkdir()
         self.conf.write_text("[http]\n  interface = all\n")
         self.uri.write_text("device for OfficeJet: ipp://printer.local/ipp/print\n")
+        self.shared = tmp / "shared"
+        self.shared.write_text("true")
+        # The description repeats the flag: only the real token may count.
+        (self.bin / "lpoptions").write_text(
+            f"#!/bin/sh\necho \"copies=1 printer-info='is printer-is-shared=true' printer-is-shared=$(cat {self.shared})\"\n"
+        )
+        (self.bin / "lpoptions").chmod(0o755)
         for name in ("systemctl", "lpadmin", "cupsctl", "lpstat"):
             exe = self.bin / name
             exe.write_text(
@@ -32,7 +41,7 @@ class Box:
             ["bash", "-c", f'source "{SCRIPT}"; {expr}'],
             env={
                 "PATH": f"{self.bin}:/usr/bin:/bin", "DATA_DIR": str(self.data), "IPP_USB_CONF": str(self.conf),
-                "AVAHI_DIR": str(self.avahi), "OWNER": "root", **env,
+                "AVAHI_DIR": str(self.avahi), "OWNER": OWNER, **env,
             },
             capture_output=True,
             text=True,
@@ -63,21 +72,32 @@ def test_request_refuses_unsafe_files(tmp_path):
     path = box.data / "system-request.json"
     secret = tmp_path / "secret.json"
     secret.write_text(json.dumps(REQUEST))
+    stranger = "root" if OWNER == "nobody" else "nobody"
     cases = {
         "symlink": (lambda: path.symlink_to(secret), {}),
         "directory": (lambda: path.mkdir(), {}),
+        "fifo": (lambda: os.mkfifo(path), {}),
         "too big": (lambda: box.request(json.dumps(REQUEST) + " " * 1025), {}),
         "string bool": (lambda: box.request({**REQUEST, "share": "false"}), {}),
         "extra key": (lambda: box.request({**REQUEST, "extra": 1}), {}),
         "not JSON": (lambda: box.request("{"), {}),
-        "wrong owner": (lambda: box.request(), {"OWNER": "nobody"}),
+        "wrong owner": (lambda: box.request(), {"OWNER": stranger}),
     }
     for name, (setup, env) in cases.items():
-        if path.is_symlink() or path.is_dir():
-            path.unlink() if path.is_symlink() else path.rmdir()
+        if path.is_dir():
+            path.rmdir()
+        elif path.is_symlink() or path.exists():
+            path.unlink()
         setup()
         r = box.run("read_request", **env)
         assert r.returncode != 0 and r.stdout == "" and r.stderr.strip(), name
+
+
+def test_request_of_exactly_1024_bytes_is_accepted(tmp_path):
+    box = Box(tmp_path)
+    body = json.dumps(REQUEST)
+    box.request(body + " " * (1024 - len(body)))
+    assert box.run("read_request").stdout == "false true\n"
 
 
 def test_expose_toggles_the_interface_and_restarts_only_on_change(tmp_path):
@@ -123,15 +143,27 @@ def test_resharing_an_ipp_usb_queue_reruns_printer_setup(tmp_path):
     assert not any(c.startswith("lpadmin") for c in box.calls())
 
 
-def test_failed_command_writes_a_failed_status(tmp_path):
+def test_failed_command_status_reports_the_state_read_back(tmp_path):
+    # lpadmin fails, so the status must say what the system is now, not what was asked for.
+    for shared in (True, False):
+        for expose in (True, False):
+            (tmp_path / f"{shared}-{expose}").mkdir()
+            box = Box(tmp_path / f"{shared}-{expose}")
+            box.shared.write_text(str(shared).lower())
+            box.request({**REQUEST, "expose_usb": expose})
+            r = box.run("run_apply", FAIL="lpadmin")
+            assert r.returncode != 0
+            status = json.loads((box.data / "system-status.json").read_text())
+            assert status["state"] == "failed" and status["error"]
+            assert status["request_at"] == REQUEST["at"]
+            assert status["share"] is shared
+            assert status["expose_usb"] is ("interface = all" in box.conf.read_text())
+
+
+def test_interface_prefixed_with_all_does_not_count_as_exposed(tmp_path):
     box = Box(tmp_path)
-    box.request()
-    r = box.run("run_apply", FAIL="lpadmin")
-    assert r.returncode != 0
-    status = json.loads((box.data / "system-status.json").read_text())
-    assert status["state"] == "failed" and status["error"]
-    assert status["request_at"] == REQUEST["at"]
-    assert isinstance(status["share"], bool) and isinstance(status["expose_usb"], bool)
+    box.conf.write_text("[http]\n  interface = allxyz\n")
+    assert box.run("current_expose").stdout == "false\n"
 
 
 def test_applied_status_is_private_and_matches_the_request(tmp_path):
