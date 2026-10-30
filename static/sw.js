@@ -14,6 +14,7 @@ const PRECACHE = [
   "/css/app.css",
   "/js/api.js",
   "/js/crop.js",
+  "/js/home.js",
   "/js/layout.js",
   "/js/print.js",
   "/js/scan.js",

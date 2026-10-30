@@ -32,6 +32,11 @@
     </div>
   </section>
 
+  <section class="mb-4" aria-labelledby="printers-heading">
+    <h2 id="printers-heading" class="h5">Printers</h2>
+    <div id="printers" class="row g-3"><p class="col-12 text-body-secondary mb-0">Checking printers…</p></div>
+  </section>
+
   <div class="row g-4">
     <section class="col-md-6" aria-labelledby="recent-prints">
       <h2 id="recent-prints" class="h5">Recent prints</h2>
@@ -47,6 +52,7 @@
 <script type="module">
 // SPDX-License-Identifier: AGPL-3.0-only
 import { apiFetch, uploadFile } from "/js/api.js";
+import { watchPrinters } from "/js/home.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -130,6 +136,7 @@ drop.addEventListener("drop", (e) => {
 });
 
 refreshDocs();
+watchPrinters(document, $("printers"));
 </script>
 <script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script type="module" src="/js/shell.js"></script>
