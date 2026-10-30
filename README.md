@@ -16,6 +16,28 @@ It appears to every client on the LAN as a standard network printer and scanner.
 
 Runtime dependencies come from Debian Trixie apt packages only. There is no pip or venv on the Pi.
 
+## Screenshots
+
+The home page with the printer widget in the header and the printer card (supplies, status, low-ink warning), in the light and dark themes:
+
+<p align="center">
+  <img src="docs/screenshots/home-light.png" alt="Home page, light theme: print a file, new scan, the printer card with ink levels and recent documents" width="49%">
+  <img src="docs/screenshots/home-dark.png" alt="Home page, dark theme" width="49%">
+</p>
+
+Printing a file, with the sheet preview and print settings:
+
+<p align="center">
+  <img src="docs/screenshots/print-light.png" alt="Print page: a three-page preview next to the print settings" width="80%">
+</p>
+
+On a phone, the same pages stack into one column; the header keeps the ink levels and status:
+
+<p align="center">
+  <img src="docs/screenshots/home-mobile.png" alt="Home page on a phone" width="32%">
+  <img src="docs/screenshots/print-mobile.png" alt="Print page on a phone" width="32%">
+</p>
+
 ## Install
 
 On a fresh Raspberry Pi OS Lite 64-bit (Debian Trixie) with the printer plugged in and powered on:
