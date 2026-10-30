@@ -728,10 +728,11 @@ test("the email Format starts as HTML, is sent, and changes the help under the t
   document.getElementById("channel-add").listeners.click();
   const format = option(document, "ch-format");
   assert.equal(format.value, "html");
-  assert.ok(textOf(advanced(document)).includes('Use HTML tags such as <b>bold</b>, <i>italic</i> and <a href="…">links</a>'));
+  assert.ok(textOf(advanced(document)).includes('Use HTML tags such as <b>bold</b>, <i>italic</i> and <a href="…">links</a>.'));
+  assert.ok(textOf(advanced(document)).includes("Your text is sent as typed; the values of the placeholders are escaped."));
   format.value = "text";
   format.listeners.change();
-  assert.equal(textOf(advanced(document)).includes("Use HTML tags"), false);
+  assert.equal(textOf(advanced(document)).includes("Use HTML tags") || textOf(advanced(document)).includes("are escaped"), false);
   assert.ok(textOf(advanced(document)).includes("Placeholders: {title}, {detail}, {link}, {time}"));
   document.getElementById("channel-name").value = "Mail";
   field(document, "to").value = "a@example.com";
@@ -764,6 +765,7 @@ test("the Telegram help names the syntax of the chosen parse mode and follows a 
   field(document, "parse_mode").value = "MarkdownV2";
   field(document, "parse_mode").listeners.change();
   assert.ok(help().includes("Two asterisks are not bold."));
+  assert.ok(help().includes("Your text is sent as typed in the chosen parse mode; the values of the placeholders are escaped."));
   assert.equal(help().includes("HTML: <b>bold</b>"), false);
 });
 

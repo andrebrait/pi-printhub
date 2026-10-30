@@ -472,13 +472,21 @@ def test_email_failure_is_a_send_error(cfg):
 def test_html_email_is_multipart_with_escaped_values_and_line_breaks(tls_mail, cfg):
     channel = email(templates={"job": "<b>{title}</b>\n{detail}"})
 
-    msg = sent_message(tls_mail, cfg, channel, event(title="a <b> c", detail="Paper jam"))
+    msg = sent_message(tls_mail, cfg, channel, event(title='a <b> "c"', detail="Paper jam"))
 
     assert msg.get_content_type() == "multipart/alternative"
     text, html_part = msg.get_body(("plain",)), msg.get_body(("html",))
-    assert "<b>a &lt;b&gt; c</b><br>\nPaper jam" in html_part.get_content().replace("\r\n", "\n")
+    assert "<b>a &lt;b&gt; &quot;c&quot;</b><br>\nPaper jam" in html_part.get_content().replace("\r\n", "\n")
     assert html_part.get_content().lstrip().lower().startswith("<!doctype html>")
-    assert text.get_content().replace("\r\n", "\n").strip() == "a <b> c\nPaper jam"
+    assert text.get_content().replace("\r\n", "\n").strip() == 'a <b> "c"\nPaper jam'
+
+
+def test_a_quote_in_a_value_cannot_leave_the_owners_html_attribute(tls_mail, cfg):
+    channel = email(templates={"job": '<a href="{detail}">x</a>'})
+
+    msg = sent_message(tls_mail, cfg, channel, event(detail='" onclick="y'))
+
+    assert 'href="&quot; onclick=&quot;y"' in msg.get_body(("html",)).get_content()
 
 
 def test_text_email_stays_a_single_plain_part(tls_mail, cfg):

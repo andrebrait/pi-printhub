@@ -70,8 +70,8 @@ def _email(channel: dict, event: Event, cfg: Config) -> None:
     template = channel["templates"][event.kind]
     body, html_body = render(template, event, link, str), None
     if channel["format"] == "html":
-        # The tags are the owner's; only the placeholder values need escaping.
-        rendered = render(template, event, link, lambda s: html.escape(s, quote=False))
+        # The tags are the owner's; the values are escaped, quotes too, so one inside an owner's attribute cannot break out.
+        rendered = render(template, event, link, html.escape)
         html_body = f"<!doctype html><html><body>{rendered.replace(chr(10), '<br>' + chr(10))}</body></html>"
         # Strip tags before unescaping, or a value like "<b>" would be taken for a tag.
         body = html.unescape(re.sub(r"<[^>]+>", "", rendered))

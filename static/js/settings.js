@@ -48,12 +48,12 @@ const TELEGRAM_SYNTAX = {
   "": "Plain text: no formatting.",
 };
 const EMAIL_SYNTAX = {
-  html: 'Use HTML tags such as <b>bold</b>, <i>italic</i> and <a href="…">links</a>; placeholder values are escaped.',
+  html: 'Use HTML tags such as <b>bold</b>, <i>italic</i> and <a href="…">links</a>.',
   text: "",
 };
 const MESSAGE_HEAD = {
-  telegram: { key: "header", label: "Header", max: 200, syntax: TELEGRAM_SYNTAX },
-  email: { key: "subject_prefix", label: "Subject prefix", max: 100, syntax: EMAIL_SYNTAX },
+  telegram: { key: "header", label: "Header", max: 200, syntax: TELEGRAM_SYNTAX, typed: "Your text is sent as typed in the chosen parse mode; the values of the placeholders are escaped." },
+  email: { key: "subject_prefix", label: "Subject prefix", max: 100, syntax: EMAIL_SYNTAX, typed: "Your text is sent as typed; the values of the placeholders are escaped." },
 };
 let editing = null; // the saved channel the form edits; null while it adds one
 let inputs = {}; // the open form's field inputs by key
@@ -264,8 +264,9 @@ function renderAdvanced(channel) {
   reset.addEventListener("click", () => fillFrom(defaults));
   const help = el("p", "form-text");
   const showHelp = () => {
-    const syntax = head.syntax[(format ?? inputs.parse_mode).value];
-    help.textContent = ["Placeholders: {title}, {detail}, {link}, {time}.", syntax, "Empty lines are dropped."].filter(Boolean).join(" ");
+    const mode = (format ?? inputs.parse_mode).value;
+    const typed = mode === "text" ? "" : head.typed; // a plain text email escapes nothing
+    help.textContent = ["Placeholders: {title}, {detail}, {link}, {time}.", head.syntax[mode], typed, "Empty lines are dropped."].filter(Boolean).join(" ");
   };
   const details = el("details", "mb-3");
   details.append(el("summary", "mb-2", "Advanced options"), first, ...boxes, help, reset);

@@ -15,7 +15,10 @@ Configured on the settings page in a new **Notifications** card. Any number of c
 - Recipients: one or more addresses (comma-separated), each a valid single address.
 - **Use the scan email server** (default on): the channel sends through the SMTP host, port, security, user, password and From of the scan email settings, as they are at send time.
 - Off: the channel has its own `smtp_host`, `smtp_port` (1–65535), `smtp_security` (`starttls` or `tls`), `smtp_user`, `smtp_password` and `mail_from` (an address, optionally with a name, as for the scan email).
-- Subject: the **subject prefix** (default `[Print Hub]`, 0–100 characters, one line, stripped) and the event title, with line breaks removed; with no prefix, the title alone. Body: the template of the event's kind (section 2.5), as plain text.
+- Subject: the **subject prefix** (default `[Print Hub]`, 0–100 characters, one line, stripped) and the event title, with line breaks removed; with no prefix, the title alone.
+- **Format** (`html` or `text`, default `html`, also for a stored channel without it; anything else is refused). Body: the template of the event's kind (section 2.5).
+  - `html`: the owner's tags are sent as typed, the values behind the placeholders are escaped (`html.escape`, quotes included, so a value cannot leave an attribute), and newlines become `<br>`. The message is `multipart/alternative`: a plain part made from the escaped render with its tags stripped, then unescaped, and an HTML part.
+  - `text`: the template as one plain text part.
 
 ### 2.2 Telegram
 
@@ -124,9 +127,9 @@ Adding, editing and deleting a channel adds a `settings` event naming the channe
 
 ## 8. Testing
 
-- Python: channel validation per type (message fields filled with defaults, unknown kinds, over-long and empty templates, a prefix with a line break); rendering (escaping per parse mode, other braces kept, blank lines dropped, no header, one template per kind, local time); secrets never returned and kept on blank; cursor (each event handed over once per process, resume, no replay on first start); kind filtering; silences by title and kind and their expiry; retry schedule with a fake clock; failures not becoming events; Telegram request shape and escaping per parse mode against a fake HTTP server; webhook payload, header, timeout and no redirects; email through the existing fake SMTP, with and without the scan-server toggle and with each subject prefix; the 2-minute USB check and its clearing; one event per failed sharing request.
+- Python: channel validation per type (message fields filled with defaults, unknown kinds, over-long and empty templates, a prefix with a line break); rendering (escaping per parse mode, other braces kept, blank lines dropped, no header, one template per kind, local time); secrets never returned and kept on blank; cursor (each event handed over once per process, resume, no replay on first start); kind filtering; silences by title and kind and their expiry; retry schedule with a fake clock; failures not becoming events; Telegram request shape and escaping per parse mode against a fake HTTP server; webhook payload, header, timeout and no redirects; email through the existing fake SMTP (an HTML message is multipart with escaped values, quotes included, `<br>` between lines and a tag-free plain part; a text channel stays one plain part; a stored channel without `format` is html; a bad format is refused), with and without the scan-server toggle and with each subject prefix; the 2-minute USB check and its clearing; one event per failed sharing request.
 - Shell: announcements kept and restored by `apply_share`; sharing on with the printer not answering.
-- JS: add, edit and delete channels; Advanced options filled from the defaults, edited templates saved, Reset to defaults, none for a webhook; test button and result; silence from the bell; unsilence on the settings page.
+- JS: add, edit and delete channels; Advanced options filled from the defaults, the email Format select and the syntax help that follows it and Telegram's parse mode, edited templates saved, Reset to defaults, none for a webhook; test button and result; silence from the bell; unsilence on the settings page.
 - On the Pi: the owner pastes the Telegram bot token and chat ID; a test reaches the Notifications channel; a real print and scan arrive; sharing toggled with the printer off.
 
 ## 9. Out of scope
