@@ -1,4 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import re
+import tomllib
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
 import pytest
 from fastapi.routing import APIRoute
 
@@ -50,14 +55,18 @@ def test_every_api_operation_is_documented_with_real_success_and_error_shapes(se
             else:
                 schema = resolve(document, response["content"]["application/json"]["schema"])
                 assert schema["properties"]["error"]["type"] == "string"
-        assert {"400", "401", "403", "429", "503"} <= operation["responses"].keys()
+        assert {"400", "401", "403", "413", "429", "503"} <= operation["responses"].keys()
 
 
 def test_auth_metadata_matches_browser_only_contract(document):
     from printhub.auth import COOKIE
     assert document["openapi"].startswith("3.1.")
     assert document["info"]["title"] == "Print Hub API"
-    assert document["info"]["version"] == "0.1.0"
+    try:
+        expected_version = version("printhub")
+    except PackageNotFoundError:
+        expected_version = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
+    assert document["info"]["version"] == expected_version
     assert document["info"]["description"]
     schemes = document["components"]["securitySchemes"]
     assert schemes["bearerAuth"] == {"type": "http", "scheme": "bearer"}
@@ -180,3 +189,102 @@ def test_documented_validation_errors_match_the_existing_http_contract(session, 
     assert isinstance(response.json()["error"], str)
     conversion = document["paths"]["/api/uploads"]["post"]["responses"]["422"]
     assert set(resolve(document, conversion["content"]["application/json"]["schema"])["properties"]) == {"error", "doc_id"}
+
+
+def request_schema(document, path, method="post"):
+    return resolve(document, document["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"])
+
+
+def channel_schema(document, kind, *, custom=False):
+    return next(s for s in variants(document, request_schema(document, "/api/notify/channels"))
+                if s["properties"]["type"].get("const") == kind
+                and (kind != "email" or s["properties"]["use_scan_server"]["const"] == (not custom)))
+
+
+def test_non_upload_body_limit_is_documented_and_enforced(session, document):
+    from printhub.middleware import MAX_BODY
+    for method, path in [("put", "/api/settings"), ("post", "/api/notify/silences")]:
+        error = document["paths"][path][method]["responses"]["413"]["content"]["application/json"]["schema"]
+        assert resolve(document, error)["properties"]["error"]["type"] == "string"
+        response = session.request(method, path, json={}, headers={"Content-Length": str(MAX_BODY + 1)})
+        assert response.status_code == 413
+        assert isinstance(response.json()["error"], str)
+
+
+@pytest.mark.parametrize(("name", "allowed"), [("", False), (" " * 3, False), ("a", True),
+                                               ("a" * 60, True), ("a" * 61, False), ("  " + "a" * 60 + "  ", True)])
+def test_trimmed_channel_and_token_name_limits_match_the_schema(session, document, name, allowed):
+    channel_name = channel_schema(document, "webhook")["properties"]["name"]
+    token_name = request_schema(document, "/api/tokens")["properties"]["name"]
+    edit_name = request_schema(document, "/api/notify/channels/{channel_id}", "put")["properties"]["name"]
+    for schema in (channel_name, token_name, edit_name):
+        assert bool(re.fullmatch(schema["pattern"], name)) is allowed
+        assert schema["description"]
+    payload = {"name": name, "type": "webhook", "enabled": True, "kinds": [],
+               "url": "https://example.com/hook", "header_name": "", "header_value": ""}
+    channel = session.post("/api/notify/channels", json=payload)
+    token = session.post("/api/tokens", json={"name": name, "access": "read"})
+    assert channel.status_code == (201 if allowed else 400)
+    assert token.status_code == (201 if allowed else 400)
+    if allowed:
+        assert channel.json()["name"] == token.json()["name"] == name.strip()
+
+
+@pytest.mark.parametrize(("to", "allowed"), [([], False), (["a@example.com"], True),
+                                             (["a@example.com"] * 10, True), (["a@example.com"] * 11, False),
+                                             (["Display <a@example.com>"], False), (["not-an-address"], False)])
+def test_email_recipient_constraints_describe_the_existing_parser(session, document, to, allowed):
+    recipients = channel_schema(document, "email")["properties"]["to"]
+    assert (recipients["minItems"], recipients["maxItems"]) == (1, 10)
+    assert recipients["items"]["format"] == "email"
+    assert recipients["items"]["description"]
+    edit = request_schema(document, "/api/notify/channels/{channel_id}", "put")["properties"]["to"]
+    assert (edit["minItems"], edit["maxItems"]) == (1, 10)
+    response = session.post("/api/notify/channels", json={"name": "Email", "type": "email", "enabled": True,
+                                                        "kinds": [], "to": to, "use_scan_server": True})
+    assert response.status_code == (201 if allowed else 400)
+
+
+@pytest.mark.parametrize(("port", "allowed"), [(0, False), (1, True), (65535, True), (65536, False)])
+def test_custom_smtp_port_boundaries_are_documented_without_changing_validation(session, document, port, allowed):
+    schema = channel_schema(document, "email", custom=True)["properties"]["smtp_port"]
+    assert (schema["minimum"], schema["maximum"]) == (1, 65535)
+    response = session.post("/api/notify/channels", json={"name": "Email", "type": "email", "enabled": True,
+        "kinds": [], "to": ["a@example.com"], "use_scan_server": False, "smtp_host": "localhost",
+        "smtp_port": port, "smtp_security": "tls", "smtp_user": "", "smtp_password": "", "mail_from": "a@example.com"})
+    assert response.status_code == (201 if allowed else 400)
+
+
+@pytest.mark.parametrize(("url", "allowed"), [("https://example.com/hook", True), ("HTTP://localhost/hook", True),
+    ("ftp://example.com/hook", False), ("https:///hook", False), ("https://user:pass@example.com/hook", False)])
+def test_webhook_url_constraints_match_representative_runtime_boundaries(session, document, url, allowed):
+    schema = channel_schema(document, "webhook")["properties"]["url"]
+    assert bool(re.fullmatch(schema["pattern"], url)) is allowed
+    assert schema["description"]
+    response = session.post("/api/notify/channels", json={"name": "Webhook", "type": "webhook", "enabled": True,
+        "kinds": [], "url": url, "header_name": "", "header_value": ""})
+    assert response.status_code == (201 if allowed else 400)
+
+
+def test_silence_conditional_value_rules_are_documented_and_enforced(session, document):
+    body = request_schema(document, "/api/notify/silences")
+    assert body["properties"]["value"]["minLength"] == 1
+    assert body["if"]["properties"]["match"]["const"] == "kind"
+    assert set(body["then"]["properties"]["value"]["enum"]) == {"job", "scan", "printer", "conversion", "settings"}
+    for match, value, status in [("title", "", 400), ("kind", "unknown", 400), ("kind", "job", 201), ("title", "unknown", 201)]:
+        response = session.post("/api/notify/silences", json={"match": match, "value": value, "hours": 1})
+        assert response.status_code == status
+
+
+def test_existing_password_and_settings_bounds_are_documentation_only(session, document):
+    password = request_schema(document, "/api/settings/password")["properties"]["new"]
+    assert password["minLength"] == 8
+    # Password verification still happens before the length rule, not during Pydantic validation.
+    assert session.post("/api/settings/password", json={"current": "wrong", "new": "short"}).status_code == 403
+    properties = request_schema(document, "/api/settings", "put")["properties"]
+    for name, bounds in [("retention_days", (1, 365)), ("min_free_gb", (.5, 1000)), ("smtp_port", (1, 65535))]:
+        assert (properties[name]["minimum"], properties[name]["maximum"]) == bounds
+    assert set(properties["smtp_security"]["enum"]) == {"starttls", "tls", None}
+    assert properties["min_free_gb"]["description"]
+    for retention, status in [(0, 400), (1, 200), (365, 200), (366, 400), (None, 200)]:
+        assert session.put("/api/settings", json={"retention_days": retention}).status_code == status

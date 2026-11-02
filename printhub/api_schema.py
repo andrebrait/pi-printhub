@@ -3,10 +3,10 @@
 from dataclasses import dataclass
 from http import HTTPStatus
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal
+from typing import Annotated, Literal, get_args
 
 from fastapi.openapi.utils import get_openapi
-from pydantic import BaseModel, Field, RootModel, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, RootModel, TypeAdapter
 from typing_extensions import TypedDict
 
 from printhub.auth import COOKIE
@@ -189,20 +189,41 @@ class NotifyDefaults(BaseModel):
     email: dict[str, EmailDefaults]
 
 
+TRIMMED_NAME = {
+    "pattern": r"^\s*\S(?:[\s\S]{0,58}\S)?\s*$",
+    "description": "Leading and trailing whitespace is removed; the remaining name must contain 1 to 60 characters.",
+}
+TrimmedName = Annotated[str, Field(json_schema_extra=TRIMMED_NAME)]
+Recipient = Annotated[str, Field(json_schema_extra={"format": "email"},
+    description="One email addr-spec without a display name; the server canonicalizes each address.")]
+Recipients = Annotated[list[Recipient], Field(min_length=1, max_length=10)]
+SmtpPort = Annotated[int, Field(ge=1, le=65535)]
+WebhookUrl = Annotated[str, Field(
+    pattern=r"^\s*[Hh][Tt][Tt][Pp][Ss]?://[^/?#@]+(?:[/?#][\s\S]*)?$",
+    description="An absolute HTTP or HTTPS URL with a host and no username or password in its authority; put credentials in the header. The server checks URL parsing and normalizes leading whitespace and embedded tab/newline characters when parsing.")]
+HeaderName = Annotated[str, Field(pattern=r"^[A-Za-z0-9-]*$")]
+HeaderValue = Annotated[str, Field(max_length=1000, json_schema_extra={"not": {"pattern": r"[\u0000-\u001f\u007f]"}})]
+TemplateText = Annotated[str, Field(min_length=1, max_length=1000)]
+InputTemplates = dict[Kind, TemplateText]
+SubjectPrefix = Annotated[str, Field(max_length=100, json_schema_extra={"not": {"pattern": r"[\r\n]"}})]
+ChatId = Annotated[str, Field(pattern=r"^(?:-?[0-9]+|@[A-Za-z0-9_]{5,})$",
+    description="A numeric chat ID or @channelname; the complete value must match the pattern.")]
+
+
 class Channel(BaseModel):
-    name: str
+    name: TrimmedName
     enabled: bool
     kinds: list[Kind]
 
 
 class WebhookFields(BaseModel):
     type: Literal["webhook"]
-    url: str
-    header_name: str
+    url: WebhookUrl
+    header_name: HeaderName
 
 
 class WebhookCreate(Channel, WebhookFields):
-    header_value: str
+    header_value: HeaderValue
 
 
 class WebhookPublic(Channel, WebhookFields):
@@ -212,18 +233,18 @@ class WebhookPublic(Channel, WebhookFields):
 
 class TelegramFields(BaseModel):
     type: Literal["telegram"]
-    chat_id: str
+    chat_id: ChatId
     message_thread_id: int | None = None
     parse_mode: Literal["HTML", "Markdown", "MarkdownV2"] | None = "MarkdownV2"
     disable_notification: bool
     protect_content: bool
     disable_web_page_preview: bool
-    header: str = Field(default_factory=str)
-    templates: dict[Kind, str] = Field(default_factory=dict)
+    header: Annotated[str, Field(max_length=200)] = Field(default_factory=str)
+    templates: InputTemplates = Field(default_factory=dict)
 
 
 class TelegramCreate(Channel, TelegramFields):
-    bot_token: str
+    bot_token: Annotated[str, Field(pattern=r"^[A-Za-z0-9:_-]+$")]
 
 
 class TelegramPublic(Channel, TelegramFields):
@@ -233,16 +254,16 @@ class TelegramPublic(Channel, TelegramFields):
 
 class EmailMessage(BaseModel):
     type: Literal["email"]
-    to: list[str]
+    to: Recipients
     format: Literal["html", "text"] = "html"
-    subject_prefix: str = "[Print Hub]"
-    templates: dict[Kind, str] = Field(default_factory=dict)
+    subject_prefix: SubjectPrefix = "[Print Hub]"
+    templates: InputTemplates = Field(default_factory=dict)
 
 
 class EmailFields(EmailMessage):
     use_scan_server: bool
     smtp_host: str | None = None
-    smtp_port: int | None = None
+    smtp_port: SmtpPort | None = None
     smtp_security: Literal["starttls", "tls"] | None = None
     smtp_user: str | None = None
     mail_from: str | None = None
@@ -254,12 +275,12 @@ class EmailCreate(Channel, EmailMessage):
 
 class EmailCustomCreate(Channel, EmailMessage):
     use_scan_server: Literal[False]
-    smtp_host: str
-    smtp_port: int
+    smtp_host: Annotated[str, Field(min_length=1, max_length=255)]
+    smtp_port: SmtpPort
     smtp_security: Literal["starttls", "tls"]
-    smtp_user: str
-    smtp_password: str
-    mail_from: str
+    smtp_user: Annotated[str, Field(max_length=255)]
+    smtp_password: Annotated[str, Field(max_length=1000)]
+    mail_from: Annotated[str, Field(description="One email address, optionally with a display name; CR and LF are refused and the server canonicalizes the sender.")]
 
 
 class EmailPublic(Channel, EmailFields):
@@ -287,37 +308,41 @@ class ChannelCreate(RootModel[WebhookCreate | TelegramCreate | EmailCreate | Ema
 
 
 class ChannelEdit(TypedDict, total=False):
-    name: str
+    name: TrimmedName
     type: Literal["webhook", "telegram", "email"]
     enabled: bool
     kinds: list[Kind]
-    url: str
-    header_name: str
-    header_value: str | None
-    chat_id: str
-    bot_token: str | None
+    url: WebhookUrl
+    header_name: HeaderName
+    header_value: HeaderValue | None
+    chat_id: ChatId
+    bot_token: Annotated[str, Field(pattern=r"^[A-Za-z0-9:_-]+$")] | None
     message_thread_id: int | None
     parse_mode: Literal["HTML", "Markdown", "MarkdownV2"] | None
     disable_notification: bool
     protect_content: bool
     disable_web_page_preview: bool
-    header: str
-    templates: dict[Kind, str]
-    to: list[str]
+    header: Annotated[str, Field(max_length=200)]
+    templates: InputTemplates
+    to: Recipients
     use_scan_server: bool
     format: Literal["html", "text"]
-    subject_prefix: str
-    smtp_host: str
-    smtp_port: int
+    subject_prefix: SubjectPrefix
+    smtp_host: Annotated[str, Field(min_length=1, max_length=255)]
+    smtp_port: SmtpPort
     smtp_security: Literal["starttls", "tls"]
-    smtp_user: str
-    smtp_password: str | None
-    mail_from: str
+    smtp_user: Annotated[str, Field(max_length=255)]
+    smtp_password: Annotated[str, Field(max_length=1000)] | None
+    mail_from: Annotated[str, Field(description="One email address, optionally with a display name; CR and LF are refused and the server canonicalizes the sender.")]
 
 
 class SilenceCreate(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "if": {"properties": {"match": {"const": "kind"}}},
+        "then": {"properties": {"value": {"enum": list(get_args(Kind))}}},
+    })
     match: Literal["title", "kind"]
-    value: str
+    value: Annotated[str, Field(min_length=1)]
     hours: Literal[1, 8, 24, 168]
 
 
@@ -347,7 +372,7 @@ class CreatedToken(BaseModel):
 def describe(tag, summary, description, model=None, *, status=200, errors=(), media=()):
     # Additional response models document the contract without filtering or coercing live JSON.
     responses = {code: {"model": Error, "description": HTTPStatus(code).phrase}
-                 for code in {400, 401, 403, 429, 503, *errors}}
+                 for code in {400, 401, 403, 413, 429, 503, *errors}}
     if isinstance(errors, dict):
         responses.update({code: {"model": error, "description": HTTPStatus(code).phrase} for code, error in errors.items()})
     if model is not None:
@@ -387,6 +412,21 @@ def install(app):
             schema["paths"][path][method]["requestBody"] = {
                 "required": True, "content": {"application/json": {"schema": body}},
             }
+        # Only the document gains these constraints: handlers retain their existing validation order and null semantics.
+        for name, properties in {
+            "TokenCreate": {"name": TRIMMED_NAME},
+            "PasswordChange": {"new": {"minLength": 8}},
+            "SettingsPatch": {
+                "retention_days": {"minimum": 1, "maximum": 365},
+                "min_free_gb": {"minimum": 0.5, "maximum": 1000,
+                    "description": "Must also be below the total capacity of the data disk; null leaves the setting unchanged."},
+                "smtp_port": {"minimum": 1, "maximum": 65535},
+                "smtp_security": {"enum": ["starttls", "tls", None]},
+                "mail_from": {"description": "One email address, optionally with a display name; CR and LF are refused, the sender is canonicalized, and null leaves the setting unchanged."},
+            },
+        }.items():
+            for field, constraints in properties.items():
+                components["schemas"][name]["properties"][field].update(constraints)
         app.openapi_schema = schema
         return schema
 
