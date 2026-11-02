@@ -10,20 +10,57 @@ from fastapi.testclient import TestClient
 from test_app import ORIGIN, asgi_post, fake_cups, latest_event_title, make_client, space  # noqa: F401
 
 from printhub.auth import COOKIE, issue_session
-from printhub.middleware import BROWSER_ONLY, WRITE_METHODS
+from printhub.middleware import BROWSER_ONLY
 
 INVALID = {"error": "Invalid API token"}
 READ_ONLY = {"error": "This API token is read-only"}
 NOT_ALLOWED = {"error": "Not allowed with an API token"}
 UNAVAILABLE = {"error": "API tokens are unavailable"}
-# The routes a token never reaches (path parameters filled in with "x").
+# Every API route needs an explicit token-access decision, including GETs and writes.
 BROWSER = {
     ("POST", "/api/login"),
     ("POST", "/api/logout"),
     ("POST", "/api/settings/password"),
+    ("POST", "/api/share/{token}/claim"),
     ("GET", "/api/tokens"),
     ("POST", "/api/tokens"),
-    ("DELETE", "/api/tokens/x"),
+    ("DELETE", "/api/tokens/{token_id}"),
+}
+TOKEN_ROUTES = {
+    ("GET", "/api/printer"),
+    ("GET", "/api/status"),
+    ("GET", "/api/notifications"),
+    ("POST", "/api/notifications/read"),
+    ("POST", "/api/uploads"),
+    ("POST", "/api/docs/{doc_id}/convert"),
+    ("GET", "/api/docs"),
+    ("GET", "/api/docs/{doc_id}"),
+    ("PATCH", "/api/docs/{doc_id}"),
+    ("DELETE", "/api/docs/{doc_id}"),
+    ("GET", "/api/docs/{doc_id}/pages/{page_id}"),
+    ("GET", "/api/docs/{doc_id}/preview/{n}"),
+    ("GET", "/api/scanner"),
+    ("POST", "/api/scans"),
+    ("GET", "/api/docs/{doc_id}/export"),
+    ("POST", "/api/docs/{doc_id}/print"),
+    ("GET", "/api/jobs"),
+    ("POST", "/api/jobs/{job_id}/cancel"),
+    ("POST", "/api/docs/{doc_id}/email"),
+    ("GET", "/api/recipients"),
+    ("GET", "/api/settings"),
+    ("PUT", "/api/settings"),
+    ("POST", "/api/settings/test-email"),
+    ("GET", "/api/settings/system"),
+    ("PUT", "/api/settings/system"),
+    ("GET", "/api/notify/defaults"),
+    ("GET", "/api/notify/channels"),
+    ("POST", "/api/notify/channels"),
+    ("PUT", "/api/notify/channels/{channel_id}"),
+    ("DELETE", "/api/notify/channels/{channel_id}"),
+    ("POST", "/api/notify/channels/{channel_id}/test"),
+    ("GET", "/api/notify/silences"),
+    ("POST", "/api/notify/silences"),
+    ("DELETE", "/api/notify/silences/{silence_id}"),
 }
 
 
@@ -48,11 +85,15 @@ def bearer(session, token) -> TestClient:
 
 def api_routes(app) -> list[tuple[str, str]]:
     return [
-        (method, re.sub(r"\{[^}]+\}", "x", route.path))
+        (method, route.path)
         for route in app.routes
         if isinstance(route, APIRoute) and route.path.startswith("/api/")
         for method in sorted(route.methods)
     ]
+
+
+def concrete_path(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "x", path)
 
 
 @pytest.mark.parametrize("access", ["read", "full"])
@@ -101,7 +142,7 @@ def test_a_read_token_is_refused_every_write_and_allowed_every_get(session):
 
     wrong = []
     for method, path in routes:
-        r = client.request(method, path)
+        r = client.request(method, concrete_path(path))
         if method == "GET":
             ok = r.status_code not in (401, 403)
         else:
@@ -117,7 +158,7 @@ def test_a_full_token_passes_every_route_except_the_browser_only_ones(session):
     for method, path in api_routes(session.app):
         if (method, path) in BROWSER:
             continue
-        r = client.request(method, path)
+        r = client.request(method, concrete_path(path))
         if r.status_code in (401, 403):
             wrong.append((method, path, r.status_code))
     assert wrong == []
@@ -128,11 +169,11 @@ def test_browser_only_routes_refuse_any_token(session, access):
     client = bearer(session, token_for(session, access))
     assert BROWSER == {route for route in api_routes(session.app) if BROWSER_ONLY.fullmatch("{} {}".format(*route))}
     for method, path in sorted(BROWSER):
-        r = client.request(method, path)
+        r = client.request(method, concrete_path(path))
         assert (r.status_code, r.json()) == (403, NOT_ALLOWED), (method, path)
 
 
-@pytest.mark.parametrize("path", ["/api/tokens/", "/api/tokens/%0A", "/api/tokens/x/y"])
+@pytest.mark.parametrize("path", ["/api/tokens/", "/api/tokens/x/y"])
 def test_everything_under_api_tokens_is_browser_only(session, path):
     r = bearer(session, token_for(session, "full")).delete(path)
     assert (r.status_code, r.json()) == (403, NOT_ALLOWED)
@@ -145,12 +186,58 @@ def test_a_method_nobody_classified_is_refused_even_for_a_full_token(session, me
 
 
 def test_every_api_route_is_classified(session):
-    unclassified = [
-        (method, path)
-        for method, path in api_routes(session.app)
-        if method != "GET" and method not in WRITE_METHODS and not BROWSER_ONLY.fullmatch(f"{method} {path}")
-    ]
-    assert unclassified == []
+    assert set(api_routes(session.app)) == BROWSER | TOKEN_ROUTES
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_new_api_routes_need_an_explicit_token_decision(session, method):
+    session.app.add_api_route("/api/unclassified", lambda: {}, methods=[method])
+    with pytest.raises(AssertionError):
+        test_every_api_route_is_classified(session)
+
+
+@pytest.mark.parametrize("control", ["%0A", "%0D", "%00", "%09", "%7F"])
+@pytest.mark.parametrize(("method", "path"), sorted(BROWSER))
+def test_control_paths_cannot_reach_browser_only_handlers(session, cfg, method, path, control):
+    client = bearer(session, token_for(session, "full"))
+    assert client.get("/api/status").status_code == 200  # record last_used before the file snapshot
+    records = session.get("/api/tokens").json()
+    path = concrete_path(path).replace("/api/tokens/x", f"/api/tokens/{records[0]['id']}")
+    before = (cfg.data_dir / "api-tokens.json").read_bytes()
+    events = session.get("/api/notifications").json()
+    password_hash = session.app.state.cfg.password_hash
+    bodies = {
+        "/api/tokens": {"name": "Unexpected", "access": "full"},
+        "/api/login": {"password": "secret"},
+        "/api/settings/password": {"current": "secret", "new": "a-new-password"},
+    }
+
+    r = client.request(method, path + control, json=bodies.get(path))
+
+    assert (cfg.data_dir / "api-tokens.json").read_bytes() == before
+    assert session.app.state.cfg.password_hash == password_hash
+    assert session.get("/api/notifications").json() == events
+    assert "set-cookie" not in r.headers
+    assert (r.status_code, r.json()) == (400, {"error": "Invalid path"})
+
+
+@pytest.mark.parametrize("control", ["%0A", "%0D", "%00", "%09", "%7F"])
+def test_anonymous_share_with_a_control_path_is_invalid(make_client, control):
+    client = make_client(login=False)
+    r = client.post("/share" + control)
+    assert (r.status_code, r.json()) == (400, {"error": "Invalid path"})
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\0", "\t", "\x7f"])
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Authorization": "Bearer ph_wrong"}, {"Authorization": "Basic wrong"}, {"Origin": "https://evil.example"}],
+)
+def test_path_validation_precedes_auth_origin_and_body_reads(session, cfg, control, headers):
+    assert asgi_post(session.app, "/api/uploads" + control, headers) == (400, 0)
+    assert asgi_post(session.app, "/share" + control, headers) == (400, 0)
+    cookie = {"Cookie": f"{COOKIE}={issue_session(cfg)}"}
+    assert asgi_post(session.app, "/api/uploads" + control, cookie) == (400, 0)
 
 
 def test_a_read_token_upload_is_refused_before_the_body_is_read(session, monkeypatch, tmp_path):

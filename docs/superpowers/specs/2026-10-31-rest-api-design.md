@@ -22,6 +22,7 @@ Other programs (Home Assistant, scripts, automations) use the same `/api` the we
 - A request with a valid token skips the Origin check: that check stops other websites from using a logged-in browser's cookie, which does not apply to a token the client must present itself.
 - A request with an `Authorization` header that is not a valid token gets 401 `{"error": "Invalid API token"}`, even if it also carries a valid session cookie. Failed token attempts count against the login rate limit per client address (429 after 5 a minute), so tokens cannot be guessed quickly.
 - Without an `Authorization` header, today's behaviour applies: session cookie plus Origin check.
+- Every HTTP path containing an ASCII control character (U+0000–U+001F or U+007F), including decoded `%0A`, is refused with 400 `{"error": "Invalid path"}` before authentication, Origin checks, share admission or body reads.
 
 ### 2.3 Access levels
 
@@ -29,7 +30,7 @@ Other programs (Home Assistant, scripts, automations) use the same `/api` the we
 |---|---|
 | `read` | Every `GET` under `/api/`, except `GET /api/tokens`. Includes status, printer, jobs, documents and their exports and previews, notifications, settings (secrets are never returned anyway), channels, silences, defaults, recipients and scanner. |
 | `full` | Everything `read` allows, plus every state-changing call (`POST`, `PUT`, `PATCH`, `DELETE`) except those in the next row. |
-| Browser session only | `POST /api/login`, `POST /api/logout`, `POST /api/settings/password`, and everything under `/api/tokens`. A token gets 403 `{"error": "Not allowed with an API token"}`. |
+| Browser session only | `POST /api/login`, `POST /api/logout`, `POST /api/settings/password`, `POST /api/share/{token}/claim`, and everything under `/api/tokens`. A token gets 403 `{"error": "Not allowed with an API token"}`. |
 
 A `read` token on a state-changing call gets 403 `{"error": "This API token is read-only"}`.
 

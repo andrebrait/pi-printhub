@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from printhub import tokens
-from printhub.auth import COOKIE, LoginLimiter, origin_ok, session_valid
+from printhub.auth import COOKIE, TOKEN_SCOPE, LoginLimiter, origin_ok, session_valid
 from printhub.config import Config
 
 MAX_UPLOAD = 100 * 1024 * 1024
@@ -18,7 +18,9 @@ MAX_BODY = MAX_UPLOAD + 1024 * 1024
 
 # "METHOD path" of what only a browser session may do. Any other /api/ request is allowed to a token by
 # method alone: GET to every token, WRITE_METHODS to a full one, no other method to any.
-BROWSER_ONLY = re.compile(r"POST /api/(login|logout|settings/password)|\S+ /api/tokens(/.*)?", re.DOTALL)
+BROWSER_ONLY = re.compile(
+    r"POST /api/(login|logout|settings/password|share/[^/]+/claim)|\S+ /api/tokens(/.*)?"
+)
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
@@ -27,7 +29,7 @@ class _BodyTooLarge(Exception):
 
 
 class Guard:
-    """Origin check, session gate and body limit, applied before any body byte is read.
+    """Path validation, token/session auth, Origin check and body limit, before any body byte is read.
 
     FastAPI parses (and spools) multipart bodies before route dependencies run, so these
     checks cannot live in dependencies.
@@ -42,8 +44,11 @@ class Guard:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        request = Request(scope)
         method, path = scope["method"], scope["path"]
+        # Route regexes ending in $ also match before a final newline; reject controls before any gate.
+        if any(ord(char) < 0x20 or ord(char) == 0x7f for char in path):
+            return await _error(400, "Invalid path")(scope, receive, send)
+        request = Request(scope)
         if denied := await self._deny(scope, request, method, path):
             return await denied(scope, receive, send)
         reserved = method == "POST" and path == "/share" and not session_valid(self.current(), request.cookies.get(COOKIE))
@@ -124,7 +129,7 @@ class Guard:
                 self.limiter.allow(client, time.monotonic())
         if token is None:
             return _error(401, "Invalid API token")
-        scope["printhub.token"] = token
+        scope[TOKEN_SCOPE] = token
         if BROWSER_ONLY.fullmatch(f"{method} {path}") or (method != "GET" and method not in WRITE_METHODS):
             return _error(403, "Not allowed with an API token")
         if method != "GET" and token["access"] != "full":
