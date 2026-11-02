@@ -517,7 +517,7 @@ function init(host) {
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && poll());
 }
 
-/** A small centred footer linking to the project, on every page including the headerless login. */
+/** A small centred footer linking to the project and the API page, on every page including the headerless login. */
 export function mountFooter(document) {
   const footer = document.createElement("footer");
   footer.className = "text-center small text-body-secondary py-3 mt-auto";
@@ -532,7 +532,11 @@ export function mountFooter(document) {
   hint.className = "visually-hidden";
   hint.textContent = " (opens in a new tab)";
   link.append(hint);
-  footer.append(link);
+  const api = document.createElement("a");
+  api.className = "link-secondary ms-3";
+  api.href = "/api.html";
+  api.textContent = "API";
+  footer.append(link, api);
   document.body.append(footer);
 }
 

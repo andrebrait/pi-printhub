@@ -14,6 +14,7 @@ from itsdangerous import BadSignature, TimestampSigner
 from printhub.config import Config
 
 COOKIE = "printhub_session"
+TOKEN_SCOPE = "printhub.token"
 SESSION_MAX_AGE = 30 * 86400
 _SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
@@ -57,7 +58,8 @@ def set_session_cookie(response: Response, value: str) -> None:
 
 def require_session(current: Callable[[], Config]) -> Callable[[Request], None]:
     def dependency(request: Request) -> None:
-        if not session_valid(current(), request.cookies.get(COOKIE)):
+        # The Guard validated the token and applied its access rules before any route ran.
+        if TOKEN_SCOPE not in request.scope and not session_valid(current(), request.cookies.get(COOKIE)):
             raise HTTPException(status_code=401)
 
     return dependency
@@ -78,6 +80,11 @@ class LoginLimiter:
                 return False
             hits.append(now)
             return True
+
+    def blocked(self, key: str, now: float) -> bool:
+        with self._lock:
+            self._prune(now)
+            return len(self._hits.get(key, ())) >= self.limit
 
     def _prune(self, now: float) -> None:
         # Sweep every key so clients that never return do not pin memory.

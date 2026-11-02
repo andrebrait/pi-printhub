@@ -11,6 +11,7 @@ const SMTP_SERVER = ["smtp_host", "smtp_port", "smtp_user", "smtp_security"]; //
 let loaded = {}; // the settings as last loaded or saved
 const KINDS = Object.keys(KIND_LABELS);
 const TYPE_LABELS = { email: "Email", telegram: "Telegram", webhook: "Webhook" };
+const ACCESS_LABELS = { read: "Read-only", full: "Full access" };
 const SECRET_PLACEHOLDER = "Saved. Leave blank to keep it";
 // What each channel type takes, as the API names the fields. type: text (default), url, number, list (comma-separated), select,
 // switch or secret (never sent back; blank keeps the saved one). own: only for an email channel with its own SMTP server.
@@ -60,6 +61,8 @@ let inputs = {}; // the open form's field inputs by key
 let kindBoxes = {};
 let defaults = null; // what GET /api/notify/defaults gave: the message options per Telegram parse mode and email format
 let message = null; // the open form's message option inputs: { key, input, areas: { kind: textarea } }; null when the type has none
+let shownToken = null; // id of the token on screen after Create; its secret lives only in the read-only field, never in storage
+let tokenGeneration = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -457,7 +460,52 @@ async function loadSilences() {
   }
 }
 
+function hideToken() {
+  shownToken = null;
+  $("token-value").value = "";
+  $("token-new").hidden = true;
+  note("token-new", "");
+}
+
+function tokenRow(t) {
+  const row = el("li", "list-group-item");
+  const head = el("div", "d-flex flex-wrap align-items-center gap-2");
+  const revoke = button("Revoke", `Revoke ${t.name}`, "delete", "btn-outline-danger");
+  revoke.addEventListener("click", async () => {
+    if (!confirm(`Revoke ${t.name}? Anything using this token stops working at once.`)) return;
+    try {
+      await call(`/api/tokens/${t.id}`, { method: "DELETE" });
+      if (shownToken === t.id) hideToken();
+      note("tokens", `Revoked ${t.name}`, "success");
+    } catch (err) {
+      note("tokens", err.message);
+    }
+    await loadTokens(); // also drops a token another browser revoked meanwhile
+    $("tokens-title").focus(); // the reload replaced this Revoke button, so keep the keyboard at the list
+  });
+  head.append(el("strong", "me-auto text-break", t.name), el("span", "badge text-bg-secondary", ACCESS_LABELS[t.access] ?? t.access), revoke);
+  row.append(head, el("div", "small text-body-secondary", `Created ${when(t.created)} · Last used ${t.last_used ? when(t.last_used) : "Never"}`));
+  return row;
+}
+
+async function loadTokens() {
+  const hint = $("tokens-hint");
+  try {
+    const tokens = await get("/api/tokens");
+    $("tokens").replaceChildren(...tokens.map(tokenRow));
+    hint.textContent = "No tokens yet. Create one to let Home Assistant or a script use the API.";
+    hint.hidden = tokens.length > 0;
+  } catch (err) {
+    hint.hidden = true; // not "No tokens yet": the list is unknown
+    note("tokens", `Could not load the tokens: ${err.message}`);
+  }
+}
+
 function main() {
+  window.addEventListener("pagehide", () => { // also invalidate a Create response still in flight
+    tokenGeneration++;
+    hideToken();
+  });
   wire("storage", () => saveSettings("storage", values(STORAGE)));
   wire("email", () => {
     const body = values(EMAIL);
@@ -502,9 +550,34 @@ function main() {
     note("channels", "Saved", "success");
     await loadChannels();
   });
+  wire("token", async () => {
+    const generation = tokenGeneration;
+    const body = { name: $("token-name").value, access: $("token-access").value };
+    const created = await (await call("/api/tokens", { method: "POST", body })).json();
+    if (generation !== tokenGeneration) return;
+    shownToken = created.id;
+    $("token-value").value = created.token;
+    $("token-new").hidden = false;
+    note("token-new", "");
+    $("token-value").select();
+    $("token-form").reset(); // Name empty again and Access back to Read-only; unlike clearing Name, it also ends Chrome's red "invalid" state
+    note("token", `Created ${created.name}`, "success");
+    note("tokens", ""); // a load error from before no longer applies once the list loads
+    await loadTokens();
+  });
+  $("token-copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("token-value").value);
+      note("token-new", "Copied", "success");
+    } catch {
+      // No clipboard access (a page served over plain http, or permission refused): leave the token selected to copy by hand.
+      $("token-value").select();
+      note("token-new", "Could not copy automatically. The token is selected: copy it by hand.", "info");
+    }
+  });
   document.addEventListener("silences-changed", loadSilences); // silenced from the bell
 
-  return Promise.all([get("/api/settings").then(fill), get("/api/settings/system").then((system) => follow(system)), get("/api/notify/defaults").then((d) => { defaults = d; }), loadChannels(), loadSilences()]).catch((e) => {
+  return Promise.all([get("/api/settings").then(fill), get("/api/settings/system").then((system) => follow(system)), get("/api/notify/defaults").then((d) => { defaults = d; }), loadChannels(), loadSilences(), loadTokens()]).catch((e) => {
     $("load-error").textContent = `Could not load settings: ${e.message}`;
     $("load-error").hidden = false;
   });

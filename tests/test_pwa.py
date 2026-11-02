@@ -7,7 +7,7 @@ from printhub.convert import ACCEPTED
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 ORIGIN = "https://print.example.com"
-CACHE = "printhub-v8"
+CACHE = "printhub-v9"
 
 # Loads sw.js into a stub ServiceWorker: in-memory caches, a controllable fetch, and a dump() that
 # prints the cache contents. Config arrives as JSON in the second-to-last argv entry.
@@ -111,6 +111,13 @@ def test_every_precached_path_exists_under_static():
         assert (STATIC / rel).is_file(), path
 
 
+def test_precache_holds_the_api_page_but_not_the_swagger_ui_files():
+    paths = precache()
+
+    assert {"/api.html", "/js/api-page.js"} <= set(paths)
+    assert not any(p.startswith("/vendor/swagger-ui/") for p in paths)
+
+
 def test_precache_skips_tests_manifests_and_dynamic_routes():
     paths = precache()
 
@@ -167,6 +174,7 @@ def test_fetch_handler_answers_shell_gets_and_passes_api_and_share_through():
     requests = [
         ["GET", f"{ORIGIN}/css/app.css"],
         ["GET", f"{ORIGIN}/api/printers"],
+        ["GET", f"{ORIGIN}/api.html"],
         ["POST", f"{ORIGIN}/share"],
         ["GET", f"{ORIGIN}/share"],
         ["GET", "https://evil.example/x.js"],
@@ -174,7 +182,7 @@ def test_fetch_handler_answers_shell_gets_and_passes_api_and_share_through():
 
     out = run_sw(FETCH, requests=requests, caches={}, network="fresh")
 
-    assert [r["answered"] for r in out["results"]] == [True, False, False, False, False]
+    assert [r["answered"] for r in out["results"]] == [True, False, True, False, False, False]
 
 
 def test_cache_write_failure_does_not_discard_successful_network_response():

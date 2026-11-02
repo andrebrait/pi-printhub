@@ -24,8 +24,9 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
 from starlette.background import BackgroundTask
 
-from printhub import convert, edits, printing, scanning, senders
+from printhub import api_schema, convert, edits, printing, scanning, senders
 from printhub import notifications as notification_store
+from printhub import tokens as api_tokens
 from printhub.auth import (
     COOKIE,
     LoginLimiter,
@@ -133,6 +134,12 @@ class EmailRequest(BaseModel):
 class MarkRead(BaseModel):
     up_to: int | None = None
     ids: list[int] | None = None
+
+
+class TokenCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: StrictStr
+    access: Literal["read", "full"]
 
 
 EMAIL_KEYS = {"smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from"}
@@ -295,11 +302,15 @@ def create_app(
                 # Its close() waits up to 20 s for sends in flight; the backlog's cursor is already saved.
                 await asyncio.to_thread(notifier.join, 25)
 
-    app = FastAPI(openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="Print Hub API", version=api_schema.VERSION, description=api_schema.DESCRIPTION,
+                  openapi_url=None, docs_url=None, redoc_url=None, lifespan=lifespan)
+    api_schema.install(app)
     app.state.cfg = cfg
     app.state.notifier = Notifier(events, cfg.data_dir, lambda: app.state.cfg)
     app.state.watcher = None
-    app.add_middleware(Guard, current=lambda: app.state.cfg, admit_share=admit_share, release_share=share_lock.release)
+    app.add_middleware(
+        Guard, current=lambda: app.state.cfg, limiter=limiter, admit_share=admit_share, release_share=share_lock.release
+    )
 
     def using_document(fn=None, *, exclusive=False):
         def decorate(fn):
@@ -334,6 +345,11 @@ def create_app(
     async def invalid(request, exc: RequestValidationError):
         msg = "; ".join(f"{'.'.join(map(str, e['loc'][1:]))}: {e['msg']}" for e in exc.errors())
         return JSONResponse({"error": msg}, 400)
+
+    @app.exception_handler(api_tokens.TokenStoreError)
+    async def tokens_unavailable(request, exc):
+        log.error("API tokens unavailable: %s", exc)
+        return JSONResponse({"error": api_tokens.UNAVAILABLE}, 503)
 
     busy = busy_policy(cfg, cups_conn_factory)
 
@@ -437,7 +453,8 @@ def create_app(
 
     # Unauthenticated routes
 
-    @app.post("/api/login", status_code=204)
+    @app.post("/api/login", status_code=204, **api_schema.describe(
+        "Settings", "Log in", "Sign in with the web password and set the browser session cookie."))
     def login(body: Login, request: Request, response: Response):
         if not limiter.allow(request.client.host, time.monotonic()):
             raise ApiError(429, "Too many attempts; wait a minute")
@@ -445,7 +462,7 @@ def create_app(
             raise ApiError(401, "Wrong password")
         set_session_cookie(response, issue_session(app.state.cfg))
 
-    @app.post("/share")
+    @app.post("/share", include_in_schema=False)
     def share(request: Request, file: UploadFile):
         if session_valid(app.state.cfg, request.cookies.get(COOKIE)):
             with ingest(file.file, file.filename or "") as doc_id:
@@ -466,16 +483,23 @@ def create_app(
 
     api = APIRouter(prefix="/api", dependencies=[Depends(require_session(lambda: app.state.cfg))])
 
-    @api.post("/logout", status_code=204)
+    @api.get("/openapi.json", include_in_schema=False)
+    def openapi_document():
+        return app.openapi()
+
+    @api.post("/logout", status_code=204, **api_schema.describe(
+        "Settings", "Log out", "Remove the browser session cookie."))
     def logout(response: Response):
         response.delete_cookie(COOKIE, path="/", secure=True, httponly=True, samesite="lax")
 
-    @api.get("/printer")
+    @api.get("/printer", **api_schema.describe(
+        "Printing", "Printer capabilities", "Read supported print options, defaults and minimum margins.", api_schema.PrinterOptions))
     def get_printer():
         hidden = {"device_uri", "name", "model", "web_page", "supplies"}  # the first is private; the rest are in /api/status
         return {k: v for k, v in asdict(printer_info(cups_conn())).items() if k not in hidden}
 
-    @api.get("/status")
+    @api.get("/status", **api_schema.describe(
+        "Status", "Hub status", "Read printer state, supplies and unread notification counts.", api_schema.Status))
     def status():
         out = {"printer": None, "error": None, "unread": events.unread(), "latest_event": events.latest()}
         watcher = app.state.watcher
@@ -503,23 +527,30 @@ def create_app(
         except CUPS_ERRORS:
             raise ApiError(503, "CUPS unavailable") from None
 
-    @api.get("/notifications")
+    @api.get("/notifications", **api_schema.describe(
+        "Notifications", "List notifications", "Read a page of events and their read state.", api_schema.Notifications))
     def notifications(before: int | None = None, limit: int = 50):
         page = [asdict(e) | {"read": read} for e, read in events.page(before=before, limit=min(limit, 200))]
         return {"events": page, "unread": events.unread(), "latest": events.latest()}
 
-    @api.post("/notifications/read", status_code=204)
+    @api.post("/notifications/read", status_code=204, **api_schema.describe(
+        "Notifications", "Mark notifications read", "Mark events read by ID or through an event ID.", errors=(422,)))
     def notifications_read(body: MarkRead):
         if body.up_to is None and body.ids is None:
             raise ApiError(422, "Give up_to or ids")
         events.mark_read(up_to=body.up_to, ids=body.ids)
 
-    @api.post("/uploads")
+    @api.post("/uploads", **api_schema.describe(
+        "Documents", "Upload a document", "Upload a file up to 100 MB and convert it for printing.", api_schema.DocId,
+        errors={413: api_schema.Error, 415: api_schema.Error, 422: api_schema.ConversionError, 507: api_schema.Error}))
     def upload(file: UploadFile):
         with ingest(file.file, file.filename or "") as doc_id:
             return converted(doc_id)
 
-    @api.post("/share/{token}/claim")
+    @api.post("/share/{token}/claim", **api_schema.describe(
+        "Documents", "Claim a shared file", "Import a pending phone share using a browser session.", api_schema.DocId,
+        errors={410: api_schema.Error, 413: api_schema.Error, 415: api_schema.Error,
+                422: api_schema.ConversionError, 507: api_schema.Error}))
     def claim(token: str):
         entry = shares.take(token, time.monotonic())
         if entry is None:
@@ -539,7 +570,8 @@ def create_app(
         path.unlink(missing_ok=True)
         return result
 
-    @api.post("/docs/{doc_id}/convert")
+    @api.post("/docs/{doc_id}/convert", **api_schema.describe(
+        "Documents", "Retry conversion", "Retry conversion of an uploaded print document.", api_schema.DocId, errors=(404, 409, 422)))
     @using_document(exclusive=True)
     def retry_convert(doc_id: str):
         if store.get(doc_id).kind != "print":
@@ -548,7 +580,8 @@ def create_app(
             raise ApiError(422, error)
         return {"doc_id": doc_id}
 
-    @api.get("/docs")
+    @api.get("/docs", **api_schema.describe(
+        "Documents", "List documents", "List retained documents, optionally filtered by kind.", list[api_schema.DocSummary]))
     def list_docs(kind: Literal["print", "scan"] | None = None):
         out = []
         for snapshot in store.list(kind):
@@ -559,12 +592,16 @@ def create_app(
                 continue
         return out
 
-    @api.get("/docs/{doc_id}")
+    @api.get("/docs/{doc_id}", **api_schema.describe(
+        "Documents", "Get a document", "Read document metadata, page geometry and print and email history.",
+        api_schema.DocDetails, errors=(404, 409)))
     @using_document
     def get_doc(doc_id: str):
         return doc_json(store.get(doc_id))
 
-    @api.patch("/docs/{doc_id}")
+    @api.patch("/docs/{doc_id}", **api_schema.describe(
+        "Documents", "Edit a document", "Rename a document or replace its ordered pages and edits.",
+        api_schema.DocDetails, errors=(404, 409)))
     def patch_doc(doc_id: str, body: DocPatch):
         removed: set[str] = set()
         with store.transaction(doc_id, exclusive=body.pages is not None, blocking=False) as doc:
@@ -599,12 +636,15 @@ def create_app(
             (store.path(doc_id) / "thumbs" / f"{page_id}.jpg").unlink(missing_ok=True)
         return out
 
-    @api.delete("/docs/{doc_id}", status_code=204)
+    @api.delete("/docs/{doc_id}", status_code=204, **api_schema.describe(
+        "Documents", "Delete a document", "Delete a retained document unless it is busy.", errors=(404, 409)))
     def delete_doc(doc_id: str):
         if not store.delete(doc_id, lambda doc: not busy(doc)):
             raise ApiError(409, "Document is busy")
 
-    @api.get("/docs/{doc_id}/pages/{page_id}")
+    @api.get("/docs/{doc_id}/pages/{page_id}", response_class=Response, **api_schema.describe(
+        "Documents", "Get a scanned page", "Read the full-size or thumbnail JPEG, optionally rotated.",
+        errors=(404, 409), media=("image/jpeg",)))
     @using_document
     def page_image(doc_id: str, page_id: str, size: Literal["thumb", "full"] = "full", rotated: bool = False):
         doc = store.get(doc_id)
@@ -634,7 +674,9 @@ def create_app(
             tmp.replace(thumb)
         return FileResponse(thumb, media_type="image/jpeg")
 
-    @api.get("/docs/{doc_id}/preview/{n}")
+    @api.get("/docs/{doc_id}/preview/{n}", response_class=Response, **api_schema.describe(
+        "Documents", "Preview a print page", "Read a converted print document page as a PNG; page numbers start at one.",
+        errors=(404, 409), media=("image/png",)))
     @using_document
     def preview(doc_id: str, n: int):
         store.get(doc_id)
@@ -643,7 +685,8 @@ def create_app(
             raise DocNotFound(doc_id)
         return FileResponse(pngs[n - 1], media_type="image/png")
 
-    @api.get("/scanner")
+    @api.get("/scanner", **api_schema.describe(
+        "Scanning", "Scanner capabilities", "Read available scan sources, resolutions, modes and bed dimensions.", scanning.ScannerCaps))
     def get_scanner():
         try:
             device = scanning.find_device()
@@ -653,7 +696,9 @@ def create_app(
         except ScannerUnavailable:
             raise ApiError(503, "Scanner unavailable") from None
 
-    @api.post("/scans", status_code=202)
+    @api.post("/scans", status_code=202, **api_schema.describe(
+        "Scanning", "Start a scan", "Start scanning into a new or existing scan document.",
+        api_schema.DocId, status=202, errors=(404, 409, 507)))
     def start_scan(body: ScanRequest):
         if body.doc_id is None:
             make_room()
@@ -676,7 +721,9 @@ def create_app(
                 raise ApiError(409, "Scanner busy") from None
             return {"doc_id": doc.id}
 
-    @api.get("/docs/{doc_id}/export")
+    @api.get("/docs/{doc_id}/export", response_class=Response, **api_schema.describe(
+        "Documents", "Export a scan", "Export edited scan pages as PDF, a single JPEG or a ZIP of JPEGs.",
+        errors=(404, 409), media=("application/pdf", "image/jpeg", "application/zip")))
     @using_document
     def export(doc_id: str, format: Literal["pdf", "jpeg"]):
         doc = store.get(doc_id)
@@ -696,7 +743,9 @@ def create_app(
         headers = {"Content-Disposition": _disposition(doc.title + out.suffix)}
         return FileResponse(out, media_type=media, headers=headers, background=cleanup)
 
-    @api.post("/docs/{doc_id}/print")
+    @api.post("/docs/{doc_id}/print", **api_schema.describe(
+        "Printing", "Print a document", "Submit a document to the printer using supported print options.",
+        api_schema.JobId, errors=(404, 409)))
     @using_document
     def print_doc(doc_id: str, opts: PrintOptions):
         doc = store.get(doc_id)
@@ -724,7 +773,8 @@ def create_app(
         job_docs[job_id] = doc_id
         return {"job_id": job_id}
 
-    @api.get("/jobs")
+    @api.get("/jobs", **api_schema.describe(
+        "Jobs", "List print jobs", "Read active jobs and the twenty most recent finished jobs.", api_schema.Jobs))
     def jobs():
         stamp = store.root.stat().st_mtime_ns
         if stamp != job_docs_stamp[0]:
@@ -740,7 +790,8 @@ def create_app(
         recent = [j for j in listed if j["state"] not in ACTIVE_JOB_STATES][:RECENT_JOBS]
         return {"active": active, "recent": recent}
 
-    @api.post("/jobs/{job_id}/cancel", status_code=204)
+    @api.post("/jobs/{job_id}/cancel", status_code=204, **api_schema.describe(
+        "Jobs", "Cancel a print job", "Cancel a job belonging to this printer queue.", errors=(404,)))
     def cancel_job(job_id: int):
         conn = cups_conn()
         # Any job of our queue, whoever sent it; never another queue's.
@@ -751,7 +802,9 @@ def create_app(
         except cups.IPPError:
             raise ApiError(404, "Unknown job") from None
 
-    @api.post("/docs/{doc_id}/email", status_code=204)
+    @api.post("/docs/{doc_id}/email", status_code=204, **api_schema.describe(
+        "Documents", "Email a scan", "Email edited scan pages as PDF or JPEG attachments, up to 25 MB.",
+        errors=(404, 409, 413, 502)))
     @using_document
     def email(doc_id: str, body: EmailRequest):
         doc = store.get(doc_id)
@@ -786,15 +839,18 @@ def create_app(
             current.mails.append(MailRecord(at=_now(), to=body.to, subject=body.subject, format=body.format))
         recipients.add(body.to)
 
-    @api.get("/recipients")
+    @api.get("/recipients", **api_schema.describe(
+        "Documents", "Recent email recipients", "Read recently used recipient addresses.", list[str]))
     def get_recipients():
         return recipients.list()
 
-    @api.get("/settings")
+    @api.get("/settings", **api_schema.describe(
+        "Settings", "Read settings", "Read retention and email settings without stored secrets.", api_schema.Settings))
     def get_settings():
         return public_settings(app.state.cfg)
 
-    @api.put("/settings")
+    @api.put("/settings", **api_schema.describe(
+        "Settings", "Update settings", "Update supplied non-null settings; an empty SMTP password keeps the stored secret.", api_schema.Settings))
     def put_settings(body: SettingsPatch):
         sent = body.model_dump(exclude_none=True)
         if not sent.get("smtp_password"):  # blank keeps the stored password
@@ -810,7 +866,8 @@ def create_app(
                 notify("info", "settings", describe_changes(old, changes))
             return public_settings(app.state.cfg)
 
-    @api.post("/settings/password", status_code=204)
+    @api.post("/settings/password", status_code=204, **api_schema.describe(
+        "Settings", "Change web password", "Change the web password and invalidate all other browser sessions."))
     def change_password(body: PasswordChange, request: Request, response: Response):
         # The same limit as login: the session alone must not allow guessing the current password.
         if not limiter.allow(request.client.host, time.monotonic()):
@@ -828,7 +885,8 @@ def create_app(
             set_session_cookie(response, issue_session(app.state.cfg))
             notify("info", "settings", "Web password changed")
 
-    @api.post("/settings/test-email", status_code=204)
+    @api.post("/settings/test-email", status_code=204, **api_schema.describe(
+        "Settings", "Send a test email", "Send a test message with the current email settings.", errors=(502,)))
     def test_email(body: SendTestEmail):
         try:
             send(app.state.cfg, [body.to], "Print Hub test email", [])
@@ -837,11 +895,14 @@ def create_app(
         except MailError as e:
             raise ApiError(502, str(e)) from None
 
-    @api.get("/settings/system")
+    @api.get("/settings/system", **api_schema.describe(
+        "Settings", "Read system switches", "Read requested sharing and USB exposure switches and their application status.", api_schema.System))
     def get_system():
         return read_system(cfg.data_dir)
 
-    @api.put("/settings/system", status_code=202)
+    @api.put("/settings/system", status_code=202, **api_schema.describe(
+        "Settings", "Update system switches", "Request sharing and USB exposure changes for the privileged helper to apply.",
+        api_schema.System, status=202))
     def put_system(body: SystemSwitches):
         with settings_lock:
             before = read_system(cfg.data_dir)["requested"]
@@ -866,7 +927,8 @@ def create_app(
         except notification_store.StoreError as e:
             raise ApiError(409, str(e)) from None
 
-    @api.get("/notify/defaults")
+    @api.get("/notify/defaults", **api_schema.describe(
+        "Notifications", "Notification defaults", "Read default Telegram and email templates by parse mode and format.", api_schema.NotifyDefaults))
     def get_notify_defaults():
         ns = notification_store
         return {
@@ -877,14 +939,18 @@ def create_app(
             },
         }
 
-    @api.get("/notify/channels")
+    @api.get("/notify/channels", **api_schema.describe(
+        "Notifications", "List notification channels", "Read configured channels and their last delivery result, without secrets.",
+        list[api_schema.WebhookListed | api_schema.TelegramListed | api_schema.EmailListed]))
     def get_channels():
         return [
             notification_store.public(c) | {"result": app.state.notifier.results.get(c["id"])}
             for c in notification_store.load(cfg.data_dir)["channels"]
         ]
 
-    @api.post("/notify/channels", status_code=201)
+    @api.post("/notify/channels", status_code=201, **api_schema.describe(
+        "Notifications", "Add a notification channel", "Create an email, Telegram or webhook channel; secrets are never returned.",
+        api_schema.PublicChannel, status=201, errors=(409,)))
     def add_channel(body: dict):
         with notify_lock:
             state = load_for_write()
@@ -897,7 +963,9 @@ def create_app(
             notify("info", "settings", f"Notification channel {channel['name']} added")
             return notification_store.public(channel)
 
-    @api.put("/notify/channels/{channel_id}")
+    @api.put("/notify/channels/{channel_id}", **api_schema.describe(
+        "Notifications", "Edit a notification channel", "Update supplied channel fields; absent or blank secrets keep the stored value.",
+        api_schema.PublicChannel, errors=(404, 409)))
     def change_channel(channel_id: str, body: dict):
         with notify_lock:
             state = load_for_write()
@@ -910,7 +978,8 @@ def create_app(
             notify("info", "settings", f"Notification channel {channel['name']} changed")
             return notification_store.public(channel)
 
-    @api.delete("/notify/channels/{channel_id}", status_code=204)
+    @api.delete("/notify/channels/{channel_id}", status_code=204, **api_schema.describe(
+        "Notifications", "Delete a notification channel", "Remove a configured notification channel.", errors=(404, 409)))
     def remove_channel(channel_id: str):
         with notify_lock:
             state = load_for_write()
@@ -918,7 +987,8 @@ def create_app(
             notification_store.save(cfg.data_dir, state)
             notify("info", "settings", f"Notification channel {channel['name']} removed")
 
-    @api.post("/notify/channels/{channel_id}/test", status_code=204)
+    @api.post("/notify/channels/{channel_id}/test", status_code=204, **api_schema.describe(
+        "Notifications", "Test a notification channel", "Send a test event and record the delivery result.", errors=(404, 502)))
     def test_channel(channel_id: str):
         state = notification_store.load(cfg.data_dir)
         channel = state["channels"][channel_at(state, channel_id)]
@@ -929,11 +999,14 @@ def create_app(
             raise ApiError(502, str(e)) from None
         app.state.notifier.record(channel_id)
 
-    @api.get("/notify/silences")
+    @api.get("/notify/silences", **api_schema.describe(
+        "Notifications", "List active silences", "Read unexpired title or event-kind silences.", list[api_schema.Silence]))
     def get_silences():
         return notification_store.active_silences(notification_store.load(cfg.data_dir)["silences"], datetime.now(timezone.utc))
 
-    @api.post("/notify/silences", status_code=201)
+    @api.post("/notify/silences", status_code=201, **api_schema.describe(
+        "Notifications", "Add a silence", "Silence an exact title or event kind for 1, 8, 24 or 168 hours.",
+        api_schema.Silence, status=201, errors=(409,)))
     def add_silence(body: dict):
         now = datetime.now(timezone.utc)
         with notify_lock:
@@ -946,7 +1019,8 @@ def create_app(
             notification_store.save(cfg.data_dir, state)
             return silence
 
-    @api.delete("/notify/silences/{silence_id}", status_code=204)
+    @api.delete("/notify/silences/{silence_id}", status_code=204, **api_schema.describe(
+        "Notifications", "Delete a silence", "Remove an active silence.", errors=(404, 409)))
     def remove_silence(silence_id: str):
         with notify_lock:
             state = load_for_write()
@@ -955,6 +1029,31 @@ def create_app(
             if len(state["silences"]) == len(live):
                 raise ApiError(404, "No such silence")
             notification_store.save(cfg.data_dir, state)
+
+    @api.get("/tokens", **api_schema.describe(
+        "API tokens", "List API tokens", "List token metadata without tokens or hashes; browser session only.", list[api_schema.Token]))
+    def list_tokens():
+        return api_tokens.list_public(cfg.data_dir)
+
+    @api.post("/tokens", status_code=201, **api_schema.describe(
+        "API tokens", "Create an API token", "Create a read-only or full-access token and return its secret once; browser session only.",
+        api_schema.CreatedToken, status=201))
+    def create_token(body: TokenCreate):
+        try:
+            record, token = api_tokens.create(cfg.data_dir, body.name, body.access, datetime.now(timezone.utc))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+        level = "read-only" if record["access"] == "read" else "full access"
+        notify("info", "settings", f"API token {record['name']} created ({level})")
+        return {k: record[k] for k in ("id", "name", "access", "created")} | {"token": token}
+
+    @api.delete("/tokens/{token_id}", status_code=204, **api_schema.describe(
+        "API tokens", "Revoke an API token", "Revoke a token immediately; browser session only.", errors=(404,)))
+    def revoke_token(token_id: str):
+        name = next((t["name"] for t in api_tokens.list_public(cfg.data_dir) if t["id"] == token_id), None)
+        if name is None or not api_tokens.revoke(cfg.data_dir, token_id):
+            raise ApiError(404, "No such token")
+        notify("info", "settings", f"API token {name} revoked")
 
     app.include_router(api)
     app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")

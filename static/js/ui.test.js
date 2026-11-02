@@ -365,13 +365,27 @@ const DEFAULTS = {
 const V2 = DEFAULTS.telegram.MarkdownV2;
 
 // A page whose GET /api/settings/system answers come from the list, in order (the last one repeats); timers fire when the test says so.
-// notify = { channels, silences, confirm } seeds what the notification API lists and answers the delete prompt; like the server it
-// never gives a bot token back. Every element is a fake one that keeps its children, so the tests can read what the page renders.
+// notify = { channels, silences, tokens, clipboard, confirm } seeds what the notification and token APIs list, what the browser's
+// clipboard does (absent when not given: an insecure page has none) and answers the delete prompt; like the server it never gives a
+// bot token back. A failing entry is a URL, or "METHOD URL" for one method only. Every element is a fake one that keeps its children,
+// so the tests can read what the page renders. sinks collects whatever the page writes to storage, the console or events.
 function settingsEnv(systems, failing = [], notify = {}) {
   const make = fakeDocument().createElement;
   const els = new Map();
-  const document = { createElement: make, getElementById: (id) => els.get(id) ?? els.set(id, make("div")).get(id), addEventListener() {} };
-  const channels = notify.channels ?? [], silences = notify.silences ?? [], confirms = [];
+  const sinks = [], sink = (...args) => sinks.push(args), windowListeners = {};
+  const web = { local: {}, session: {}, cookies: [] }; // everything the page keeps in the browser
+  const storageOf = (kept) => new Proxy(kept, { // a property write lands in `kept` just like setItem does, so no way of storing goes unseen
+    get: (t, k) => ({ setItem: (key, v) => { t[key] = String(v); }, getItem: (key) => t[key] ?? null, removeItem: (key) => { delete t[key]; } })[k] ?? t[k],
+  });
+  const document = { createElement: make, getElementById: (id) => els.get(id) ?? els.set(id, make("div")).get(id), addEventListener() {}, dispatchEvent: (e) => sink("event", e.type, e.detail),
+    get cookie() { return web.cookies.join("; "); }, set cookie(value) { web.cookies.push(value); } };
+  const tokenForm = make("form"), tokenName = make("input"), tokenAccess = make("select");
+  tokenForm.reset = () => { // what the HTML starts with: an empty Name and Read-only
+    tokenName.value = "";
+    tokenAccess.value = "read";
+  };
+  for (const [id, node] of [["token-form", tokenForm], ["token-name", tokenName], ["token-access", tokenAccess]]) els.set(id, node);
+  const channels = notify.channels ?? [], silences = notify.silences ?? [], tokens = notify.tokens ?? [], confirms = [];
   const calls = [];
   const timers = [];
   const apiFetch = async (url, opts = {}) => {
@@ -386,13 +400,27 @@ function settingsEnv(systems, failing = [], notify = {}) {
     // Like the server, a test records its outcome as the channel's last result.
     if (tested) channels.find((c) => c.id === tested[1]).result = failing.includes(url) ? "Failed: Rejected" : "Delivered just now";
     if (url === "/api/notify/defaults") return reply(DEFAULTS);
-    if (failing.includes(url)) return reply(null, false);
+    if (failing.includes(url) || failing.includes(`${method} ${url}`)) return reply(null, false);
     if (url === "/api/notify/channels" && method === "POST") {
       const { bot_token, ...rest } = opts.body;
       channels.push({ id: "c-new", ...rest, bot_token_set: Boolean(bot_token) });
     }
     if (url === "/api/notify/channels") return reply(channels);
     if (url === "/api/notify/silences") return reply(silences);
+    if (url === "/api/tokens" && method === "POST") { // like the server: the secret is in this reply only, never in the list
+      tokens.push({ id: "t-new", name: opts.body.name, access: opts.body.access, created: "2026-11-01T09:00:00+00:00", last_used: null });
+      const created = { ...tokens.at(-1), token: SECRET };
+      await notify.tokenResponse;
+      return { ok: true, json: async () => { await notify.tokenBody; return created; } };
+    }
+    if (url === "/api/tokens") return reply(tokens);
+    const revoked = url.match(/^\/api\/tokens\/([^/]+)$/);
+    if (revoked && method === "DELETE") {
+      const at = tokens.findIndex((t) => t.id === revoked[1]);
+      if (at < 0) return reply(null, false);
+      tokens.splice(at, 1);
+      return reply(null);
+    }
     const gone = url.match(/^\/api\/notify\/(channels|silences)\/([^/]+)$/);
     if (gone && method === "DELETE") {
       const list = gone[1] === "channels" ? channels : silences;
@@ -400,15 +428,17 @@ function settingsEnv(systems, failing = [], notify = {}) {
     }
     return reply(SETTINGS);
   };
-  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout", "confirm", "KIND_LABELS", "when",
+  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout", "confirm", "KIND_LABELS", "when", "navigator", "localStorage", "sessionStorage", "console", "window",
     `${source("settings.js").replace(/main\(\);\s*$/, "")} return { main };`)(
-    document, apiFetch, async () => "Rejected", (fn) => timers.push(fn), (text) => (confirms.push(text), notify.confirm !== false), KIND_LABELS, when);
+    document, apiFetch, async () => "Rejected", (fn) => timers.push(fn), (text) => (confirms.push(text), notify.confirm !== false), KIND_LABELS, when,
+    notify.clipboard ? { clipboard: notify.clipboard } : {}, storageOf(web.local), storageOf(web.session), { log: sink, info: sink, warn: sink, error: sink, debug: sink },
+    { addEventListener: (type, fn) => (windowListeners[type] ??= []).push(fn) });
   const tick = async () => { // let pending promises settle, then fire the timers that were waiting
     await new Promise((r) => setImmediate(r));
     timers.splice(0).forEach((fn) => fn());
     await new Promise((r) => setImmediate(r));
   };
-  return { document, calls, main, tick, confirms };
+  return { document, calls, main, tick, confirms, sinks, web, pagehide: () => windowListeners.pagehide?.forEach((fn) => fn({ persisted: true })) };
 }
 const applied = { requested: { share: true, expose_usb: true }, status: { state: "applied", share: true, expose_usb: true, error: null }, pending: false };
 const pending = { requested: { share: false, expose_usb: true }, status: null, pending: true };
@@ -868,6 +898,190 @@ test("active silences list what they match and until when, and Unsilence removes
   assert.equal(list.children.length, 0);
   assert.equal(document.getElementById("silences-empty").hidden, false);
 });
+
+const SECRET = `ph_${"x".repeat(43)}`;
+const HOME = { id: "t1", name: "Home Assistant", access: "full", created: "2026-10-30T15:00:00+00:00", last_used: "2026-10-31T08:30:00+00:00" };
+const BACKUP = { id: "t2", name: "<b>Backup</b>", access: "read", created: "2026-10-31T09:00:00+00:00", last_used: null };
+const byId = (document) => (id) => document.getElementById(id);
+// Fills the API tokens form and presses Create; resolves when the card has finished.
+const createToken = (document, name, access = "read") => {
+  document.getElementById("token-name").value = name;
+  document.getElementById("token-access").value = access;
+  return submit(document.getElementById("token-form"));
+};
+
+test("the API tokens card lists name, access, creation and last use as text, and says when there are none", async () => {
+  const { document, main } = settingsEnv([applied], [], { tokens: [HOME, BACKUP] });
+  await main();
+  const [home, backup] = document.getElementById("tokens").children.map(textOf);
+  for (const part of ["Home Assistant", "Full access", when(HOME.created), when(HOME.last_used)]) assert.ok(home.includes(part), part);
+  for (const part of ["<b>Backup</b>", "Read-only", when(BACKUP.created), "Never"]) assert.ok(backup.includes(part), part);
+  assert.equal(home.includes("Never"), false);
+  assert.equal(document.getElementById("tokens-hint").hidden, true);
+  const none = settingsEnv([applied]);
+  await none.main();
+  assert.equal(none.document.getElementById("tokens-hint").hidden, false);
+  assert.match(none.document.getElementById("tokens-hint").textContent, /No tokens yet/);
+});
+
+test("a token list that cannot load says so as an alert and does not claim there are none", async () => {
+  const { document, main } = settingsEnv([applied], ["/api/tokens"]);
+  await main();
+  assert.equal(document.getElementById("tokens-msg").textContent, "Could not load the tokens: Rejected");
+  assert.equal(document.getElementById("tokens-msg").attributes.role, "alert");
+  assert.equal(document.getElementById("tokens-hint").hidden, true);
+  assert.equal(document.getElementById("retention_days").value, 30, "the rest of the page still loads");
+});
+
+test("Create sends the name and access, shows the new token once, and lists the token without its secret", async () => {
+  const { document, calls, main } = settingsEnv([applied]);
+  await main();
+  const $ = byId(document);
+  const creating = createToken(document, "Home Assistant", "full");
+  assert.equal($("token-save").disabled, true);
+  await creating;
+  assert.deepEqual(calls.find((c) => c.method === "POST" && c.url === "/api/tokens").body, { name: "Home Assistant", access: "full" });
+  assert.equal($("token-new").hidden, false);
+  assert.equal($("token-value").value, SECRET);
+  assert.equal($("token-value").selected, true, "selected and focused, ready to copy");
+  assert.deepEqual([$("token-name").value, $("token-access").value], ["", "read"], "the form starts over, at the least access");
+  assert.equal($("token-save").disabled, false);
+  assert.equal($("token-msg").attributes.role, "status");
+  assert.match($("token-msg").textContent, /Home Assistant/);
+  const [row] = $("tokens").children.map(textOf);
+  for (const part of ["Home Assistant", "Full access", "Never"]) assert.ok(row.includes(part), part);
+  assert.equal(textOf($("tokens")).includes(SECRET), false);
+  assert.equal($("tokens-hint").hidden, true);
+});
+
+test("a refused Create shows the reason and no token, and keeps what was typed", async () => {
+  const { document, main } = settingsEnv([applied], ["POST /api/tokens"]);
+  await main();
+  const $ = byId(document);
+  await createToken(document, "Home Assistant", "full");
+  assert.equal($("token-msg").textContent, "Rejected");
+  assert.equal($("token-msg").attributes.role, "alert");
+  assert.ok(!$("token-value").value);
+  assert.equal($("token-name").value, "Home Assistant");
+  assert.equal($("token-save").disabled, false);
+});
+
+test("a second Create replaces the token on screen", async () => {
+  const { document, main } = settingsEnv([applied]);
+  await main();
+  await createToken(document, "One");
+  document.getElementById("token-value").value = "stale";
+  await createToken(document, "Two");
+  assert.equal(document.getElementById("token-value").value, SECRET);
+});
+
+test("Copy puts the token on the clipboard; without clipboard access it selects the token to copy by hand", async () => {
+  const copied = [];
+  const cases = [
+    ["works", { writeText: async (text) => copied.push(text) }, /^Copied$/, false],
+    ["is missing (an insecure page)", undefined, /selected/, true],
+    ["is refused", { writeText: async () => { throw new Error("denied"); } }, /selected/, true],
+  ];
+  for (const [name, clipboard, said, selected] of cases) {
+    const { document, main } = settingsEnv([applied], [], { clipboard });
+    await main();
+    await createToken(document, "Home Assistant");
+    const value = document.getElementById("token-value");
+    value.selected = false;
+    await document.getElementById("token-copy").listeners.click();
+    assert.equal(value.selected, selected, `clipboard ${name}`);
+    assert.match(document.getElementById("token-new-msg").textContent, said, `clipboard ${name}`);
+    assert.equal(document.getElementById("token-new-msg").attributes.role, "status");
+  }
+  assert.deepEqual(copied, [SECRET]);
+});
+
+test("Revoke asks first, then removes the token from the list", async () => {
+  for (const sure of [false, true]) {
+    const { document, calls, main, confirms } = settingsEnv([applied], [], { tokens: [{ ...HOME }, { ...BACKUP }], confirm: sure });
+    await main();
+    await buttonIn(document.getElementById("tokens").children[0], "Revoke").listeners.click();
+    assert.match(confirms[0], /Home Assistant/);
+    assert.equal(calls.some((c) => c.method === "DELETE" && c.url === "/api/tokens/t1"), sure);
+    assert.equal(textOf(document.getElementById("tokens")).includes("Home Assistant"), !sure);
+    assert.equal(document.getElementById("tokens").children.length, sure ? 1 : 2);
+    assert.equal(document.getElementById("tokens-msg").textContent, sure ? "Revoked Home Assistant" : "");
+    assert.equal(Boolean(document.getElementById("tokens-title").focused), sure, "focus moves to the list's heading once the Revoke button is gone");
+  }
+});
+
+test("revoking a token that is already gone shows the reason and drops it from the list", async () => {
+  const tokens = [{ ...HOME }];
+  const { document, main } = settingsEnv([applied], [], { tokens });
+  await main();
+  tokens.splice(0); // revoked from another browser meanwhile
+  await buttonIn(document.getElementById("tokens"), "Revoke").listeners.click();
+  assert.equal(document.getElementById("tokens-msg").textContent, "Rejected");
+  assert.equal(document.getElementById("tokens-msg").attributes.role, "alert");
+  assert.equal(document.getElementById("tokens").children.length, 0);
+  assert.equal(document.getElementById("tokens-hint").hidden, false);
+  assert.equal(document.getElementById("tokens-title").focused, true, "the failed Revoke's button is gone, so focus goes to the list");
+});
+
+test("a load error from before is gone once Create has loaded the list", async () => {
+  const failing = ["GET /api/tokens"];
+  const { document, main } = settingsEnv([applied], failing);
+  await main();
+  assert.match(document.getElementById("tokens-msg").textContent, /Could not load the tokens/);
+  failing.splice(0);
+  await createToken(document, "Home Assistant");
+  assert.equal(document.getElementById("tokens-msg").textContent, "");
+  assert.equal(document.getElementById("tokens").children.length, 1);
+});
+
+test("revoking the token on screen takes it off the screen; revoking another leaves it", async () => {
+  const { document, main } = settingsEnv([applied], [], { tokens: [{ ...HOME }] });
+  await main();
+  await createToken(document, "New one");
+  const revoke = (name) => buttonIn(document.getElementById("tokens").children.find((row) => textOf(row).includes(name)), "Revoke").listeners.click();
+  await revoke("Home Assistant");
+  assert.equal(document.getElementById("token-value").value, SECRET);
+  assert.equal(document.getElementById("token-new").hidden, false);
+  await revoke("New one");
+  assert.equal(document.getElementById("token-value").value, "");
+  assert.equal(document.getElementById("token-new").hidden, true);
+});
+
+test("the token reaches no storage, cookie, console or event", async () => {
+  const first = settingsEnv([applied], [], { clipboard: { writeText: async () => {} } });
+  await first.main();
+  await createToken(first.document, "Home Assistant");
+  await first.document.getElementById("token-copy").listeners.click();
+  assert.equal(first.document.getElementById("token-value").value, SECRET);
+  assert.equal(JSON.stringify([first.sinks, first.web]).includes(SECRET), false);
+});
+
+test("leaving the page hides the token, so Back from a page kept in memory does not show it again", async () => {
+  const { document, main, pagehide } = settingsEnv([applied]);
+  await main();
+  await createToken(document, "Home Assistant");
+  assert.equal(document.getElementById("token-value").value, SECRET);
+  pagehide();
+  assert.equal(document.getElementById("token-value").value, "");
+  assert.equal(document.getElementById("token-new").hidden, true);
+});
+
+for (const stage of ["tokenResponse", "tokenBody"]) {
+  test(`leaving during ${stage} prevents a late Create from redisplaying the token`, async () => {
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const { document, main, tick, pagehide } = settingsEnv([applied], [], { [stage]: waiting });
+    await main();
+    const creating = createToken(document, "Home Assistant");
+    await tick();
+    pagehide();
+    release();
+    await creating;
+    assert.equal(document.getElementById("token-value").value, "");
+    assert.equal(document.getElementById("token-new").hidden, true);
+    assert.equal(document.getElementById("token-save").disabled, false);
+  });
+}
 
 const modeOf = (document, mode) => {
   field(document, "parse_mode").value = mode;
