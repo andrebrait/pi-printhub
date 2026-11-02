@@ -323,7 +323,7 @@ test("silencing posts the choice and says when it ends", async () => {
   }
 });
 
-test("every page gets one GitHub footer link, even without the header host", () => {
+test("every page gets one footer with the GitHub link and the API page link, even without the header host", () => {
   const document = fakeDocument();
   document.body = document.createElement("body");
   mountFooter(document);
@@ -334,8 +334,11 @@ test("every page gets one GitHub footer link, even without the header host", () 
   assert.equal(link.attributes.target, "_blank");
   assert.equal(link.attributes.rel, "noopener");
   assert.equal(link.dataset.icon, "github");
-  assert.equal(textOf(footers[0]), "Print Hub is open source on GitHub (opens in a new tab)");
+  assert.equal(textOf(link), "Print Hub is open source on GitHub (opens in a new tab)");
   assert.equal(find(link, (el) => el.className === "visually-hidden").textContent, " (opens in a new tab)");
+  const api = find(footers[0], (el) => el.tagName === "A" && el.attributes.href === "/api.html");
+  assert.equal(textOf(api), "API");
+  assert.equal(api.attributes.target, undefined);
 });
 
 test("the theme button shows the current choice and a click cycles Auto, Light, Dark", () => {

@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API – Print Hub</title>
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="/vendor/swagger-ui/swagger-ui.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header id="shell"></header>
+<main class="container-lg pb-4">
+  <h1 class="h3 mb-3">API</h1>
+  <p class="text-body-secondary">Try it out uses your login, so sessionCookie needs no entry. A program authenticates with a token instead: create one under <a href="/settings.html">Settings</a>, then choose Authorize and enter it under bearerAuth.</p>
+  <div id="swagger" class="api-panel border rounded" data-bs-theme="light"></div>
+</main>
+<script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+<script type="module" src="/js/shell.js"></script>
+<script type="module" src="/js/api-page.js"></script>
+<script type="module" src="/js/sw-register.js"></script>
+</body>
+</html>

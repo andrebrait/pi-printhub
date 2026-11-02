@@ -20,7 +20,7 @@ try:
 except PackageNotFoundError:
     VERSION = "0.1.0"  # pyproject.toml; source checkouts need not be installed.
 
-DESCRIPTION = "Authenticate with an API token in Authorization: Bearer <token>, or with the browser session cookie after logging in. Browser sessions also require a same-origin Origin header on writes."
+DESCRIPTION = "Authenticate with an API token in `Authorization: Bearer <token>`, or with the browser session cookie after logging in. Browser sessions also require a same-origin Origin header on writes."
 
 
 class Error(BaseModel):

@@ -173,3 +173,7 @@ ul.pages {
 .justify-self-start { justify-self: start; }
 /* Same width for every job state, so the badges form one column. */
 .job-state { min-width: 5.75rem; }
+
+/* API page: Swagger UI has only a light theme, so its panel is a light island in the dark app: data-bs-theme="light"
+   restores Bootstrap's light colours, color-scheme keeps the browser's own controls and scrollbars light. */
+.api-panel { background: var(--bs-body-bg); color: var(--bs-body-color); color-scheme: light; padding-bottom: 1rem; overflow-x: auto; }

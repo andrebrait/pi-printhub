@@ -84,6 +84,7 @@ The cog in the header opens `/settings.html`. It changes:
 - Email: the SMTP server and sender. **Send test email** checks the values against a real address.
 - Web password: changing it logs out every other session.
 - Network sharing: whether the Pi's printer and scanner are shared on the network, and whether the printer is exposed directly (the `(USB)` entries).
+- API tokens: create and revoke the tokens programs use to call the API (see [REST API](#rest-api)).
 
 App values are saved to `/var/lib/printhub/settings.json`, override `/etc/printhub/config.toml`, and apply immediately. Saved values survive reinstalls, reboots and printer replugs.
 
@@ -115,6 +116,47 @@ To silence an alert from the bell, choose **Silence** on it and pick "this alert
 Secrets (bot token, SMTP password, webhook header value) are stored in `/var/lib/printhub/notifications.json`, mode 0600, and are never shown again; leave a secret field blank on save to keep it. A failed send is retried after 1, 5 and 15 minutes, then dropped. Retries are kept in memory, so a restart drops them.
 
 If the printer stops answering over USB for 2 minutes, a **Printer status** error "Printer not answering over USB" is sent, with a notice when it answers again. Power-cycle the printer if it lasts.
+
+## REST API
+
+Home Assistant, scripts and other programs call the same `/api` the web app uses: print a file, follow jobs, scan, read the printer's status and supplies, manage notification channels and silences, and change settings. The **API** link in the footer (`/api.html`) lists every method with its parameters and responses and lets you try them. It works with your login, or choose **Authorize** and enter a token under `bearerAuth`.
+
+Programs authenticate with a token. In Settings, **API tokens**, give it a name, choose **Read-only** or **Full access** and **Create**. The token (`ph_…`) is shown once, so copy it then; only its hash is stored, and **Revoke** ends it at once. Send it as `Authorization: Bearer <token>`; it needs no `Origin` header.
+
+| Access | Allowed |
+|---|---|
+| Read-only | every `GET` under `/api/`, except the token list |
+| Full access | also every `POST`, `PUT`, `PATCH` and `DELETE`, except the next row |
+| Browser login only | log in and out, change the web password, claim a phone share and manage tokens: a token gets 403 `{"error": "Not allowed with an API token"}` |
+
+A read-only token on a write gets 403 `{"error": "This API token is read-only"}`. An unknown or revoked token gets 401 `{"error": "Invalid API token"}`, even with a session cookie; five wrong tokens a minute from one address get 429.
+
+```
+URL=https://print.example.com   # your Print Hub address
+TOKEN=ph_...                    # the token from Settings
+
+# Status: printer state and supplies
+curl -H "Authorization: Bearer $TOKEN" $URL/api/status
+
+# Print a PDF: upload it, then print the returned doc_id
+curl -H "Authorization: Bearer $TOKEN" -F file=@invoice.pdf $URL/api/uploads
+# {"doc_id":"a0kqJZYcCpcPUzoVNkz8RA"}
+curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"media":"iso_a4_210x297mm","print_quality":"4","print_color_mode":"color","orientation_requested":"3","sides":"one-sided"}' \
+  $URL/api/docs/a0kqJZYcCpcPUzoVNkz8RA/print
+# {"job_id":42}
+
+# Jobs: {"active": [...], "recent": [...]}, each job with id, name, state, created, completed, sheets and doc_id
+curl -H "Authorization: Bearer $TOKEN" $URL/api/jobs
+
+# Webhook channel for Home Assistant (see Notifications)
+curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"type":"webhook","name":"Home Assistant","enabled":true,"url":"http://homeassistant.local:8123/api/webhook/printhub","header_name":"","header_value":"","kinds":["job","printer"]}' \
+  $URL/api/notify/channels
+# {"id":"YR33ZU9VM-Q","name":"Home Assistant","type":"webhook","enabled":true,"kinds":["job","printer"],"url":"http://homeassistant.local:8123/api/webhook/printhub","header_name":"","header_value_set":false}
+```
+
+Printing needs all five options; take the values from `supported` in `GET /api/printer` (`orientation_requested` 3 is portrait, 4 is landscape). `copies`, `page_ranges` and `print_scaling` are optional. A webhook needs every field shown: `kinds` lists any of `job`, `printer`, `scan`, `conversion` and `settings`, and `header_name` and `header_value` stay empty when the receiver wants no header (the value is never returned; `header_value_set` says whether one is stored). A missing or invalid field is a 400 that names it.
 
 ## Document safety
 

@@ -7,7 +7,7 @@ from printhub.convert import ACCEPTED
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 ORIGIN = "https://print.example.com"
-CACHE = "printhub-v8"
+CACHE = "printhub-v9"
 
 # Loads sw.js into a stub ServiceWorker: in-memory caches, a controllable fetch, and a dump() that
 # prints the cache contents. Config arrives as JSON in the second-to-last argv entry.
@@ -109,6 +109,13 @@ def test_every_precached_path_exists_under_static():
     for path in precache():
         rel = path.lstrip("/") or "index.html"
         assert (STATIC / rel).is_file(), path
+
+
+def test_precache_holds_the_api_page_but_not_the_swagger_ui_files():
+    paths = precache()
+
+    assert {"/api.html", "/js/api-page.js"} <= set(paths)
+    assert not any(p.startswith("/vendor/swagger-ui/") for p in paths)
 
 
 def test_precache_skips_tests_manifests_and_dynamic_routes():
