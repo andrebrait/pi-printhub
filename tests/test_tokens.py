@@ -115,3 +115,74 @@ def test_blocked_reports_the_limit_without_counting_as_an_attempt():
     assert limiter.blocked("203.0.113.5", 2)
     assert not limiter.allow("203.0.113.5", 2)
     assert not limiter.blocked("203.0.113.5", 61)
+
+
+def test_create_refuses_a_naive_now(tmp_path):
+    with pytest.raises(ValueError):
+        tokens.create(tmp_path, "Laptop", "read", NOW.replace(tzinfo=None))
+    assert tokens.list_public(tmp_path) == []
+
+
+def test_verify_refuses_a_naive_now(tmp_path):
+    _, token = tokens.create(tmp_path, "Laptop", "read", NOW)
+
+    with pytest.raises(ValueError):
+        tokens.verify(tmp_path, token, NOW.replace(tzinfo=None))
+
+
+@pytest.mark.parametrize("stored", ["2026-11-02T12:00:00", "not a time", None])
+def test_an_unusable_last_used_counts_as_due_and_is_rewritten(tmp_path, stored):
+    _, token = tokens.create(tmp_path, "Poller", "read", NOW)
+    path = tmp_path / FILE
+    data = json.loads(path.read_text())
+    data["tokens"][0]["last_used"] = stored
+    path.write_text(json.dumps(data))
+
+    assert tokens.verify(tmp_path, token, NOW)["last_used"] == NOW.isoformat()
+    assert json.loads(path.read_text())["tokens"][0]["last_used"] == NOW.isoformat()
+
+
+@pytest.mark.parametrize("field", ["id", "name", "access", "created", "last_used"])
+def test_a_record_missing_a_public_field_is_a_store_problem(tmp_path, field):
+    _, token = tokens.create(tmp_path, "Laptop", "read", NOW)
+    path = tmp_path / FILE
+    data = json.loads(path.read_text())
+    del data["tokens"][0][field]
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(TokenStoreError):
+        tokens.list_public(tmp_path)
+    with pytest.raises(TokenStoreError):
+        tokens.create(tmp_path, "Phone", "full", NOW)
+    assert tokens.verify(tmp_path, token, NOW) is None
+
+
+def test_repeated_verifies_write_at_most_once_a_minute(tmp_path, monkeypatch):
+    _, token = tokens.create(tmp_path, "Poller", "read", NOW)
+    writes = []
+    real_write = tokens.write_json
+
+    def counting_write(path, data):
+        writes.append(path)
+        real_write(path, data)
+
+    monkeypatch.setattr(tokens, "write_json", counting_write)
+    for seconds in range(0, 300, 10):
+        assert tokens.verify(tmp_path, token, NOW + timedelta(seconds=seconds)) is not None
+
+    assert len(writes) == 5
+
+
+def test_a_failed_last_used_write_still_returns_the_record_and_logs(tmp_path, monkeypatch, caplog):
+    record, token = tokens.create(tmp_path, "Poller", "read", NOW)
+
+    def fail(path, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(tokens, "write_json", fail)
+    with caplog.at_level(logging.ERROR):
+        got = tokens.verify(tmp_path, token, NOW + timedelta(minutes=5))
+
+    assert got["id"] == record["id"]
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+    assert token not in caplog.text

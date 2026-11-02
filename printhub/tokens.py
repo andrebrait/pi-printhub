@@ -34,7 +34,7 @@ def _read(path: Path) -> list[dict]:
     except (OSError, ValueError) as e:
         raise TokenStoreError(f"{FILE} cannot be read ({e}); fix or remove it before saving: {path}")
     if not isinstance(raw, dict) or not isinstance(raw.get("tokens"), list) or not all(
-        isinstance(t, dict) and isinstance(t.get("hash"), str) for t in raw["tokens"]
+        _valid_record(t) for t in raw["tokens"]
     ):
         raise TokenStoreError(f"{FILE} has the wrong shape; fix or remove it before saving: {path}")
     return raw["tokens"]
@@ -56,16 +56,26 @@ def _public(record: dict) -> dict:
     return {k: record[k] for k in PUBLIC_FIELDS}
 
 
+def _valid_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(record.get("hash"), str) and all(f in record for f in PUBLIC_FIELDS)
+
+
 def _touch_due(record: dict, now: datetime) -> bool:
     try:
-        last = datetime.fromisoformat(record["last_used"])
+        return now - datetime.fromisoformat(record["last_used"]) >= TOUCH_EVERY
     except (TypeError, ValueError):
+        # Unparsable or timezone-less stored values are rewritten rather than trusted.
         return True
-    return now - last >= TOUCH_EVERY
+
+
+def _require_aware(now: datetime) -> None:
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
 
 
 def create(data_dir: Path, name: str, access: str, now: datetime) -> tuple[dict, str]:
     """Returns the public record and the token; the token is not stored, so it cannot be shown again."""
+    _require_aware(now)
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60:
         raise ValueError("name must be 1 to 60 characters")
     if access not in ACCESS:
@@ -101,6 +111,7 @@ def revoke(data_dir: Path, token_id: str) -> bool:
 
 
 def verify(data_dir: Path, presented: str, now: datetime) -> dict | None:
+    _require_aware(now)
     if not isinstance(presented, str) or not presented.startswith(PREFIX):
         return None
     digest = _digest(presented).encode()
