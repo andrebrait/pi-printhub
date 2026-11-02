@@ -27,6 +27,7 @@ BROWSER = {
     ("DELETE", "/api/tokens/{token_id}"),
 }
 TOKEN_ROUTES = {
+    ("GET", "/api/openapi.json"),
     ("GET", "/api/printer"),
     ("GET", "/api/status"),
     ("GET", "/api/notifications"),
