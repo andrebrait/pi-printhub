@@ -174,6 +174,50 @@
         </div>
       </div>
     </div>
+
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5 card-title mb-3">API tokens</h2>
+          <p class="text-body-secondary">Home Assistant, scripts and other programs use a token instead of a login. <a href="/api.html">API documentation</a></p>
+          <div class="row g-4">
+            <div class="col-lg-7">
+              <h3 id="tokens-title" class="h6" tabindex="-1">Tokens</h3>
+              <p id="tokens-hint" class="text-body-secondary" role="status">Loading tokens…</p>
+              <ul id="tokens" class="list-group mb-3"></ul>
+              <div id="tokens-msg" role="status"></div>
+            </div>
+            <div class="col-lg-5">
+              <form id="token-form">
+                <h3 class="h6">Create a token</h3>
+                <div class="mb-3">
+                  <label for="token-name" class="form-label">Name</label>
+                  <input id="token-name" class="form-control" type="text" maxlength="60" autocomplete="off" required>
+                </div>
+                <div class="mb-3">
+                  <label for="token-access" class="form-label">Access</label>
+                  <select id="token-access" class="form-select">
+                    <option value="read">Read-only</option>
+                    <option value="full">Full access</option>
+                  </select>
+                </div>
+                <button id="token-save" class="btn btn-primary" type="submit">Create</button>
+                <div id="token-msg" role="status"></div>
+              </form>
+            </div>
+          </div>
+          <div id="token-new" class="border border-success rounded p-3 mt-4" hidden>
+            <label for="token-value" class="form-label fw-semibold">New token</label>
+            <div class="input-group">
+              <input id="token-value" class="form-control font-monospace" type="text" readonly spellcheck="false" autocomplete="off" aria-describedby="token-note">
+              <button id="token-copy" class="btn btn-outline-secondary" type="button">Copy</button>
+            </div>
+            <div id="token-note" class="form-text">Copy it now; it is not shown again.</div>
+            <div id="token-new-msg" role="status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </main>
 <script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>

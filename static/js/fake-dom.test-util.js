@@ -49,6 +49,10 @@ class FakeElement {
   focus() {
     this.focused = true;
   }
+  select() {
+    this.selected = true;
+    this.focused = true;
+  }
   get classList() {
     const el = this;
     return {
