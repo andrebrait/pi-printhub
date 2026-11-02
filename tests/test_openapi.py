@@ -288,3 +288,59 @@ def test_existing_password_and_settings_bounds_are_documentation_only(session, d
     assert properties["min_free_gb"]["description"]
     for retention, status in [(0, 400), (1, 200), (365, 200), (366, 400), (None, 200)]:
         assert session.put("/api/settings", json={"retention_days": retention}).status_code == status
+
+
+@pytest.mark.parametrize(("kind", "field", "marker", "retained"), [
+    ("telegram", "bot_token", "bot_token_set", None),
+    ("telegram", "bot_token", "bot_token_set", ""),
+    ("telegram", "bot_token", "bot_token_set", " \t\n"),
+    ("webhook", "header_value", "header_value_set", None),
+    ("webhook", "header_value", "header_value_set", ""),
+    ("webhook", "header_value", "header_value_set", "\t"),
+    ("webhook", "header_value", "header_value_set", "\t" * 1001),
+    ("email", "smtp_password", "smtp_password_set", None),
+    ("email", "smtp_password", "smtp_password_set", ""),
+    ("email", "smtp_password", "smtp_password_set", " " * 1001),
+], ids=["telegram-null", "telegram-empty", "telegram-whitespace", "webhook-null", "webhook-empty",
+        "webhook-tab", "webhook-long-whitespace", "smtp-null", "smtp-empty", "smtp-long-whitespace"])
+def test_edit_secret_schema_allows_retention_without_exposing_or_changing_the_secret(
+    session, document, cfg, kind, field, marker, retained,
+):
+    from printhub.notifications import load
+    secret = request_schema(document, "/api/notify/channels/{channel_id}", "put")["properties"][field]
+    alternatives = secret["anyOf"]
+    assert {"type": "null"} in alternatives
+    blank = next((s for s in alternatives if "pattern" in s and re.fullmatch(s["pattern"], "")), None)
+    assert blank is not None
+    assert blank["description"]
+    assert "maxLength" not in blank
+    assert re.fullmatch(blank["pattern"], "\u001c\u0085\u3000")
+    assert not re.fullmatch(blank["pattern"], "\ufeff")
+    if retained is not None:
+        assert re.fullmatch(blank["pattern"], retained)
+    replacements = [s for s in alternatives if s is not blank and s.get("type") != "null"]
+    assert len(replacements) == 1
+    if kind == "telegram":
+        assert not re.fullmatch(replacements[0]["pattern"], "invalid token")
+        assert not re.fullmatch(channel_schema(document, kind)["properties"][field]["pattern"], "")
+    else:
+        assert replacements[0]["maxLength"] == 1000
+        if kind == "webhook":
+            assert replacements[0]["not"] == {"pattern": r"[\u0000-\u001f\u007f]"}
+    specific = {
+        "telegram": {"chat_id": "123", "disable_notification": False, "protect_content": False,
+                     "disable_web_page_preview": False},
+        "webhook": {"url": "https://example.com/hook", "header_name": "Authorization"},
+        "email": {"to": ["a@example.com"], "use_scan_server": False, "smtp_host": "localhost",
+                  "smtp_port": 465, "smtp_security": "tls", "smtp_user": "", "mail_from": "a@example.com"},
+    }
+    created = session.post("/api/notify/channels", json={"name": "Keep secret", "type": kind,
+        "enabled": True, "kinds": [], field: "stored-secret", **specific[kind]})
+    assert created.status_code == 201
+    original = created.json()
+    updated = session.put(f"/api/notify/channels/{original['id']}", json={field: retained})
+    assert updated.status_code == 200
+    assert updated.json() == original
+    assert updated.json()[marker] is True
+    assert field not in updated.json()
+    assert load(cfg.data_dir)["channels"][0][field] == "stored-secret"

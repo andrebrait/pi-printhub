@@ -208,6 +208,10 @@ InputTemplates = dict[Kind, TemplateText]
 SubjectPrefix = Annotated[str, Field(max_length=100, json_schema_extra={"not": {"pattern": r"[\r\n]"}})]
 ChatId = Annotated[str, Field(pattern=r"^(?:-?[0-9]+|@[A-Za-z0-9_]{5,})$",
     description="A numeric chat ID or @channelname; the complete value must match the pattern.")]
+# Spell out str.strip() whitespace so JSON Schema consumers do not use a different Unicode regex \s set.
+BlankSecret = Annotated[str, Field(
+    pattern=r"^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$",
+    description="An empty or whitespace-only value retains the stored secret, if present; otherwise it becomes an empty secret.")]
 
 
 class Channel(BaseModel):
@@ -314,9 +318,9 @@ class ChannelEdit(TypedDict, total=False):
     kinds: list[Kind]
     url: WebhookUrl
     header_name: HeaderName
-    header_value: HeaderValue | None
+    header_value: HeaderValue | BlankSecret | None
     chat_id: ChatId
-    bot_token: Annotated[str, Field(pattern=r"^[A-Za-z0-9:_-]+$")] | None
+    bot_token: Annotated[str, Field(pattern=r"^[A-Za-z0-9:_-]+$")] | BlankSecret | None
     message_thread_id: int | None
     parse_mode: Literal["HTML", "Markdown", "MarkdownV2"] | None
     disable_notification: bool
@@ -332,7 +336,7 @@ class ChannelEdit(TypedDict, total=False):
     smtp_port: SmtpPort
     smtp_security: Literal["starttls", "tls"]
     smtp_user: Annotated[str, Field(max_length=255)]
-    smtp_password: Annotated[str, Field(max_length=1000)] | None
+    smtp_password: Annotated[str, Field(max_length=1000)] | BlankSecret | None
     mail_from: Annotated[str, Field(description="One email address, optionally with a display name; CR and LF are refused and the server canonicalizes the sender.")]
 
 
