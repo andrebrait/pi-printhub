@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 FILE = "api-tokens.json"
 PREFIX = "ph_"
+UNAVAILABLE = "API tokens are unavailable"
 ACCESS = ("read", "full")
 PUBLIC_FIELDS = ("id", "name", "access", "created", "last_used")
 TOUCH_EVERY = timedelta(seconds=60)
@@ -111,6 +112,10 @@ def revoke(data_dir: Path, token_id: str) -> bool:
 
 
 def verify(data_dir: Path, presented: str, now: datetime) -> dict | None:
+    """The public record of the matching token, None when nothing matches.
+
+    Raises TokenStoreError when the file cannot be read, so a caller can tell a wrong token from a store problem.
+    """
     _require_aware(now)
     if not isinstance(presented, str) or not presented.startswith(PREFIX):
         return None
@@ -121,7 +126,7 @@ def verify(data_dir: Path, presented: str, now: datetime) -> dict | None:
             records = _read(path)
         except TokenStoreError as e:
             log.error("API tokens unreadable; refusing every token: %s", e)
-            return None
+            raise
         match = None
         for record in records:
             # No early exit: the time taken does not reveal which stored hash matched.

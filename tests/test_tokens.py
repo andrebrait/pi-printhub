@@ -83,7 +83,8 @@ def test_a_corrupt_file_fails_verify_and_writes_refuse_without_overwriting(tmp_p
     path = tmp_path / FILE
     path.write_text(content)
 
-    assert tokens.verify(tmp_path, "ph_anything", NOW) is None
+    with pytest.raises(TokenStoreError):
+        tokens.verify(tmp_path, "ph_anything", NOW)
     assert any(r.levelno == logging.ERROR for r in caplog.records)
     with pytest.raises(TokenStoreError):
         tokens.create(tmp_path, "Laptop", "read", NOW)
@@ -154,7 +155,8 @@ def test_a_record_missing_a_public_field_is_a_store_problem(tmp_path, field):
         tokens.list_public(tmp_path)
     with pytest.raises(TokenStoreError):
         tokens.create(tmp_path, "Phone", "full", NOW)
-    assert tokens.verify(tmp_path, token, NOW) is None
+    with pytest.raises(TokenStoreError):
+        tokens.verify(tmp_path, token, NOW)
 
 
 def test_repeated_verifies_write_at_most_once_a_minute(tmp_path, monkeypatch):

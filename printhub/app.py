@@ -26,6 +26,7 @@ from starlette.background import BackgroundTask
 
 from printhub import convert, edits, printing, scanning, senders
 from printhub import notifications as notification_store
+from printhub import tokens as api_tokens
 from printhub.auth import (
     COOKIE,
     LoginLimiter,
@@ -133,6 +134,12 @@ class EmailRequest(BaseModel):
 class MarkRead(BaseModel):
     up_to: int | None = None
     ids: list[int] | None = None
+
+
+class TokenCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: StrictStr
+    access: Literal["read", "full"]
 
 
 EMAIL_KEYS = {"smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from"}
@@ -299,7 +306,9 @@ def create_app(
     app.state.cfg = cfg
     app.state.notifier = Notifier(events, cfg.data_dir, lambda: app.state.cfg)
     app.state.watcher = None
-    app.add_middleware(Guard, current=lambda: app.state.cfg, admit_share=admit_share, release_share=share_lock.release)
+    app.add_middleware(
+        Guard, current=lambda: app.state.cfg, limiter=limiter, admit_share=admit_share, release_share=share_lock.release
+    )
 
     def using_document(fn=None, *, exclusive=False):
         def decorate(fn):
@@ -334,6 +343,11 @@ def create_app(
     async def invalid(request, exc: RequestValidationError):
         msg = "; ".join(f"{'.'.join(map(str, e['loc'][1:]))}: {e['msg']}" for e in exc.errors())
         return JSONResponse({"error": msg}, 400)
+
+    @app.exception_handler(api_tokens.TokenStoreError)
+    async def tokens_unavailable(request, exc):
+        log.error("API tokens unavailable: %s", exc)
+        return JSONResponse({"error": api_tokens.UNAVAILABLE}, 503)
 
     busy = busy_policy(cfg, cups_conn_factory)
 
@@ -955,6 +969,27 @@ def create_app(
             if len(state["silences"]) == len(live):
                 raise ApiError(404, "No such silence")
             notification_store.save(cfg.data_dir, state)
+
+    @api.get("/tokens")
+    def list_tokens():
+        return api_tokens.list_public(cfg.data_dir)
+
+    @api.post("/tokens", status_code=201)
+    def create_token(body: TokenCreate):
+        try:
+            record, token = api_tokens.create(cfg.data_dir, body.name, body.access, datetime.now(timezone.utc))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+        level = "read-only" if record["access"] == "read" else "full access"
+        notify("info", "settings", f"API token {record['name']} created ({level})")
+        return {k: record[k] for k in ("id", "name", "access", "created")} | {"token": token}
+
+    @api.delete("/tokens/{token_id}", status_code=204)
+    def revoke_token(token_id: str):
+        name = next((t["name"] for t in api_tokens.list_public(cfg.data_dir) if t["id"] == token_id), None)
+        if name is None or not api_tokens.revoke(cfg.data_dir, token_id):
+            raise ApiError(404, "No such token")
+        notify("info", "settings", f"API token {name} revoked")
 
     app.include_router(api)
     app.mount("/", RevalidatedStaticFiles(directory=STATIC_DIR, html=True, check_dir=False), name="static")

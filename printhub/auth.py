@@ -57,7 +57,8 @@ def set_session_cookie(response: Response, value: str) -> None:
 
 def require_session(current: Callable[[], Config]) -> Callable[[Request], None]:
     def dependency(request: Request) -> None:
-        if not session_valid(current(), request.cookies.get(COOKIE)):
+        # The Guard validated the token and applied its access rules before any route ran.
+        if "printhub.token" not in request.scope and not session_valid(current(), request.cookies.get(COOKIE)):
             raise HTTPException(status_code=401)
 
     return dependency
