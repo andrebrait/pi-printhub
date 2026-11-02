@@ -372,15 +372,19 @@ const V2 = DEFAULTS.telegram.MarkdownV2;
 function settingsEnv(systems, failing = [], notify = {}) {
   const make = fakeDocument().createElement;
   const els = new Map();
-  const sinks = [], sink = (...args) => sinks.push(args);
-  const document = { createElement: make, getElementById: (id) => els.get(id) ?? els.set(id, make("div")).get(id), addEventListener() {}, dispatchEvent: (e) => sink("event", e.type, e.detail) };
+  const sinks = [], sink = (...args) => sinks.push(args), windowListeners = {};
+  const web = { local: {}, session: {}, cookies: [] }; // everything the page keeps in the browser
+  const storageOf = (kept) => new Proxy(kept, { // a property write lands in `kept` just like setItem does, so no way of storing goes unseen
+    get: (t, k) => ({ setItem: (key, v) => { t[key] = String(v); }, getItem: (key) => t[key] ?? null, removeItem: (key) => { delete t[key]; } })[k] ?? t[k],
+  });
+  const document = { createElement: make, getElementById: (id) => els.get(id) ?? els.set(id, make("div")).get(id), addEventListener() {}, dispatchEvent: (e) => sink("event", e.type, e.detail),
+    get cookie() { return web.cookies.join("; "); }, set cookie(value) { web.cookies.push(value); } };
   const tokenForm = make("form"), tokenName = make("input"), tokenAccess = make("select");
   tokenForm.reset = () => { // what the HTML starts with: an empty Name and Read-only
     tokenName.value = "";
     tokenAccess.value = "read";
   };
   for (const [id, node] of [["token-form", tokenForm], ["token-name", tokenName], ["token-access", tokenAccess]]) els.set(id, node);
-  const storage = { setItem: sink, getItem: () => null, removeItem() {}, clear() {} };
   const channels = notify.channels ?? [], silences = notify.silences ?? [], tokens = notify.tokens ?? [], confirms = [];
   const calls = [];
   const timers = [];
@@ -422,16 +426,17 @@ function settingsEnv(systems, failing = [], notify = {}) {
     }
     return reply(SETTINGS);
   };
-  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout", "confirm", "KIND_LABELS", "when", "navigator", "localStorage", "sessionStorage", "console",
+  const { main } = new Function("document", "apiFetch", "errorMessage", "setTimeout", "confirm", "KIND_LABELS", "when", "navigator", "localStorage", "sessionStorage", "console", "window",
     `${source("settings.js").replace(/main\(\);\s*$/, "")} return { main };`)(
     document, apiFetch, async () => "Rejected", (fn) => timers.push(fn), (text) => (confirms.push(text), notify.confirm !== false), KIND_LABELS, when,
-    notify.clipboard ? { clipboard: notify.clipboard } : {}, storage, storage, { log: sink, info: sink, warn: sink, error: sink, debug: sink });
+    notify.clipboard ? { clipboard: notify.clipboard } : {}, storageOf(web.local), storageOf(web.session), { log: sink, info: sink, warn: sink, error: sink, debug: sink },
+    { addEventListener: (type, fn) => (windowListeners[type] ??= []).push(fn) });
   const tick = async () => { // let pending promises settle, then fire the timers that were waiting
     await new Promise((r) => setImmediate(r));
     timers.splice(0).forEach((fn) => fn());
     await new Promise((r) => setImmediate(r));
   };
-  return { document, calls, main, tick, confirms, sinks };
+  return { document, calls, main, tick, confirms, sinks, web, pagehide: () => windowListeners.pagehide?.forEach((fn) => fn({ persisted: true })) };
 }
 const applied = { requested: { share: true, expose_usb: true }, status: { state: "applied", share: true, expose_usb: true, error: null }, pending: false };
 const pending = { requested: { share: false, expose_usb: true }, status: null, pending: true };
@@ -1013,6 +1018,18 @@ test("revoking a token that is already gone shows the reason and drops it from t
   assert.equal(document.getElementById("tokens-msg").attributes.role, "alert");
   assert.equal(document.getElementById("tokens").children.length, 0);
   assert.equal(document.getElementById("tokens-hint").hidden, false);
+  assert.equal(document.getElementById("tokens-title").focused, true, "the failed Revoke's button is gone, so focus goes to the list");
+});
+
+test("a load error from before is gone once Create has loaded the list", async () => {
+  const failing = ["GET /api/tokens"];
+  const { document, main } = settingsEnv([applied], failing);
+  await main();
+  assert.match(document.getElementById("tokens-msg").textContent, /Could not load the tokens/);
+  failing.splice(0);
+  await createToken(document, "Home Assistant");
+  assert.equal(document.getElementById("tokens-msg").textContent, "");
+  assert.equal(document.getElementById("tokens").children.length, 1);
 });
 
 test("revoking the token on screen takes it off the screen; revoking another leaves it", async () => {
@@ -1028,19 +1045,23 @@ test("revoking the token on screen takes it off the screen; revoking another lea
   assert.equal(document.getElementById("token-new").hidden, true);
 });
 
-test("the token reaches no storage, console or event, and a reloaded page does not show it", async () => {
-  const tokens = [];
-  const first = settingsEnv([applied], [], { tokens, clipboard: { writeText: async () => {} } });
+test("the token reaches no storage, cookie, console or event", async () => {
+  const first = settingsEnv([applied], [], { clipboard: { writeText: async () => {} } });
   await first.main();
   await createToken(first.document, "Home Assistant");
   await first.document.getElementById("token-copy").listeners.click();
   assert.equal(first.document.getElementById("token-value").value, SECRET);
-  assert.equal(JSON.stringify(first.sinks).includes(SECRET), false);
-  const reloaded = settingsEnv([applied], [], { tokens });
-  await reloaded.main();
-  assert.equal(tokens.length, 1);
-  assert.ok(!reloaded.document.getElementById("token-value").value);
-  assert.equal(textOf(reloaded.document.getElementById("tokens")).includes("Home Assistant"), true);
+  assert.equal(JSON.stringify([first.sinks, first.web]).includes(SECRET), false);
+});
+
+test("leaving the page hides the token, so Back from a page kept in memory does not show it again", async () => {
+  const { document, main, pagehide } = settingsEnv([applied]);
+  await main();
+  await createToken(document, "Home Assistant");
+  assert.equal(document.getElementById("token-value").value, SECRET);
+  pagehide();
+  assert.equal(document.getElementById("token-value").value, "");
+  assert.equal(document.getElementById("token-new").hidden, true);
 });
 
 const modeOf = (document, mode) => {

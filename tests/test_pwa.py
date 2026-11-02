@@ -174,6 +174,7 @@ def test_fetch_handler_answers_shell_gets_and_passes_api_and_share_through():
     requests = [
         ["GET", f"{ORIGIN}/css/app.css"],
         ["GET", f"{ORIGIN}/api/printers"],
+        ["GET", f"{ORIGIN}/api.html"],
         ["POST", f"{ORIGIN}/share"],
         ["GET", f"{ORIGIN}/share"],
         ["GET", "https://evil.example/x.js"],
@@ -181,7 +182,7 @@ def test_fetch_handler_answers_shell_gets_and_passes_api_and_share_through():
 
     out = run_sw(FETCH, requests=requests, caches={}, network="fresh")
 
-    assert [r["answered"] for r in out["results"]] == [True, False, False, False, False]
+    assert [r["answered"] for r in out["results"]] == [True, False, True, False, False, False]
 
 
 def test_cache_write_failure_does_not_discard_successful_network_response():

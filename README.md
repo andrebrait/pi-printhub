@@ -129,7 +129,7 @@ Programs authenticate with a token. In Settings, **API tokens**, give it a name,
 | Full access | also every `POST`, `PUT`, `PATCH` and `DELETE`, except the next row |
 | Browser login only | log in and out, change the web password, claim a phone share and manage tokens: a token gets 403 `{"error": "Not allowed with an API token"}` |
 
-A read-only token on a write gets 403 `{"error": "This API token is read-only"}`. An unknown or revoked token gets 401 `{"error": "Invalid API token"}`, even with a session cookie; five wrong tokens a minute from one address get 429.
+A read-only token on a write gets 403 `{"error": "This API token is read-only"}`. An unknown or revoked token gets 401 `{"error": "Invalid API token"}`, even with a session cookie. After five wrong tokens in a minute, every `/api` request with a token, and login, from that address gets 429 until the minute is up.
 
 ```
 URL=https://print.example.com   # your Print Hub address
@@ -146,7 +146,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   $URL/api/docs/a0kqJZYcCpcPUzoVNkz8RA/print
 # {"job_id":42}
 
-# Jobs: {"active": [...], "recent": [...]}, each job with id, name, state, created, completed, sheets and doc_id
+# Jobs: {"active": [...], "recent": [...]}, each job with id, name, state, created, completed, sheets and doc_id, among others
 curl -H "Authorization: Bearer $TOKEN" $URL/api/jobs
 
 # Webhook channel for Home Assistant (see Notifications)
@@ -156,7 +156,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 # {"id":"YR33ZU9VM-Q","name":"Home Assistant","type":"webhook","enabled":true,"kinds":["job","printer"],"url":"http://homeassistant.local:8123/api/webhook/printhub","header_name":"","header_value_set":false}
 ```
 
-Printing needs all five options; take the values from `supported` in `GET /api/printer` (`orientation_requested` 3 is portrait, 4 is landscape). `copies`, `page_ranges` and `print_scaling` are optional. A webhook needs every field shown: `kinds` lists any of `job`, `printer`, `scan`, `conversion` and `settings`, and `header_name` and `header_value` stay empty when the receiver wants no header (the value is never returned; `header_value_set` says whether one is stored). A missing or invalid field is a 400 that names it.
+Printing needs all five options; take the values from `supported` in `GET /api/printer` (`orientation_requested` is `auto`, 3 for portrait or 4 for landscape). `copies`, `page_ranges` and `print_scaling` are optional. A webhook needs every field shown: `kinds` lists any of `job`, `printer`, `scan`, `conversion` and `settings`, and `header_name` and `header_value` stay empty when the receiver wants no header (the value is never returned; `header_value_set` says whether one is stored). A missing or invalid field is a 400 that names it.
 
 ## Document safety
 

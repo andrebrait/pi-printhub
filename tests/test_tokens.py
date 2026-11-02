@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import stat
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -188,3 +189,22 @@ def test_a_failed_last_used_write_still_returns_the_record_and_logs(tmp_path, mo
     assert got["id"] == record["id"]
     assert any(r.levelno == logging.ERROR for r in caplog.records)
     assert token not in caplog.text
+
+
+def test_a_revoke_during_a_last_used_write_is_not_undone(tmp_path, monkeypatch):
+    record, token = tokens.create(tmp_path, "Poller", "read", NOW)
+    real_write = tokens._write
+    revoker = threading.Thread(target=tokens.revoke, args=(tmp_path, record["id"]))
+
+    def write_with_a_revoke_waiting(path, records):
+        if threading.current_thread() is revoker:
+            return real_write(path, records)
+        revoker.start()
+        revoker.join(0.3)  # with the lock the revoke waits for verify; without it, it finishes here
+        real_write(path, records)
+
+    monkeypatch.setattr(tokens, "_write", write_with_a_revoke_waiting)
+    assert tokens.verify(tmp_path, token, NOW + timedelta(minutes=5)) is not None
+    revoker.join(5)
+    monkeypatch.undo()
+    assert tokens.verify(tmp_path, token, NOW + timedelta(minutes=10)) is None

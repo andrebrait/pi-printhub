@@ -61,7 +61,7 @@ let inputs = {}; // the open form's field inputs by key
 let kindBoxes = {};
 let defaults = null; // what GET /api/notify/defaults gave: the message options per Telegram parse mode and email format
 let message = null; // the open form's message option inputs: { key, input, areas: { kind: textarea } }; null when the type has none
-let shown = null; // id of the token on screen after Create; its secret lives only in the read-only field, never in storage
+let shownToken = null; // id of the token on screen after Create; its secret lives only in the read-only field, never in storage
 
 const $ = (id) => document.getElementById(id);
 
@@ -460,7 +460,7 @@ async function loadSilences() {
 }
 
 function hideToken() {
-  shown = null;
+  shownToken = null;
   $("token-value").value = "";
   $("token-new").hidden = true;
   note("token-new", "");
@@ -474,13 +474,13 @@ function tokenRow(t) {
     if (!confirm(`Revoke ${t.name}? Anything using this token stops working at once.`)) return;
     try {
       await call(`/api/tokens/${t.id}`, { method: "DELETE" });
-      if (shown === t.id) hideToken();
+      if (shownToken === t.id) hideToken();
       note("tokens", `Revoked ${t.name}`, "success");
-      $("tokens-title").focus(); // this Revoke button leaves with its row; keep the keyboard at the list
     } catch (err) {
       note("tokens", err.message);
     }
     await loadTokens(); // also drops a token another browser revoked meanwhile
+    $("tokens-title").focus(); // the reload replaced this Revoke button, so keep the keyboard at the list
   });
   head.append(el("strong", "me-auto text-break", t.name), el("span", "badge text-bg-secondary", ACCESS_LABELS[t.access] ?? t.access), revoke);
   row.append(head, el("div", "small text-body-secondary", `Created ${when(t.created)} · Last used ${t.last_used ? when(t.last_used) : "Never"}`));
@@ -501,6 +501,7 @@ async function loadTokens() {
 }
 
 function main() {
+  window.addEventListener("pagehide", hideToken); // a page kept for Back/Forward (bfcache) would show the once-only token again
   wire("storage", () => saveSettings("storage", values(STORAGE)));
   wire("email", () => {
     const body = values(EMAIL);
@@ -548,13 +549,14 @@ function main() {
   wire("token", async () => {
     const body = { name: $("token-name").value, access: $("token-access").value };
     const created = await (await call("/api/tokens", { method: "POST", body })).json();
-    shown = created.id;
+    shownToken = created.id;
     $("token-value").value = created.token;
     $("token-new").hidden = false;
     note("token-new", "");
     $("token-value").select();
     $("token-form").reset(); // Name empty again and Access back to Read-only; unlike clearing Name, it also ends Chrome's red "invalid" state
     note("token", `Created ${created.name}`, "success");
+    note("tokens", ""); // a load error from before no longer applies once the list loads
     await loadTokens();
   });
   $("token-copy").addEventListener("click", async () => {

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.routing import APIRoute
+from pydantic import TypeAdapter
 
 from test_api_tokens import bearer, session, token_for  # noqa: F401
 from test_app import fake_cups, make_client, scan_doc, space, store  # noqa: F401
@@ -137,6 +138,22 @@ def test_schema_describes_document_and_status_fields_without_filtering_responses
     schema = resolve(document, document["paths"]["/api/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"])
     assert status.keys() == schema["properties"].keys()
     assert status["printers"][0]["supplies"]
+
+
+def test_live_get_responses_match_their_documented_models(session):
+    checked = set()
+    for route in session.app.routes:
+        if not (isinstance(route, APIRoute) and "GET" in route.methods and "{" not in route.path and route.responses.get(200, {}).get("model")):
+            continue
+        live = session.get(route.path)
+        if live.status_code != 200:  # /api/scanner answers 503 when no scanner is attached
+            continue
+        adapter = TypeAdapter(route.responses[200]["model"])
+        adapter.validate_python(live.json())
+        if "properties" in adapter.json_schema():  # the model also names every key the page sends
+            assert live.json().keys() <= adapter.json_schema()["properties"].keys(), route.path
+        checked.add(route.path)
+    assert {"/api/printer", "/api/status", "/api/jobs", "/api/settings", "/api/notify/channels", "/api/tokens"} <= checked
 
 
 def test_token_response_schemas_distinguish_once_only_secret_and_no_content(document):
