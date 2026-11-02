@@ -409,7 +409,9 @@ function settingsEnv(systems, failing = [], notify = {}) {
     if (url === "/api/notify/silences") return reply(silences);
     if (url === "/api/tokens" && method === "POST") { // like the server: the secret is in this reply only, never in the list
       tokens.push({ id: "t-new", name: opts.body.name, access: opts.body.access, created: "2026-11-01T09:00:00+00:00", last_used: null });
-      return reply({ ...tokens.at(-1), token: SECRET });
+      const created = { ...tokens.at(-1), token: SECRET };
+      await notify.tokenResponse;
+      return { ok: true, json: async () => { await notify.tokenBody; return created; } };
     }
     if (url === "/api/tokens") return reply(tokens);
     const revoked = url.match(/^\/api\/tokens\/([^/]+)$/);
@@ -1063,6 +1065,23 @@ test("leaving the page hides the token, so Back from a page kept in memory does 
   assert.equal(document.getElementById("token-value").value, "");
   assert.equal(document.getElementById("token-new").hidden, true);
 });
+
+for (const stage of ["tokenResponse", "tokenBody"]) {
+  test(`leaving during ${stage} prevents a late Create from redisplaying the token`, async () => {
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const { document, main, tick, pagehide } = settingsEnv([applied], [], { [stage]: waiting });
+    await main();
+    const creating = createToken(document, "Home Assistant");
+    await tick();
+    pagehide();
+    release();
+    await creating;
+    assert.equal(document.getElementById("token-value").value, "");
+    assert.equal(document.getElementById("token-new").hidden, true);
+    assert.equal(document.getElementById("token-save").disabled, false);
+  });
+}
 
 const modeOf = (document, mode) => {
   field(document, "parse_mode").value = mode;

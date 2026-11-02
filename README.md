@@ -119,9 +119,9 @@ If the printer stops answering over USB for 2 minutes, a **Printer status** erro
 
 ## REST API
 
-Home Assistant, scripts and other programs call the same `/api` the web app uses: print a file, follow jobs, scan, read the printer's status and supplies, manage notification channels and silences, and change settings. The **API** link in the footer (`/api.html`) lists every method with its parameters and responses and lets you try them. It works with your login, or choose **Authorize** and enter a token under `bearerAuth`.
+Home Assistant, scripts and other programs call the same `/api` the web app uses: print a file, follow jobs, scan, read the printer's status and supplies, manage notification channels and silences, and change settings. The **API** link in the footer (`/api.html`) lists every method with its parameters and responses and lets you try them. Log in through the web app to load the documentation; then use that session or choose **Authorize** and enter a token under `bearerAuth`.
 
-Programs authenticate with a token. In Settings, **API tokens**, give it a name, choose **Read-only** or **Full access** and **Create**. The token (`ph_…`) is shown once, so copy it then; only its hash is stored, and **Revoke** ends it at once. Send it as `Authorization: Bearer <token>`; it needs no `Origin` header.
+Programs authenticate with a token. In Settings, **API tokens**, give it a name, choose **Read-only** or **Full access** and **Create**. The token (`ph_…`) is shown once, so copy it then; only its hash is stored, and **Revoke** ends it at once. Leaving Settings clears the one-time display, including a creation response still in flight. If you leave before copying it, reload the list to revoke it and create another. Send it as `Authorization: Bearer <token>`; it needs no `Origin` header.
 
 | Access | Allowed |
 |---|---|

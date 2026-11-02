@@ -62,6 +62,7 @@ let kindBoxes = {};
 let defaults = null; // what GET /api/notify/defaults gave: the message options per Telegram parse mode and email format
 let message = null; // the open form's message option inputs: { key, input, areas: { kind: textarea } }; null when the type has none
 let shownToken = null; // id of the token on screen after Create; its secret lives only in the read-only field, never in storage
+let tokenGeneration = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -501,7 +502,10 @@ async function loadTokens() {
 }
 
 function main() {
-  window.addEventListener("pagehide", hideToken); // a page kept for Back/Forward (bfcache) would show the once-only token again
+  window.addEventListener("pagehide", () => { // also invalidate a Create response still in flight
+    tokenGeneration++;
+    hideToken();
+  });
   wire("storage", () => saveSettings("storage", values(STORAGE)));
   wire("email", () => {
     const body = values(EMAIL);
@@ -547,8 +551,10 @@ function main() {
     await loadChannels();
   });
   wire("token", async () => {
+    const generation = tokenGeneration;
     const body = { name: $("token-name").value, access: $("token-access").value };
     const created = await (await call("/api/tokens", { method: "POST", body })).json();
+    if (generation !== tokenGeneration) return;
     shownToken = created.id;
     $("token-value").value = created.token;
     $("token-new").hidden = false;
