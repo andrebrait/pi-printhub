@@ -79,6 +79,11 @@ class LoginLimiter:
             hits.append(now)
             return True
 
+    def blocked(self, key: str, now: float) -> bool:
+        with self._lock:
+            self._prune(now)
+            return len(self._hits.get(key, ())) >= self.limit
+
     def _prune(self, now: float) -> None:
         # Sweep every key so clients that never return do not pin memory.
         for key in list(self._hits):
